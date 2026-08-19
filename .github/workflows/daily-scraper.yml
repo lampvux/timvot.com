@@ -1,0 +1,55 @@
+name: Shuttlecraft Daily Scraper & Backup Sync
+
+on:
+  schedule:
+    # Run daily at 01:00 UTC (08:00 AM ICT - Vietnam Time)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Target site to scrape (vnb, qvbadminton, fbshop, hvshop, shopee, all)'
+        required: false
+        default: 'all'
+      sync_db:
+        description: 'Sync scraped data to Supabase database'
+        type: boolean
+        default: true
+
+jobs:
+  scrape-and-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Multi-Site Scraper & Sync DB
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          SITE_FLAG="${{ github.event.inputs.site || 'all' }}"
+          npx tsx scripts/scraper/index.ts --site=$SITE_FLAG --sync-db --verbose
+
+      - name: Generate Post-Sync Backup
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          npx tsx scripts/backup.ts
+
+      - name: Upload Daily Backup Snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-db-backup-${{ github.run_number }}
+          path: backups/*.json
+          retention-days: 30

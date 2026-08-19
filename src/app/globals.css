@@ -1,0 +1,514 @@
+@import "tailwindcss";
+
+/* ============================================================
+   SHUTTLECRAFT DESIGN TOKENS
+   Ported verbatim from the Shuttlecraft design system
+   (_ds/tokens/*.css). Product code reaches for the semantic
+   aliases, never the raw ramps.
+   ============================================================ */
+:root {
+  /* --- Court green: the brand. Trust, verification, "authentic". --- */
+  --green-50: #eff7f2;
+  --green-100: #d8ede1;
+  --green-200: #afdac3;
+  --green-300: #7cc0a0;
+  --green-400: #45a177;
+  --green-500: #1e8250;
+  --green-600: #16663f;
+  --green-700: #0f5132; /* brand primary */
+  --green-800: #0b3f26;
+  --green-900: #062e1c;
+  --green-950: #041c11;
+
+  /* --- Cyan: live data only. Price movement, charts, focus rings. --- */
+  --cyan-50: #ecfcfd;
+  --cyan-100: #cff6f8;
+  --cyan-200: #9debf0;
+  --cyan-300: #5fdae3;
+  --cyan-400: #22c6d2;
+  --cyan-500: #00aebb;
+  --cyan-600: #008d99;
+  --cyan-700: #016f79;
+  --cyan-800: #075660;
+
+  /* --- Cork: warm tertiary, from the shuttlecock base. Used gear. --- */
+  --cork-50: #fbf5ec;
+  --cork-100: #f2e3d0;
+  --cork-200: #e5c9a6;
+  --cork-300: #d4a972;
+  --cork-400: #c98b4b;
+  --cork-500: #a96f36;
+  --cork-600: #82532a;
+
+  /* --- Ink: green-tinted neutrals. --- */
+  --ink-0: #ffffff;
+  --ink-25: #fbfcfb;
+  --ink-50: #f6f8f7;
+  --ink-100: #edf1ef;
+  --ink-200: #dce3df;
+  --ink-300: #bec8c3;
+  --ink-400: #93a09a;
+  --ink-500: #6d7a73;
+  --ink-600: #4e5a53;
+  --ink-700: #333c37;
+  --ink-800: #1e2521;
+  --ink-900: #131815;
+  --ink-950: #0b0f0d;
+
+  /* --- Signal colours. Never used as brand accents. --- */
+  --signal-verified: var(--green-600);
+  --signal-verified-bg: var(--green-50);
+  --signal-risk: #c7382a;
+  --signal-risk-bg: #fcedeb;
+  --signal-caution: #b47908;
+  --signal-caution-bg: #fdf5e3;
+  --signal-drop: var(--cyan-600);
+  --signal-drop-bg: var(--cyan-50);
+  --signal-rise: #c7382a;
+
+  /* ============ SEMANTIC ALIASES ============ */
+  --text-primary: var(--ink-900);
+  --text-secondary: var(--ink-600);
+  --text-tertiary: var(--ink-500);
+  --text-disabled: var(--ink-400);
+  --text-inverse: var(--ink-0);
+  --text-brand: var(--green-700);
+  --text-link: var(--green-700);
+  --text-link-hover: var(--green-600);
+  --text-on-brand: #ffffff;
+
+  --surface-page: var(--ink-50);
+  --surface-card: var(--ink-0);
+  --surface-raised: var(--ink-0);
+  --surface-sunken: var(--ink-100);
+  --surface-inverse: var(--green-900);
+  --surface-brand: var(--green-700);
+  --surface-brand-soft: var(--green-50);
+  --surface-accent-soft: var(--cyan-50);
+  --surface-used: var(--cork-50);
+  --surface-overlay: rgba(11, 15, 13, 0.55);
+
+  --border-subtle: var(--ink-200);
+  --border-default: var(--ink-300);
+  --border-strong: var(--ink-400);
+  --border-brand: var(--green-700);
+  --border-focus: var(--cyan-500);
+  --border-inverse: rgba(255, 255, 255, 0.16);
+
+  --action-primary-bg: var(--green-700);
+  --action-primary-bg-hover: var(--green-600);
+  --action-primary-bg-active: var(--green-800);
+  --action-secondary-bg: var(--ink-0);
+  --action-secondary-bg-hover: var(--ink-100);
+  --action-ghost-bg-hover: var(--ink-100);
+  --action-danger-bg: var(--signal-risk);
+  --action-disabled-bg: var(--ink-200);
+
+  --chart-line: var(--cyan-600);
+  --chart-fill: rgba(0, 174, 187, 0.14);
+  --chart-grid: var(--ink-200);
+  --chart-baseline: var(--ink-400);
+  --chart-compare: var(--cork-400);
+  --chart-band: rgba(15, 81, 50, 0.08);
+
+  /* --- Elevation, radii, borders --- */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(11, 15, 13, 0.06);
+  --shadow-2: 0 2px 8px -2px rgba(11, 15, 13, 0.1), 0 1px 2px rgba(11, 15, 13, 0.05);
+  --shadow-3: 0 12px 32px -8px rgba(11, 15, 13, 0.18), 0 2px 6px rgba(11, 15, 13, 0.06);
+  --shadow-4: 0 28px 64px -16px rgba(11, 15, 13, 0.28);
+  --shadow-sticky-up: 0 -2px 12px -4px rgba(11, 15, 13, 0.14);
+  --shadow-inset: inset 0 1px 2px rgba(11, 15, 13, 0.07);
+
+  --focus-ring: 0 0 0 3px rgba(0, 174, 187, 0.32);
+  --focus-ring-inverse: 0 0 0 3px rgba(95, 218, 227, 0.42);
+
+  --scrim-bottom: linear-gradient(
+    to top,
+    rgba(4, 28, 17, 0.82) 0%,
+    rgba(4, 28, 17, 0.42) 38%,
+    rgba(4, 28, 17, 0) 78%
+  );
+  --fade-right: linear-gradient(to right, #000 82%, transparent 100%);
+  --blur-glass: saturate(150%) blur(14px);
+  --surface-glass: rgba(255, 255, 255, 0.82);
+
+  /* --- Motion --- */
+  --dur-instant: 90ms;
+  --dur-fast: 140ms;
+  --dur-base: 200ms;
+  --dur-slow: 300ms;
+  --dur-chart: 480ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.9, 0.4);
+  --ease-in-out: cubic-bezier(0.6, 0, 0.2, 1);
+
+  /* --- Layout furniture --- */
+  --page-max: 1280px;
+  --page-max-wide: 1600px;
+  --filter-rail-w: 264px;
+  --topbar-h: 60px;
+  --mobile-topbar-h: 52px;
+  --mobile-tabbar-h: 58px;
+  --touch-min: 44px;
+
+  /* --- Type faces (assigned by next/font in the root layout) --- */
+  --font-display: var(--font-archivo), "Be Vietnam Pro", system-ui, sans-serif;
+  --font-ui: var(--font-be-vietnam), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --wdth-condensed: 78;
+  --wdth-normal: 100;
+  --wdth-expanded: 112;
+}
+
+/* Inverse scope — court-green panels, mobile headers, the dark price ticker. */
+[data-theme="inverse"] {
+  --text-primary: var(--ink-0);
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-tertiary: rgba(255, 255, 255, 0.52);
+  --text-link: var(--cyan-300);
+  --text-link-hover: var(--cyan-200);
+  --surface-page: var(--green-900);
+  --surface-card: var(--green-800);
+  --surface-sunken: var(--green-950);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-default: rgba(255, 255, 255, 0.22);
+  --action-secondary-bg: rgba(255, 255, 255, 0.1);
+  --action-secondary-bg-hover: rgba(255, 255, 255, 0.18);
+  --action-ghost-bg-hover: rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   TAILWIND THEME BRIDGE
+   `inline` keeps utilities pointing at the raw custom property,
+   so [data-theme="inverse"] flips every utility inside it.
+   ============================================================ */
+@theme inline {
+  --color-green-50: var(--green-50);
+  --color-green-100: var(--green-100);
+  --color-green-200: var(--green-200);
+  --color-green-300: var(--green-300);
+  --color-green-400: var(--green-400);
+  --color-green-500: var(--green-500);
+  --color-green-600: var(--green-600);
+  --color-green-700: var(--green-700);
+  --color-green-800: var(--green-800);
+  --color-green-900: var(--green-900);
+  --color-green-950: var(--green-950);
+
+  --color-cyan-50: var(--cyan-50);
+  --color-cyan-100: var(--cyan-100);
+  --color-cyan-200: var(--cyan-200);
+  --color-cyan-300: var(--cyan-300);
+  --color-cyan-400: var(--cyan-400);
+  --color-cyan-500: var(--cyan-500);
+  --color-cyan-600: var(--cyan-600);
+  --color-cyan-700: var(--cyan-700);
+  --color-cyan-800: var(--cyan-800);
+
+  --color-cork-50: var(--cork-50);
+  --color-cork-100: var(--cork-100);
+  --color-cork-200: var(--cork-200);
+  --color-cork-300: var(--cork-300);
+  --color-cork-400: var(--cork-400);
+  --color-cork-500: var(--cork-500);
+  --color-cork-600: var(--cork-600);
+
+  --color-ink-0: var(--ink-0);
+  --color-ink-25: var(--ink-25);
+  --color-ink-50: var(--ink-50);
+  --color-ink-100: var(--ink-100);
+  --color-ink-200: var(--ink-200);
+  --color-ink-300: var(--ink-300);
+  --color-ink-400: var(--ink-400);
+  --color-ink-500: var(--ink-500);
+  --color-ink-600: var(--ink-600);
+  --color-ink-700: var(--ink-700);
+  --color-ink-800: var(--ink-800);
+  --color-ink-900: var(--ink-900);
+  --color-ink-950: var(--ink-950);
+
+  --color-verified: var(--signal-verified);
+  --color-verified-bg: var(--signal-verified-bg);
+  --color-risk: var(--signal-risk);
+  --color-risk-bg: var(--signal-risk-bg);
+  --color-caution: var(--signal-caution);
+  --color-caution-bg: var(--signal-caution-bg);
+  --color-drop: var(--signal-drop);
+  --color-drop-bg: var(--signal-drop-bg);
+  --color-rise: var(--signal-rise);
+
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+  --color-brand: var(--text-brand);
+  --color-on-brand: var(--text-on-brand);
+
+  --color-page: var(--surface-page);
+  --color-card: var(--surface-card);
+  --color-sunken: var(--surface-sunken);
+  --color-inverse: var(--surface-inverse);
+  --color-brand-fill: var(--surface-brand);
+  --color-brand-soft: var(--surface-brand-soft);
+  --color-accent-soft: var(--surface-accent-soft);
+  --color-used: var(--surface-used);
+
+  --color-line: var(--border-subtle);
+  --color-line-strong: var(--border-default);
+  --color-line-heavy: var(--border-strong);
+  --color-line-brand: var(--border-brand);
+
+  --font-display: var(--font-display);
+  --font-ui: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  --text-display-1: 72px;
+  --text-display-1--line-height: 0.94;
+  --text-display-1--letter-spacing: -0.032em;
+  --text-display-2: 52px;
+  --text-display-2--line-height: 0.98;
+  --text-display-2--letter-spacing: -0.028em;
+  --text-h1: 36px;
+  --text-h1--line-height: 1.08;
+  --text-h1--letter-spacing: -0.022em;
+  --text-h2: 27px;
+  --text-h2--line-height: 1.14;
+  --text-h2--letter-spacing: -0.018em;
+  --text-h3: 21px;
+  --text-h3--line-height: 1.24;
+  --text-h3--letter-spacing: -0.012em;
+  --text-h4: 17px;
+  --text-h4--line-height: 1.32;
+  --text-h4--letter-spacing: -0.006em;
+  --text-body-lg: 17px;
+  --text-body-lg--line-height: 1.58;
+  --text-body: 15px;
+  --text-body--line-height: 1.6;
+  --text-body-sm: 13.5px;
+  --text-body-sm--line-height: 1.5;
+  --text-caption: 12px;
+  --text-caption--line-height: 1.4;
+  --text-eyebrow: 11px;
+  --text-eyebrow--line-height: 1.2;
+  --text-label: 13.5px;
+  --text-label--line-height: 1.2;
+  --text-label-sm: 12px;
+  --text-price-hero: 34px;
+  --text-price: 17px;
+  --text-data: 13px;
+  --text-data--line-height: 1.45;
+  --text-data-sm: 11px;
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-pill: var(--radius-pill);
+
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+  --shadow-4: var(--shadow-4);
+
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+}
+
+/* ============================================================
+   BASE — element defaults only.
+   ============================================================ */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background: var(--surface-page);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+    margin: 0;
+    color: var(--text-primary);
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  a {
+    color: var(--text-link);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--text-link-hover);
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  img,
+  svg,
+  video {
+    display: block;
+    max-width: 100%;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Focus is always a 3px cyan ring, never a colour swap. */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: var(--radius-xs);
+  }
+
+  ::selection {
+    background: var(--cyan-200);
+    color: var(--ink-900);
+  }
+}
+
+/* ============================================================
+   HOUSE CLASSES
+   The label/value pairing that makes the product look designed
+   rather than assembled.
+   ============================================================ */
+@layer components {
+  /* Eyebrow / overline — the only place uppercase is allowed. */
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 11px;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    font-variation-settings: "wdth" 88;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  /* Expanded display type — hero and section headlines. */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-variation-settings: "wdth" 108;
+    letter-spacing: -0.028em;
+  }
+
+  /* Every ₫ figure in the product uses this. */
+  .price {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Spec values, serials, deltas — anything a user might compare. */
+  .data {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .page-shell {
+    max-width: var(--page-max);
+    margin-inline: auto;
+    padding-inline: 16px;
+  }
+
+  /* Compare tables deliberately show a partial third racket on phones. */
+  .compare-grid {
+    grid-template-columns: 96px repeat(var(--compare-column-count), 128px);
+  }
+
+  @media (min-width: 1024px) {
+    .page-shell {
+      padding-inline: 40px;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .compare-grid {
+      grid-template-columns: minmax(140px, 200px) repeat(
+        var(--compare-column-count),
+        minmax(130px, 1fr)
+      );
+    }
+  }
+
+  /* Horizontal scroll rails on mobile — clipped card signals scroll. */
+  .rail {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .rail::-webkit-scrollbar {
+    display: none;
+  }
+  .rail > * {
+    scroll-snap-align: start;
+  }
+}
+
+/* No entrance animation on content. The one indulgent animation is the
+   price-history line draw, because it shows direction of travel. */
+@keyframes sc-draw {
+  from {
+    stroke-dashoffset: var(--sc-dash, 1000);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+    --dur-chart: 1ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

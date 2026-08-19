@@ -1,0 +1,46 @@
+{
+  "name": "shuttlecraft",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "seed:sql": "tsx scripts/generate-seed.ts",
+    "seed:db": "tsx scripts/seed-db.ts",
+    "scrape": "tsx scripts/scraper/index.ts",
+    "backup": "tsx scripts/backup.ts",
+    "restore": "tsx scripts/restore.ts",
+    "typecheck": "tsc --noEmit",
+    "scrape:quick": "tsx scripts/scraper/index.ts --pages=3 --no-verify",
+    "scrape:verify": "tsx scripts/scraper/index.ts --sample=8",
+    "scrape:sync": "tsx scripts/scraper/index.ts --sync-db",
+    "scrape:sql": "tsx scripts/scraper/generate-sql.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "migrate:dry": "tsx scripts/migrate.ts --dry-run",
+    "scrape:images": "tsx scripts/scraper/images/index.ts",
+    "scrape:images:dry": "tsx scripts/scraper/images/index.ts --dry-run --from-file"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.3",
+    "lucide-react": "^1.31.0",
+    "next": "16.3.1",
+    "next-intl": "^4.13.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "cheerio": "^1.2.0",
+    "pg": "^8.23.0",
+    "playwright": "^1.62.1",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.12",
+    "typescript": "^5"
+  }
+}

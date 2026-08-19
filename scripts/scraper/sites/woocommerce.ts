@@ -1,0 +1,383 @@
+/**
+ * fbshop.vn, qvbadminton.com and hvshop.vn all run WooCommerce and all expose
+ * the unauthenticated Store API at /wp-json/wc/store/v1/products. That endpoint
+ * is the same catalogue the category page renders, but structured: real stock
+ * state, real category membership, and an X-WP-TotalPages header that says
+ * exactly how far the pagination goes. Scraping the rendered HTML alone — what
+ * this repository did before — meant guessing theme class names that differ per
+ * site and break on every theme update.
+ *
+ * One caveat drove the design here: all three shops sell a slice of their
+ * catalogue at a price the Store API reports as 0 (fbshop does it for ~55% of
+ * listings). The price is real, it is just held in theme meta that the API does
+ * not serialise, and it *is* printed on the rendered listing card. So the walk
+ * is two-phase: enumerate and classify from the API, then re-read the rendered
+ * listing pages and fill in prices by permalink. Anything still priceless after
+ * that is a "liên hệ" (call-us) listing, which is not an offer and is reported
+ * separately rather than being given an invented price.
+ */
+
+import * as cheerio from "cheerio";
+import { fetchWithRetry, pool, JSON_HEADERS, HTML_HEADERS, cleanText, parseVndPrice } from "../http";
+import { isRacketListing } from "../classify";
+import type { ScrapedProduct, ScraperOptions, ScraperResult, ScraperSource } from "../types";
+
+export interface WooSiteConfig {
+  source: ScraperSource;
+  origin: string;
+  /** Term id of the racket category on this site. */
+  categoryId: number;
+  /** The rendered category page, for HTML price recovery and verification. */
+  categoryUrl: string;
+  /** Items the API actually returns per request (some sites cap below per_page). */
+  pageSize: number;
+}
+
+export const WOO_SITES: Record<"fbshop" | "qvbadminton" | "hvshop", WooSiteConfig> = {
+  fbshop: {
+    source: "fbshop",
+    origin: "https://fbshop.vn",
+    categoryId: 6031,
+    categoryUrl: "https://fbshop.vn/vot-cau-long/",
+    // fbshop pins posts_per_page to 12 regardless of the per_page argument.
+    pageSize: 12,
+  },
+  qvbadminton: {
+    source: "qvbadminton",
+    origin: "https://qvbadminton.com",
+    categoryId: 17,
+    categoryUrl: "https://qvbadminton.com/vot-cau-long/",
+    pageSize: 100,
+  },
+  hvshop: {
+    source: "hvshop",
+    origin: "https://hvshop.vn",
+    categoryId: 36,
+    categoryUrl: "https://hvshop.vn/vot-cau-long/",
+    pageSize: 100,
+  },
+};
+
+interface StoreApiProduct {
+  id: number;
+  name: string;
+  slug: string;
+  permalink: string;
+  sku?: string;
+  prices?: {
+    price?: string;
+    regular_price?: string;
+    currency_minor_unit?: number;
+  };
+  is_in_stock?: boolean;
+  low_stock_remaining?: number | null;
+  categories?: { id: number; slug: string; name: string }[];
+  images?: { src?: string }[];
+}
+
+function toMajorUnits(raw: string | undefined, minorUnit: number): number {
+  if (!raw) return 0;
+  const value = parseInt(raw, 10);
+  if (!Number.isFinite(value)) return 0;
+  return minorUnit > 0 ? Math.round(value / 10 ** minorUnit) : value;
+}
+
+/** Strip query/hash and trailing slash so API permalinks and hrefs compare equal. */
+function normaliseUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`.toLowerCase();
+  } catch {
+    return url.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+interface ListingCard {
+  title: string;
+  price: number;
+  msrp: number;
+  url: string;
+}
+
+/**
+ * Parse one rendered category page. fbshop runs a bespoke theme; qvbadminton and
+ * hvshop run Flatsome. Exported so the verification pass can reuse it.
+ */
+export function parseWooListingHtml(html: string): ListingCard[] {
+  const $ = cheerio.load(html);
+  const cards: ListingCard[] = [];
+
+  $(".pcate-item .prd-card, .product-small.col, li.product").each((_, el) => {
+    const $el = $(el);
+
+    const title = cleanText(
+      $el.find("a.prd-card-link").first().text() ||
+        $el.find(".woocommerce-loop-product__title").first().text() ||
+        $el.find(".product-title").first().text(),
+    );
+    const href =
+      $el.find("a.prd-card-link").attr("href") ||
+      $el.find(".woocommerce-loop-product__link").attr("href") ||
+      $el.find("a[href]").attr("href") ||
+      "";
+    if (!title || !href) return;
+
+    // Take the sale price when the theme prints both; `ins` is the live price
+    // in WooCommerce markup and `del` is the struck-through original.
+    const currentText =
+      $el.find(".price-current").first().text() ||
+      $el.find("ins .woocommerce-Price-amount").first().text() ||
+      $el.find(".price .woocommerce-Price-amount").first().text();
+    const regularText =
+      $el.find(".price-regular").first().text() ||
+      $el.find("del .woocommerce-Price-amount").first().text();
+
+    const price = parseVndPrice(currentText);
+    const msrp = parseVndPrice(regularText);
+    if (price <= 0) return;
+
+    cards.push({ title, price, msrp: msrp > price ? msrp : price, url: href });
+  });
+
+  return cards;
+}
+
+/** Highest page number the rendered pager links to. */
+function lastHtmlPage(html: string): number {
+  const numbers = [...html.matchAll(/\/page\/(\d+)\//g)].map((m) => Number(m[1]));
+  return numbers.length ? Math.max(...numbers) : 1;
+}
+
+/**
+ * Walk the rendered listing and return permalink → price. This is the only way
+ * to see prices these themes keep out of the Store API.
+ */
+async function buildHtmlPriceMap(
+  config: WooSiteConfig,
+  options: ScraperOptions,
+): Promise<Map<string, ListingCard>> {
+  const verbose = Boolean(options.verbose);
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const map = new Map<string, ListingCard>();
+
+  const first = await fetchWithRetry(config.categoryUrl, {
+    headers: HTML_HEADERS,
+    timeoutMs,
+    verbose,
+  });
+  if (!first.ok) return map;
+
+  for (const card of parseWooListingHtml(first.body)) {
+    map.set(normaliseUrl(card.url), card);
+  }
+
+  const advertised = lastHtmlPage(first.body);
+  const maxPages = options.maxPages ?? Infinity;
+  const lastPage = Math.min(advertised, maxPages);
+
+  if (verbose) {
+    console.log(`   [${config.source}] rendered listing has ${advertised} pages; reading ${lastPage} for prices.`);
+  }
+
+  const pages: number[] = [];
+  for (let page = 2; page <= lastPage; page++) pages.push(page);
+
+  if (pages.length > 0) {
+    await pool(pages, options.concurrency ?? 4, options.delayMs ?? 150, async (page) => {
+      const res = await fetchWithRetry(`${config.categoryUrl}page/${page}/`, {
+        headers: HTML_HEADERS,
+        timeoutMs,
+        verbose,
+      });
+      if (!res.ok) return;
+      for (const card of parseWooListingHtml(res.body)) {
+        map.set(normaliseUrl(card.url), card);
+      }
+      if (verbose && page % 25 === 0) {
+        console.log(`   [${config.source}] listing page ${page}/${lastPage} — ${map.size} prices recovered`);
+      }
+    });
+  }
+
+  return map;
+}
+
+export async function scrapeWooCommerce(
+  config: WooSiteConfig,
+  options: ScraperOptions = {},
+): Promise<ScraperResult> {
+  const startTime = Date.now();
+  const verbose = Boolean(options.verbose);
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const concurrency = options.concurrency ?? 4;
+  const delayMs = options.delayMs ?? 150;
+
+  const apiUrl = (page: number) =>
+    `${config.origin}/wp-json/wc/store/v1/products` +
+    `?per_page=${config.pageSize}&page=${page}&category=${config.categoryId}&orderby=date&order=desc`;
+
+  try {
+    // --- Phase 1: enumerate and classify via the Store API -------------------
+    const first = await fetchWithRetry(apiUrl(1), { headers: JSON_HEADERS, timeoutMs, verbose });
+
+    if (!first.ok) {
+      return {
+        source: config.source,
+        success: false,
+        itemsCount: 0,
+        products: [],
+        error: `Store API returned HTTP ${first.status} on page 1`,
+        durationMs: Date.now() - startTime,
+        pagesFetched: 1,
+      };
+    }
+
+    const reportedTotal = Number(first.headers.get("x-wp-total")) || undefined;
+    const reportedPages = Number(first.headers.get("x-wp-totalpages")) || 1;
+    const maxPages = options.maxPages ?? Infinity;
+    const lastPage = Math.min(reportedPages, maxPages);
+
+    if (verbose) {
+      console.log(
+        `   [${config.source}] Store API reports ${reportedTotal ?? "?"} products across ` +
+          `${reportedPages} pages (${config.pageSize}/page); fetching ${lastPage}.`,
+      );
+    }
+
+    interface Staged {
+      product: ScrapedProduct;
+      apiPrice: number;
+    }
+
+    const staged = new Map<string, Staged>();
+    let skippedNonRacket = 0;
+    let pagesFetched = 1;
+
+    const ingest = (raw: string, page: number) => {
+      let items: StoreApiProduct[];
+      try {
+        items = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (!Array.isArray(items)) return;
+
+      for (const item of items) {
+        const title = cleanText(item.name || "");
+        if (!title) continue;
+
+        const categorySlugs = (item.categories || []).map((c) => c.slug);
+        if (!isRacketListing(title, categorySlugs)) {
+          skippedNonRacket++;
+          continue;
+        }
+
+        const minorUnit = item.prices?.currency_minor_unit ?? 0;
+        const price = toMajorUnits(item.prices?.price, minorUnit);
+        const regular = toMajorUnits(item.prices?.regular_price, minorUnit);
+
+        staged.set(String(item.id), {
+          apiPrice: price,
+          product: {
+            source: config.source,
+            externalId: String(item.id),
+            rawTitle: title,
+            price,
+            msrp: regular > price ? regular : price,
+            inStock: item.is_in_stock !== false,
+            qtyAvailable: item.low_stock_remaining ?? undefined,
+            url: item.permalink || `${config.origin}/?p=${item.id}`,
+            imageUrl: item.images?.[0]?.src,
+            categorySlugs,
+            sourcePage: page,
+            scrapedAt: new Date().toISOString(),
+          },
+        });
+      }
+    };
+
+    ingest(first.body, 1);
+
+    const remaining: number[] = [];
+    for (let page = 2; page <= lastPage; page++) remaining.push(page);
+
+    if (remaining.length > 0) {
+      await pool(remaining, concurrency, delayMs, async (page) => {
+        const res = await fetchWithRetry(apiUrl(page), { headers: JSON_HEADERS, timeoutMs, verbose });
+        pagesFetched++;
+        if (!res.ok) {
+          if (verbose) console.warn(`   [${config.source}] API page ${page}: HTTP ${res.status}`);
+          return;
+        }
+        ingest(res.body, page);
+        if (verbose && page % 25 === 0) {
+          console.log(`   [${config.source}] API page ${page}/${lastPage} — ${staged.size} rackets so far`);
+        }
+      });
+    }
+
+    // --- Phase 2: recover the prices the API omits ---------------------------
+    const missingPrice = [...staged.values()].filter((s) => s.apiPrice <= 0);
+    let recovered = 0;
+
+    if (missingPrice.length > 0) {
+      if (verbose) {
+        console.log(
+          `   [${config.source}] ${missingPrice.length} products have no price in the API — ` +
+            `reading the rendered listing to recover them.`,
+        );
+      }
+
+      const priceMap = await buildHtmlPriceMap(config, options);
+
+      for (const entry of missingPrice) {
+        const card = priceMap.get(normaliseUrl(entry.product.url));
+        if (card && card.price > 0) {
+          entry.product.price = card.price;
+          entry.product.msrp = card.msrp;
+          entry.apiPrice = card.price;
+          recovered++;
+        }
+      }
+    }
+
+    // A listing with no price anywhere is a "call for price" entry, not an
+    // offer. Report it; never invent a number for it.
+    const priceless = [...staged.values()].filter((s) => s.product.price <= 0);
+    const products = [...staged.values()]
+      .filter((s) => s.product.price > 0)
+      .map((s) => s.product);
+
+    if (verbose && (recovered > 0 || priceless.length > 0)) {
+      console.log(
+        `   [${config.source}] recovered ${recovered} prices from HTML; ` +
+          `${priceless.length} listings have no published price and were excluded.`,
+      );
+    }
+
+    return {
+      source: config.source,
+      success: true,
+      itemsCount: products.length,
+      products,
+      durationMs: Date.now() - startTime,
+      pagesFetched,
+      reportedTotal,
+      skippedNonRacket,
+      notes:
+        priceless.length > 0
+          ? [`${priceless.length} listings publish no price ("liên hệ") and were excluded from offers.`]
+          : undefined,
+    };
+  } catch (err) {
+    return {
+      source: config.source,
+      success: false,
+      itemsCount: 0,
+      products: [],
+      error: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - startTime,
+    };
+  }
+}
