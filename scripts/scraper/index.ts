@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadEnv } from "./env";
 
@@ -13,6 +13,15 @@ import { verifyScrape, printVerificationReport, type SiteVerification } from "./
 import type { ScraperResult, ScrapedProduct, ScraperSource, ScraperOptions } from "./types";
 
 const ALL_SOURCES: ScraperSource[] = ["vnb", "qvbadminton", "fbshop", "hvshop", "shopee"];
+
+/**
+ * What `--site=all` means. Shopee is deliberately not in it: the endpoint is
+ * gated behind device attestation and answers 403 to every request, so keeping
+ * it in the default set made every scheduled run end with a failure line and
+ * a non-zero exit code that meant nothing. It is still reachable with
+ * `--site=shopee` for the day access is granted.
+ */
+const DEFAULT_SOURCES: ScraperSource[] = ["vnb", "qvbadminton", "fbshop", "hvshop"];
 
 interface CliOptions {
   sites: ScraperSource[];
@@ -28,6 +37,10 @@ interface CliOptions {
   verifyOnly: string | null;
   concurrency: number;
   delayMs: number;
+  /** Pause offers a full walk no longer found. Off for partial walks. */
+  retireStale: boolean;
+  /** Retire even when the sweep would pause most of a seller's catalogue. */
+  forceRetire: boolean;
 }
 
 function parseArgs(): CliOptions {
@@ -42,7 +55,7 @@ function parseArgs(): CliOptions {
   const siteFlag = String(flags.site ?? flags.sites ?? "all").toLowerCase();
   const sites =
     siteFlag === "all"
-      ? ALL_SOURCES
+      ? DEFAULT_SOURCES
       : (siteFlag.split(",").map((s) => s.trim()) as ScraperSource[]).filter((s) =>
           ALL_SOURCES.includes(s),
         );
@@ -69,6 +82,10 @@ function parseArgs(): CliOptions {
           : String(flags["verify-only"]),
     concurrency: flags.concurrency ? parseInt(String(flags.concurrency), 10) : 4,
     delayMs: flags.delay ? parseInt(String(flags.delay), 10) : 150,
+    // Only a complete walk knows what is missing. After `--pages=3`, almost
+    // everything is "missing", and sweeping would pause the whole catalogue.
+    retireStale: !flags.pages && flags["no-retire"] !== true,
+    forceRetire: flags["force-retire"] === true,
   };
 }
 
@@ -232,7 +249,14 @@ export async function runScrapers() {
   console.log(`Sites       : ${options.sites.join(", ")}`);
   console.log(`Page limit  : ${options.maxPages === Infinity ? "all pages" : options.maxPages}`);
   console.log(`Verify      : ${options.verify ? `yes (browser, ${options.sampleSize}/site)` : "no"}`);
-  console.log(`Sync to DB  : ${options.syncDb ? "yes" : "no"}`);
+  console.log(
+    `Sync to DB  : ${options.syncDb ? "yes" : "no"}` +
+      (options.syncDb
+        ? options.retireStale
+          ? " (stale offers will be paused)"
+          : " (stale offers left alone — partial walk)"
+        : ""),
+  );
   console.log(`Output      : ${options.outFile ?? "none"}`);
   console.log("=================================================\n");
 
@@ -399,7 +423,7 @@ export async function runScrapers() {
 
   // --- Optional DB sync ----------------------------------------------------
   if (options.syncDb) {
-    await syncToSupabase(normalized);
+    await syncToSupabase(normalized, results, options);
   } else if (!options.dryRun) {
     console.log("ℹ️  Not syncing to the database. Re-run with --sync-db to write offers.");
   }
@@ -409,10 +433,38 @@ export async function runScrapers() {
     console.log(
       `\n⚠️  ${failed.length} source(s) failed: ${failed.map((f) => f.source).join(", ")}`,
     );
+    // The run is unattended more often than not, and a scheduled task that
+    // reports success while a shop has stopped answering is worse than no
+    // scheduled task. A failed source is a failed run.
+    process.exitCode = 1;
   }
 }
 
-async function syncToSupabase(items: NormalizedItem[]) {
+/**
+ * Push a scrape into Postgres.
+ *
+ * This is written to be run again tomorrow, and the day after, without
+ * damaging what it wrote today. Two rules follow from that:
+ *
+ *  - **The scraper owns prices and stock; it does not own the catalogue.** A
+ *    listing title says nothing about balance point, frame material or a
+ *    seller's rating, so the parent rows below are inserted when they are new
+ *    and left alone when they already exist. Every run used to upsert them in
+ *    full, which meant a nightly price refresh reset each racket's balance
+ *    point to the placeholder 295 mm, its frame material to ["HM Graphite"]
+ *    and its release year to the current one, and stamped every seller back to
+ *    tier 'verified', rating 4.8, 500 orders.
+ *  - **An offer that vanished from a shop is not an offer.** After a complete
+ *    walk, offers from the sellers we just walked that were not seen this run
+ *    are paused and zeroed, rather than left advertising last month's price as
+ *    live. A partial walk (`--pages=N`) never sweeps: it has not seen enough
+ *    of the catalogue to know what is missing.
+ */
+async function syncToSupabase(
+  items: NormalizedItem[],
+  results: ScraperResult[],
+  options: CliOptions,
+) {
   loadEnv();
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -527,16 +579,65 @@ async function syncToSupabase(items: NormalizedItem[]) {
     return out;
   };
 
-  const steps: [string, string, Record<string, unknown>[], string][] = [
-    ["brands", "id", [...brands.values()], "id"],
-    ["sellers", "id", [...sellers.values()], "id"],
-    ["rackets", "id", [...rackets.values()], "id"],
-    ["racket_variants", "id", [...variants.values()], "id"],
-    ["offers", "id", offers, "id"],
-    ["price_points", "variant_id,observed_on", [...pricePoints.values()], "variant_id,observed_on"],
+  // --- Catalogue rows: insert when new, never overwrite --------------------
+  // `ignoreDuplicates` is ON CONFLICT DO NOTHING. That is the whole point: the
+  // specs and seller fields in these payloads are placeholders good enough to
+  // create a row that does not exist yet, and nowhere near good enough to
+  // replace one that does.
+  const catalogue: [string, Record<string, unknown>[]][] = [
+    ["brands", [...brands.values()]],
+    ["sellers", [...sellers.values()]],
+    ["rackets", [...rackets.values()]],
+    ["racket_variants", [...variants.values()]],
   ];
 
-  for (const [table, , rows, onConflict] of steps) {
+  for (const [table, rows] of catalogue) {
+    let offered = 0;
+    for (const batch of chunk(rows)) {
+      const { error } = await supabase
+        .from(table)
+        .upsert(batch, { onConflict: "id", ignoreDuplicates: true });
+      if (error) {
+        console.error(`❌ ${table}: ${error.message}`);
+        // Offers reference every one of these tables; carrying on would just
+        // produce a wall of foreign-key errors.
+        process.exitCode = 1;
+        return;
+      }
+      offered += batch.length;
+    }
+    console.log(`   ${table.padEnd(16)} ${offered} rows offered, existing rows untouched`);
+  }
+
+  // --- Price history: one point per variant per day, the lowest seen --------
+  // This runs several times a day, so fold in what is already recorded for
+  // today before writing. Without it the last run of the day wins rather than
+  // the cheapest, and the "lowest price today" claim quietly stops being true.
+  const observedVariants = [...pricePoints.values()].map((p) => String(p.variant_id));
+  for (const batch of chunk(observedVariants, 200)) {
+    const { data, error } = await supabase
+      .from("price_points")
+      .select("variant_id, price")
+      .eq("observed_on", today)
+      .in("variant_id", batch);
+    if (error) {
+      console.error(`❌ price_points (read): ${error.message}`);
+      process.exitCode = 1;
+      break;
+    }
+    for (const row of data ?? []) {
+      const ours = pricePoints.get(`${row.variant_id}|${today}`);
+      if (ours && Number(row.price) < Number(ours.price)) ours.price = Number(row.price);
+    }
+  }
+
+  // --- Prices and stock: these the scraper does own -------------------------
+  const priced: [string, Record<string, unknown>[], string][] = [
+    ["offers", offers, "id"],
+    ["price_points", [...pricePoints.values()], "variant_id,observed_on"],
+  ];
+
+  for (const [table, rows, onConflict] of priced) {
     let written = 0;
     for (const batch of chunk(rows)) {
       const { error } = await supabase.from(table).upsert(batch, { onConflict });
@@ -547,10 +648,103 @@ async function syncToSupabase(items: NormalizedItem[]) {
       }
       written += batch.length;
     }
-    console.log(`   ${table.padEnd(16)} ${written}/${rows.length} rows`);
+    console.log(`   ${table.padEnd(16)} ${written}/${rows.length} rows written`);
   }
 
+  // --- Retire what the shops no longer list --------------------------------
+  const seenOfferIds = new Set(offers.map((o) => String(o.id)));
+  await retireUnseenOffers(supabase, results, seenOfferIds, options);
+
   console.log("🎉 DB sync finished.");
+}
+
+/**
+ * Pause the offers a seller no longer lists.
+ *
+ * Only sellers this run actually walked are considered, and only after a full
+ * walk: a source that failed, returned nothing, or was capped with `--pages`
+ * tells us nothing about what it has stopped selling.
+ *
+ * The rows are paused and zeroed rather than deleted, so the price history
+ * hanging off the variant survives and a listing that comes back tomorrow is
+ * one upsert away from live again.
+ */
+async function retireUnseenOffers(
+  supabase: SupabaseClient,
+  results: ScraperResult[],
+  seenOfferIds: Set<string>,
+  options: CliOptions,
+) {
+  if (!options.retireStale) {
+    console.log(
+      "   stale offers     left as they are " +
+        "(a partial walk cannot tell a delisted racket from an unvisited page)",
+    );
+    return;
+  }
+
+  const walked = results.filter((r) => r.success && r.itemsCount > 0);
+  if (walked.length === 0) return;
+
+  const stamp = new Date().toISOString();
+
+  for (const result of walked) {
+    const sellerId = `s-${result.source}`;
+
+    const existing: string[] = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from("offers")
+        .select("id")
+        .eq("seller_id", sellerId)
+        .eq("status", "live")
+        .range(from, from + pageSize - 1);
+      if (error) {
+        console.error(`❌ offers (read for ${sellerId}): ${error.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      for (const row of data ?? []) existing.push(String(row.id));
+      if (!data || data.length < pageSize) break;
+    }
+
+    const stale = existing.filter((id) => !seenOfferIds.has(id));
+    if (stale.length === 0) {
+      console.log(`   ${sellerId.padEnd(16)} nothing to retire`);
+      continue;
+    }
+
+    // A shop that changed its theme overnight looks exactly like a shop that
+    // delisted everything. Refuse the sweep when it would take out most of the
+    // seller's board and say so, rather than emptying the catalogue unattended.
+    const share = stale.length / existing.length;
+    if (share > 0.5 && !options.forceRetire) {
+      console.warn(
+        `   ⚠️  ${sellerId}: ${stale.length}/${existing.length} live offers went unseen ` +
+          `(${Math.round(share * 100)}%). That looks like a broken scrape rather than a ` +
+          `delisting, so nothing was paused. Check the source, then re-run with ` +
+          `--force-retire if it is real.`,
+      );
+      continue;
+    }
+
+    let paused = 0;
+    for (let i = 0; i < stale.length; i += 200) {
+      const batch = stale.slice(i, i + 200);
+      const { error } = await supabase
+        .from("offers")
+        .update({ status: "paused", qty_available: 0, updated_at: stamp })
+        .in("id", batch);
+      if (error) {
+        console.error(`❌ offers (retire ${sellerId}): ${error.message}`);
+        process.exitCode = 1;
+        break;
+      }
+      paused += batch.length;
+    }
+    console.log(`   ${sellerId.padEnd(16)} ${paused} offers no longer listed — paused`);
+  }
 }
 
 const invokedDirectly =

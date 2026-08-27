@@ -13,7 +13,7 @@
  *   3. Matches racket → product URL on tokens, strictly (see `match.ts`).
  *   4. Opens each matched page, pulls the gallery out of the page's own
  *      structured data, and downloads the full-resolution files.
- *   5. Puts the bytes in Supabase Storage, partitioned by provider, and records
+ *   5. Puts the bytes in Supabase Storage, partitioned by brand, and records
  *      one row per stored object in `racket_images`.
  *
  * The whole thing is resumable and idempotent. Storage keys carry the content
@@ -260,6 +260,8 @@ interface RacketOutcome {
   status: "stored" | "no-match" | "ambiguous" | "no-gallery" | "fetch-failed" | "skipped";
   pageUrl?: string;
   matchTier?: MatchTier;
+  /** Set when the catalogue name matched nothing and an alias did; the alias used. */
+  matchedAs?: string;
   /** Pages in this racket's family that were read (colourway pages included). */
   pagesCrawled?: number;
   candidatesConsidered?: number;
@@ -297,7 +299,8 @@ async function readGallery(
 
   if (!res.ok) return { images: [], error: `HTTP ${res.status}` };
 
-  for (const extract of EXTRACTORS[provider.platform]) {
+  // A provider that brought its own reader is a site no platform describes.
+  for (const extract of provider.extractors ?? EXTRACTORS[provider.platform]) {
     const images = extract(res.body, pageUrl);
     if (images.length > 0) return { images };
   }
@@ -394,7 +397,7 @@ export async function crawlImages() {
         ? "dry run — nothing is uploaded"
         : options.strategy === "per-provider"
           ? `Supabase Storage, ${options.bucket}-<provider>`
-          : `Supabase Storage, ${options.bucket}/<provider>/…`
+          : `Supabase Storage, ${options.bucket}/<brand>/…`
     }`,
   );
   console.log(`Per racket  : up to ${options.maxImages} images, min ${options.minPixels} px²`);
@@ -477,7 +480,6 @@ export async function crawlImages() {
       delayMs: options.delayMs,
       refresh: options.refreshSitemaps,
       verbose: options.verbose,
-      browser: browser ?? undefined,
     });
     candidatesByProvider.set(provider.id, result);
 
@@ -506,6 +508,8 @@ export async function crawlImages() {
      */
     pages: MatchCandidate[];
     tier: MatchTier;
+    /** The alias that matched, when the catalogue name itself did not. */
+    matchedAs?: string;
     candidatesConsidered: number;
   }
 
@@ -532,7 +536,22 @@ export async function crawlImages() {
       const discovery = candidatesByProvider.get(provider.id);
       if (!discovery || discovery.candidates.length === 0) continue;
 
-      const match = bestMatch(racket.name, racket.brandName || provider.name, discovery.candidates);
+      const brandName = racket.brandName || provider.name;
+      let match = bestMatch(racket.name, brandName, discovery.candidates);
+
+      // Only if the name as written found nothing. An alias never displaces a
+      // direct match, and it is put through the same comparison — the manufacturer
+      // spells the model differently, the bar for accepting a page is unchanged.
+      let matchedAs: string | undefined;
+      if (!match && provider.modelAliases) {
+        for (const alias of provider.modelAliases(racket.name)) {
+          match = bestMatch(alias, brandName, discovery.candidates);
+          if (match) {
+            matchedAs = alias;
+            break;
+          }
+        }
+      }
 
       if (!match) {
         outcomes.push({
@@ -557,6 +576,7 @@ export async function crawlImages() {
           status: "ambiguous",
           pageUrl: match.candidate.url,
           matchTier: match.tier,
+          matchedAs,
           detail: `also matched ${match.rivals.map((r) => r.slug).join(", ")}`,
         });
         continue;
@@ -567,6 +587,7 @@ export async function crawlImages() {
         provider,
         pages: [match.candidate, ...match.siblings].slice(0, options.maxPages),
         tier: match.tier,
+        matchedAs,
         candidatesConsidered: discovery.candidates.length,
       });
       break; // one provider per racket; the first that matches wins
@@ -579,6 +600,13 @@ export async function crawlImages() {
       `(${jobs.filter((j) => j.tier === "exact").length} exact, ` +
       `${jobs.filter((j) => j.tier === "coded").length} via a SKU-suffixed url).`,
   );
+  const viaAlias = jobs.filter((j) => j.matchedAs).length;
+  if (viaAlias > 0) {
+    console.log(
+      `   ${viaAlias} of those matched only after expanding the model code the ` +
+        `catalogue uses into the name the manufacturer publishes.`,
+    );
+  }
   if (options.limit !== Infinity && jobs.length > options.limit) {
     console.log(`   --limit=${options.limit}, so only the first ${options.limit} are crawled.`);
   }
@@ -698,6 +726,7 @@ export async function crawlImages() {
         pageUrl: allowedPages[0].url,
         pagesCrawled: allowedPages.length,
         matchTier: job.tier,
+        matchedAs: job.matchedAs,
         detail:
           failures.length > 0
             ? failures.join("; ")
@@ -779,6 +808,7 @@ export async function crawlImages() {
       pageUrl: allowedPages[0].url,
       pagesCrawled: allowedPages.length,
       matchTier: job.tier,
+      matchedAs: job.matchedAs,
       candidatesConsidered: job.candidatesConsidered,
       imagesFound: images.length,
       imagesStored: stored,

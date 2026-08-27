@@ -18,9 +18,9 @@ import { dirname, resolve } from "node:path";
 import { cleanText, fetchWithRetry, fetchBinary, HTML_HEADERS, JSON_HEADERS, sleep } from "../http";
 import { isAllowed, robotsFor, type RobotsPolicy } from "../robots";
 import { slugOfUrl, type MatchCandidate } from "./match";
+import { slugify } from "../normalizer";
 import { parseShopifyProductJson, parseWooProductJson, type GalleryImage } from "./gallery";
 import type { CatalogueSource, ProviderConfig } from "./providers";
-import type { BrowserSession } from "./browser";
 
 const CACHE_DIR = "scripts/scraper/output/sitemaps";
 
@@ -37,9 +37,18 @@ function cachePath(providerId: string): string {
   return resolve(process.cwd(), CACHE_DIR, `${providerId}.json`);
 }
 
+/**
+ * The `<loc>` values, wrapped in CDATA or not.
+ *
+ * WordPress SEO plugins write `<loc><![CDATA[https://…]]></loc>`, which is
+ * valid and which a url pattern anchored on "not a `<`" cannot see, because the
+ * value now begins with one. fz-forza.com's sitemap is one of those, and it
+ * read as empty — a provider with no products at all, reported as an unreadable
+ * sitemap rather than as the parse bug it was.
+ */
 function extractLocs(xml: string): string[] {
-  return [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((match) =>
-    match[1].replace(/&amp;/g, "&").trim(),
+  return [...xml.matchAll(/<loc>\s*(?:<!\[CDATA\[\s*)?([^<\]\s]+)\s*(?:\]\]>\s*)?<\/loc>/gi)].map(
+    (match) => match[1].replace(/&amp;/g, "&").trim(),
   );
 }
 
@@ -70,7 +79,6 @@ export interface DiscoverOptions {
   refresh: boolean;
   verbose: boolean;
   /** Supplied only when some selected provider needs rendering. */
-  browser?: BrowserSession;
 }
 
 /**
@@ -80,9 +88,16 @@ export interface DiscoverOptions {
  * stored, so "Dual - Power & Speed" arrives as "Dual Power &amp; Speed" and
  * tokenises to an `amp` that matches nothing.
  */
-function cleanTitle(title: string, provider: ProviderConfig): string {
+function cleanTitle(title: string, url: string, provider: ProviderConfig): string {
   let text = cleanText(title);
   for (const pattern of provider.titleNoise ?? []) text = text.replace(pattern, " ");
+  text = text.replace(/\s+/g, " ").trim();
+  // Removal cannot express "this tail is a colourway", so a provider that needs
+  // that hands the tidied name to its own transform. It runs last, on collapsed
+  // whitespace, because it tokenises what it is given, and it gets the product
+  // url as well — a shop that truncates its own product names still has the
+  // whole of one in the permalink.
+  if (provider.titleTransform) text = provider.titleTransform(text, url);
   return text.replace(/\s+/g, " ").trim();
 }
 
@@ -126,6 +141,7 @@ async function discoverWooCommerce(
     slug: string;
     permalink: string;
     images?: { src?: string; name?: string }[];
+    is_in_stock?: boolean;
   }
 
   // Keyed by permalink: a shop that files one racket under two of the
@@ -154,6 +170,10 @@ async function discoverWooCommerce(
       for (const item of items) {
         seen++;
         if (byUrl.has(item.permalink)) continue;
+        if (source.inStockOnly && item.is_in_stock === false) {
+          if (options.verbose) console.log(`   [${provider.id}] out of stock: ${item.name}`);
+          continue;
+        }
 
         // Reuse the same parser the retailer WooCommerce scraper uses, so the
         // notion of "what counts as an image on a Woo product" lives in one place.
@@ -163,7 +183,7 @@ async function discoverWooCommerce(
         byUrl.set(item.permalink, {
           url: item.permalink,
           slug: slugOfUrl(item.permalink) || item.slug,
-          title: cleanTitle(item.name, provider),
+          title: cleanTitle(item.name, item.permalink, provider),
           images,
         });
       }
@@ -233,7 +253,7 @@ async function discoverShopify(
         byHandle.set(product.handle, {
           url: productUrl,
           slug: product.handle,
-          title: cleanTitle(product.title, provider),
+          title: cleanTitle(product.title, productUrl, provider),
           images,
         });
       }
@@ -290,7 +310,7 @@ async function discoverCategoryPagination(
       if (byUrl.has(clean)) return;
       if (!isAllowed(robots, clean)) return;
 
-      const title = cleanTitle($(el).text(), provider);
+      const title = cleanTitle($(el).text(), clean, provider);
       byUrl.set(clean, { url: clean, slug: slugOfUrl(clean), title: title || undefined });
       fresh++;
     });
@@ -375,7 +395,7 @@ async function discover2beasy(
       byUrl.set(url, {
         url,
         slug: slugOfUrl(url),
-        title: item.name ? cleanTitle(item.name, provider) : undefined,
+        title: item.name ? cleanTitle(item.name, url, provider) : undefined,
       });
     }
 
@@ -387,6 +407,171 @@ async function discover2beasy(
   return { candidates: [...byUrl.values()], urlsSeen: seen };
 }
 
+
+/* ------------------------------------------------------------- Yonex Japan */
+
+/**
+ * Yonex's model codes, and the series each prefix stands for.
+ *
+ * These are the eight racket lines yonex.co.jp files badminton frames under. No
+ * prefix here is a prefix of another, so the order is only readability; a code
+ * outside the list is left unexpanded and therefore simply never matches, which
+ * is the right failure for a name nobody can vouch for.
+ */
+const YONEX_SERIES: [prefix: RegExp, series: string][] = [
+  [/^ARC/, "Arcsaber"],
+  [/^AX/, "Astrox"],
+  [/^NF-?/, "Nanoflare"],
+  [/^NR-?/, "Nanoray"],
+  [/^VT-?/, "Voltric"],
+  [/^DUO-?/, "Duora"],
+  [/^ISO-?/, "Isometric"],
+  [/^MP/, "Muscle Power"],
+];
+
+/**
+ * The one- and two-letter grades Yonex appends to a model number. `AX77-P` is
+ * the Astrox 77 Pro; `3AX88D-G` is the third-generation Astrox 88D Game.
+ *
+ * `G` is the one letter that is overloaded: on a frame in the 張上 (pre-strung)
+ * range it means "strung", not "Game", so `B4000G` is the B4000 and `MP9LTG`
+ * is the Muscle Power 9LT. Those codes are left to fail rather than special-
+ * cased — none of them is in the catalogue, and a wrong expansion cannot match
+ * anyway, because the tokens still differ.
+ */
+const YONEX_GRADE: Record<string, string> = {
+  P: "Pro",
+  T: "Tour",
+  G: "Game",
+  PL: "Play",
+  A: "Ability",
+  C: "Clear",
+  F: "Feel",
+  JR: "Junior",
+  NT: "Nextage",
+  ZS: "Z-Strike",
+};
+
+/**
+ * Expand a Yonex model code into the English name the catalogue holds.
+ *
+ * `ARC11-P` → "Arcsaber 11 Pro", `NF-400` → "Nanoflare 400", `3AX88D-P` →
+ * "Astrox 88D Pro". The leading `2`/`3` is a generation marker Yonex puts in
+ * front of a code it is reusing for a redesigned frame, not part of the model
+ * name, so it comes off: the catalogue calls `3AX99-P` "Astrox 99 Pro".
+ *
+ * Returns null when the code is not one of the known series, rather than
+ * guessing. The matcher is set-equality on tokens, so a wrong expansion cannot
+ * attach the wrong photograph — it just fails to match — but returning null
+ * keeps the failure visible in the candidate list instead of burying it.
+ */
+function expandYonexCode(code: string): string | null {
+  const trimmed = code.trim().toUpperCase().replace(/^[23](?=[A-Z])/, "");
+  const entry = YONEX_SERIES.find(([prefix]) => prefix.test(trimmed));
+  if (!entry) return null;
+
+  const [prefix, series] = entry;
+  const words: string[] = [series];
+
+  for (const part of trimmed.replace(prefix, "").split("-").filter(Boolean)) {
+    // A number optionally carrying a designation: `88D`, `100ZZ`, `11`. The
+    // designation stays welded to the number — the catalogue writes "Astrox
+    // 88D", never "Astrox 88 D" — unless it is a grade, which is a word.
+    const numbered = part.match(/^(\d+)([A-Z]*)$/);
+    if (numbered) {
+      const [, digits, tail] = numbered;
+      if (tail && YONEX_GRADE[tail]) {
+        words.push(digits, YONEX_GRADE[tail]);
+      } else {
+        words.push(digits + tail);
+      }
+      continue;
+    }
+    words.push(YONEX_GRADE[part] ?? part);
+  }
+
+  return words.join(" ");
+}
+
+/**
+ * Read yonex.co.jp's product JSON.
+ *
+ * One request for the whole company — the endpoint returns all 1.759 products
+ * across badminton, tennis, golf, snowboarding and the rest — then filtered
+ * down to the badminton frames by the two category fields.
+ *
+ * Every candidate carries its image, so a racket matched here costs no further
+ * request. The `url` is the racquet listing page with the model code as a
+ * fragment: the site publishes no per-product page, and a fragment keeps each
+ * candidate distinct and same-origin without inventing a path that would 404
+ * if anyone followed `source_page_url` back to it.
+ */
+async function discoverYonexJp(
+  provider: ProviderConfig,
+  source: Extract<CatalogueSource, { kind: "yonex-jp-api" }>,
+  options: DiscoverOptions,
+): Promise<{ candidates: MatchCandidate[]; urlsSeen: number }> {
+  const headers = { ...JSON_HEADERS, "User-Agent": options.userAgent };
+  const url =
+    `${source.endpoint}?limit=3000` +
+    `&cols=id,code,name,color,image,category_l,category_m,category_s`;
+
+  const res = await fetchWithRetry(url, { headers, timeoutMs: options.timeoutMs });
+  if (!res.ok) throw new Error(`product/list: HTTP ${res.status}`);
+
+  interface JpProduct {
+    code?: string;
+    name?: string;
+    color?: string;
+    image?: string;
+    category_l?: string;
+    category_m?: string;
+  }
+
+  const payload = JSON.parse(res.body) as { items?: JpProduct[] };
+  const items = payload.items ?? [];
+
+  const byCode = new Map<string, MatchCandidate>();
+  let seen = 0;
+  const unexpanded: string[] = [];
+
+  for (const item of items) {
+    if (item.category_l !== source.categoryL || item.category_m !== source.categoryM) continue;
+    seen++;
+
+    const code = item.code?.trim();
+    if (!code || !item.image) continue;
+    if (byCode.has(code)) continue;
+
+    const title = expandYonexCode(code);
+    if (!title) {
+      unexpanded.push(code);
+      continue;
+    }
+
+    const images: GalleryImage[] = [
+      {
+        url: `${source.imageBase}${item.image}`,
+        position: 0,
+        colourway: item.color?.trim() || undefined,
+        caption: item.name?.trim() || undefined,
+      },
+    ];
+
+    byCode.set(code, {
+      url: `${source.listingUrl}#${encodeURIComponent(code)}`,
+      slug: slugify(code),
+      title,
+      images,
+    });
+  }
+
+  if (options.verbose && unexpanded.length > 0) {
+    console.log(`   [${provider.id}] no model-code expansion for: ${unexpanded.join(", ")}`);
+  }
+
+  return { candidates: [...byCode.values()], urlsSeen: seen };
+}
 
 /**
  * Walk one or more sitemaps and keep the URLs that look like products.
@@ -448,60 +633,60 @@ async function discoverSitemap(
     if (slug) candidates.push({ url: clean, slug });
   }
 
+  if (source.titleFromHead) {
+    await readHeadTitles(provider, source.titleFromHead, candidates, options, delayMs);
+  }
+
   return { candidates, urlsSeen: urls.length };
 }
 
 /**
- * Render listing pages and take their product links.
+ * Fill in each candidate's `title` from its own page `<head>`.
  *
- * The slug is doing the work here: Mizuno's product URLs are
- * `/product-page/fortius-73-vt`, which is the model name spelled out, so no
- * title is needed for the match to be exact.
+ * A failed read leaves `title` undefined rather than throwing: the candidate
+ * still matches on its slug, which is exactly where it stood before, so one
+ * unreachable page costs one page's worth of precision and not the walk.
+ *
+ * `og:title` is preferred over `<title>` because a shop template is more
+ * likely to append its own name to the second than to the first — and where
+ * both carry it, `suffixSeparator` takes it off.
  */
-async function discoverBrowserListing(
+async function readHeadTitles(
   provider: ProviderConfig,
-  source: Extract<CatalogueSource, { kind: "browser-listing" }>,
+  config: NonNullable<Extract<CatalogueSource, { kind: "sitemap" }>["titleFromHead"]>,
+  candidates: MatchCandidate[],
   options: DiscoverOptions,
-  robots: RobotsPolicy,
-): Promise<{ candidates: MatchCandidate[]; urlsSeen: number }> {
-  if (!options.browser) {
-    throw new Error("this provider needs a browser session and none was supplied");
-  }
+  delayMs: number,
+): Promise<void> {
+  const headers = { ...HTML_HEADERS, "User-Agent": options.userAgent };
+  let read = 0;
 
-  const delayMs = Math.max(options.delayMs, provider.politenessMs ?? 0, robots.crawlDelayMs);
-  const byUrl = new Map<string, MatchCandidate>();
-  let seen = 0;
+  for (const [index, candidate] of candidates.entries()) {
+    if (index > 0) await sleep(delayMs);
 
-  for (const listing of source.urls) {
-    if (!isAllowed(robots, listing)) continue;
-    if (seen > 0) await sleep(delayMs);
+    const res = await fetchWithRetry(candidate.url, { headers, timeoutMs: options.timeoutMs });
+    if (!res.ok) continue;
 
-    let links: string[];
-    try {
-      links = await options.browser.collectLinks(listing, source.productUrlPattern, options.timeoutMs);
-    } catch (err) {
-      if (options.verbose) {
-        console.log(`   [${provider.id}] ${listing}: ${err instanceof Error ? err.message.split("\n")[0] : err}`);
-      }
-      continue;
-    }
+    const $ = cheerio.load(res.body);
+    const raw = $('meta[property="og:title"]').attr("content") ?? $("title").first().text();
+    if (!raw) continue;
 
-    let fresh = 0;
-    for (const link of links) {
-      seen++;
-      const clean = link.split(/[?#]/)[0].replace(/\/+$/, "");
-      if (byUrl.has(clean) || !isAllowed(robots, clean)) continue;
-      byUrl.set(clean, { url: clean, slug: slugOfUrl(clean) });
-      fresh++;
-    }
+    const trimmed = config.suffixSeparator ? raw.split(config.suffixSeparator)[0] : raw;
+    const title = cleanTitle(trimmed, candidate.url, provider);
+    if (!title) continue;
 
-    if (options.verbose) {
-      const series = listing.split("/").pop();
-      console.log(`   [${provider.id}] ${series} → ${fresh} rackets (${byUrl.size} total)`);
+    candidate.title = title;
+    read++;
+
+    if (options.verbose && read % 50 === 0) {
+      console.log(`   [${provider.id}] read ${read}/${candidates.length} product titles`);
     }
   }
 
-  return { candidates: [...byUrl.values()], urlsSeen: seen };
+  console.log(
+    `   [${provider.id}] read ${read} of ${candidates.length} product names from the pages themselves ` +
+      `— a sitemap carries no names, and three of these slugs disagree with theirs.`,
+  );
 }
 
 /** Run one declared source. */
@@ -512,8 +697,6 @@ function runSource(
   robots: RobotsPolicy,
 ): Promise<{ candidates: MatchCandidate[]; urlsSeen: number }> {
   switch (source.kind) {
-    case "browser-listing":
-      return discoverBrowserListing(provider, source, options, robots);
     case "sitemap":
       return discoverSitemap(provider, source, options, robots);
     case "woocommerce-store":
@@ -524,6 +707,8 @@ function runSource(
       return discoverCategoryPagination(provider, source, options, robots);
     case "2beasy-category":
       return discover2beasy(provider, source, options);
+    case "yonex-jp-api":
+      return discoverYonexJp(provider, source, options);
     case "sitegiant-collection":
       // feletsports.com keeps its catalogue in the RSC flight payload rather
       // than behind a product API.
@@ -588,7 +773,17 @@ export async function discoverCandidates(
     }
   }
 
-  const candidates = [...byUrl.values()];
+  // A listing that sells several frames under one product is not a page for
+  // any one of them, and the matcher's SKU-suffix allowance cannot tell the
+  // difference. Dropping those here keeps that decision with the provider that
+  // knows its own shop, rather than loosening the comparison for everyone.
+  const candidates = [...byUrl.values()].filter((candidate) => {
+    if (!provider.excludeTitle || !candidate.title) return true;
+    const title = candidate.title;
+    if (!provider.excludeTitle.some((pattern) => pattern.test(title))) return true;
+    if (options.verbose) console.log(`   [${provider.id}] excluded: ${title}`);
+    return false;
+  });
 
   // Only a total failure is an error. One source of several going down should
   // not throw away what the others found.

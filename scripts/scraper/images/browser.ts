@@ -7,10 +7,14 @@
  * checked before reaching for it — victorsport.com turned out to have a JSON
  * endpoint behind its client-rendered grid and so does *not* use this file.
  *
- * mizunobadminton-asia.com does. It is a Wix Stores site: the racket grid is
- * assembled client-side from a signed, token-authenticated API, the anchors
- * only exist after hydration, and the gallery on a product page is the same.
+ * mizunobadminton-asia.com does, for its product pages. It is a Wix Stores
+ * site, and the gallery is assembled client-side from a signed,
+ * token-authenticated API — the served HTML carries no image beyond the nav.
  * Rendering the page is the honest way in.
+ *
+ * Discovery is *not* one of those things. That store publishes a sitemap listing
+ * every product page, so the crawler enumerates over plain HTTP and spends the
+ * browser only on the pages a racket actually matched.
  *
  * The session is opened once per run and reused. Launching Chromium costs a
  * second or two and leaks memory if done per page, and this crawl visits a few
@@ -107,16 +111,6 @@ export class BrowserSession {
     } finally {
       await page.close().catch(() => {});
     }
-  }
-
-  /** Hrefs on the rendered page matching `pattern`. */
-  async collectLinks(url: string, pattern: RegExp, timeoutMs: number): Promise<string[]> {
-    return this.render(url, timeoutMs, async (page) => {
-      const hrefs = await page.$$eval("a[href]", (els) =>
-        els.map((e) => (e as HTMLAnchorElement).href).filter(Boolean),
-      );
-      return [...new Set(hrefs)].filter((h) => pattern.test(h));
-    });
   }
 
   /**

@@ -152,14 +152,29 @@ function lastHtmlPage(html: string): number {
 /**
  * Walk the rendered listing and return permalink → price. This is the only way
  * to see prices these themes keep out of the Store API.
+ *
+ * `wanted` is the set of permalinks we are actually missing a price for, and
+ * the walk stops once it has them all rather than always reading to the last
+ * page. Where the missing prices are absent from the rendered listing as well —
+ * a "liên hệ" listing genuinely has no number anywhere — the set never empties
+ * and the walk still costs a full read, which is the price of being sure.
  */
 async function buildHtmlPriceMap(
   config: WooSiteConfig,
   options: ScraperOptions,
+  wanted?: Set<string>,
 ): Promise<Map<string, ListingCard>> {
   const verbose = Boolean(options.verbose);
   const timeoutMs = options.timeoutMs ?? 30000;
   const map = new Map<string, ListingCard>();
+
+  const outstanding = new Set(wanted ?? []);
+  const record = (card: ListingCard) => {
+    const key = normaliseUrl(card.url);
+    map.set(key, card);
+    outstanding.delete(key);
+  };
+  const satisfied = () => wanted !== undefined && outstanding.size === 0;
 
   const first = await fetchWithRetry(config.categoryUrl, {
     headers: HTML_HEADERS,
@@ -168,9 +183,7 @@ async function buildHtmlPriceMap(
   });
   if (!first.ok) return map;
 
-  for (const card of parseWooListingHtml(first.body)) {
-    map.set(normaliseUrl(card.url), card);
-  }
+  for (const card of parseWooListingHtml(first.body)) record(card);
 
   const advertised = lastHtmlPage(first.body);
   const maxPages = options.maxPages ?? Infinity;
@@ -183,21 +196,29 @@ async function buildHtmlPriceMap(
   const pages: number[] = [];
   for (let page = 2; page <= lastPage; page++) pages.push(page);
 
-  if (pages.length > 0) {
+  if (pages.length > 0 && !satisfied()) {
+    let lastRead = 1;
     await pool(pages, options.concurrency ?? 4, options.delayMs ?? 150, async (page) => {
+      if (satisfied()) return;
       const res = await fetchWithRetry(`${config.categoryUrl}page/${page}/`, {
         headers: HTML_HEADERS,
         timeoutMs,
         verbose,
       });
+      lastRead = page;
       if (!res.ok) return;
-      for (const card of parseWooListingHtml(res.body)) {
-        map.set(normaliseUrl(card.url), card);
-      }
+      for (const card of parseWooListingHtml(res.body)) record(card);
       if (verbose && page % 25 === 0) {
         console.log(`   [${config.source}] listing page ${page}/${lastPage} — ${map.size} prices recovered`);
       }
     });
+
+    if (verbose && satisfied() && lastRead < lastPage) {
+      console.log(
+        `   [${config.source}] every missing price found by page ${lastRead}; ` +
+          `skipped the remaining ${lastPage - lastRead} listing pages.`,
+      );
+    }
   }
 
   return map;
@@ -329,7 +350,11 @@ export async function scrapeWooCommerce(
         );
       }
 
-      const priceMap = await buildHtmlPriceMap(config, options);
+      const priceMap = await buildHtmlPriceMap(
+        config,
+        options,
+        new Set(missingPrice.map((entry) => normaliseUrl(entry.product.url))),
+      );
 
       for (const entry of missingPrice) {
         const card = priceMap.get(normaliseUrl(entry.product.url));

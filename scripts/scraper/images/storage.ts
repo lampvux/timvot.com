@@ -14,12 +14,19 @@
  *   bucket:  racket-images                  (shared, the default)
  *            racket-images-<provider>       (--bucket-strategy=per-provider)
  *
- *   key:     <provider>/<brand>/<racket-slug>/<nn>-<sha8>.<ext>
+ *   key:     <brand>/<racket-slug>/<nn>-<sha8>.<ext>
  *
- * The provider is the first path segment in the shared layout and the bucket
- * suffix in the sharded one, so either way one manufacturer's assets are one
+ * The brand is the first path segment, so one manufacturer's assets are one
  * subtree — which is what makes "Victor asked us to take their photography
  * down" a single prefix delete rather than a query.
+ *
+ * The provider is not in the key. It used to be the first segment, which broke
+ * exactly the property the layout exists for: a brand crawled from more than
+ * one of its own sites was scattered across yonex/, yonex-uk/ and yonex-jp/,
+ * and which folder a racket landed in was decided by which site matched it
+ * first — an implementation detail of provider ordering, showing up in the
+ * address of the bytes. Which site a photograph came from is provenance and is
+ * recorded in `racket_images.provider`, where it can be queried.
  *
  * The filename carries the first eight characters of the content hash, so a
  * re-crawl that finds the same photograph writes the same key and overwrites
@@ -199,7 +206,7 @@ export class SupabaseImageStore implements ImageStore {
     const { bucket, strategy } = this.options;
     return strategy === "per-provider"
       ? `Supabase Storage, one bucket per provider (${bucket}-<provider>)`
-      : `Supabase Storage, bucket "${bucket}", provider folders`;
+      : `Supabase Storage, bucket "${bucket}", brand folders`;
   }
 
   bucketFor(provider: string): string {
@@ -220,15 +227,18 @@ export class SupabaseImageStore implements ImageStore {
       ? request.racketSlug.slice(request.brandSlug.length + 1)
       : request.racketSlug;
 
-    // Under per-provider bucketing the provider is already the bucket, so
-    // repeating it in the key would just make every path start with the same
-    // redundant segment.
-    const segments =
-      this.options.strategy === "per-provider"
-        ? [request.brandSlug, model, name]
-        : [request.provider, request.brandSlug, model, name];
-
-    return segments.join("/");
+    // The brand is the first segment under both strategies. The provider is
+    // deliberately *not* in the key: it says which of a manufacturer's sites a
+    // photograph came from, which is provenance and belongs in the
+    // `racket_images.provider` column, not in the address of the bytes.
+    //
+    // Putting it in the path split every multi-property brand across several
+    // top-level folders — Yonex over yonex/, yonex-uk/ and yonex-jp/, Mizuno
+    // over mizuno-asia/, mizuno/ and mizuno-vn/ — so "everything we hold for
+    // Yonex" was three prefixes, and which one a racket landed in depended on
+    // which site happened to match it first. One brand is now one subtree,
+    // which is what makes a takedown request a single prefix delete.
+    return [request.brandSlug, model, name].join("/");
   }
 
   /**

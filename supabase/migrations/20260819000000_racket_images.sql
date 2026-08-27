@@ -30,10 +30,11 @@ create table racket_images (
   id              text primary key,
   racket_id       text not null references rackets on delete cascade,
 
-  -- Which manufacturer site the image was crawled from ('yonex', 'victor', …).
-  -- Not the same thing as the racket's brand: a brand can be crawled from more
-  -- than one official property (a global site and a regional one), and the
-  -- storage layout is partitioned by this, not by brand.
+  -- Which manufacturer site the image was crawled from ('yonex', 'yonex-uk',
+  -- 'mizuno-asia', …). Not the same thing as the racket's brand: a brand can be
+  -- crawled from more than one official property, and this is where that fact
+  -- is recorded. The storage layout is partitioned by brand, not by this —
+  -- provenance is a column to query, not a folder to look in.
   provider        text not null,
 
   -- Where it came from, so the crawl is auditable and re-runnable.

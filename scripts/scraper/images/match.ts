@@ -239,9 +239,31 @@ export function bestMatch(
   const pool = exact.length > 0 ? exact : coded;
   if (pool.length === 0) return null;
 
+  // Group by product identity, with one merge on top of the slug rule: two
+  // candidates whose cleaned titles are identical are the same product under two
+  // permalinks. meta.vn publishes a page per weight grade — "Wucht P8 Schock
+  // Solar Red 3U" and "… 4U" — and their permalinks carry a per-product id, so
+  // `productKey` cannot see what the names say plainly. Without this the two
+  // pages of one racket read as two rackets and the match is refused.
+  //
+  // The merge can only ever join groups, never split one, so a provider whose
+  // candidates carry no titles is unaffected. What it assumes is that a shop
+  // does not sell two different frames under one name — which, if it did, is a
+  // collision its own customers could not resolve either.
   const groups = new Map<string, MatchCandidate[]>();
+  const keyOf = new Map<MatchCandidate, string>();
+  const keyByTitle = new Map<string, string>();
+
   for (const candidate of pool) {
-    const key = productKey(candidate.slug);
+    let key = productKey(candidate.slug);
+    const title = candidate.title ? slugify(candidate.title) : "";
+    if (title) {
+      const merged = keyByTitle.get(title);
+      if (merged) key = merged;
+      else keyByTitle.set(title, key);
+    }
+
+    keyOf.set(candidate, key);
     const group = groups.get(key) ?? [];
     group.push(candidate);
     groups.set(key, group);
@@ -251,7 +273,7 @@ export function bestMatch(
   // we take, and any other group is a different product that matched as well.
   const sorted = [...pool].sort((a, b) => a.slug.length - b.slug.length || a.slug.localeCompare(b.slug));
   const winner = sorted[0];
-  const winningKey = productKey(winner.slug);
+  const winningKey = keyOf.get(winner)!;
 
   const family = (groups.get(winningKey) ?? [winner]).sort((a, b) =>
     a.slug.length - b.slug.length || a.slug.localeCompare(b.slug),

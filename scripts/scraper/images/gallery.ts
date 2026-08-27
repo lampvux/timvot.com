@@ -473,3 +473,93 @@ function readJsonArray(block: string, key: string): unknown[] {
 
   return [];
 }
+
+/* ------------------------------------------------- WordPress media library */
+
+/**
+ * A WordPress site whose product photographs are identifiable by filename.
+ *
+ * This is the extractor of last resort, for a site that publishes no
+ * structured data at all. fz-forza.com is one: a marketing site rather than a
+ * shop, with no schema.org block, no product API and an og:image whose url is
+ * malformed. Its product photographs are still perfectly identifiable, because
+ * WordPress keeps the filename the manufacturer uploaded and FZ Forza names
+ * every shot after the item number it prints on the page — FZ262671_1001_
+ * K-POWER36-M_100. Nothing else under /wp-content/uploads/ on those pages is a
+ * photograph of the racket: the rest is the site logo and the technology
+ * badges that explain what Kevlar is.
+ *
+ * So the pattern is the provider's to supply, and it is matched against the
+ * filename rather than the whole url, which keeps a date folder like
+ * /2025/11/ from ever matching by accident.
+ *
+ * Jetpack serves those uploads through its photon host with a resize query
+ * (i0.wp.com/<site>/wp-content/…?resize=1080%2C1560). The origin url behind
+ * that prefix is the untouched upload, so it is unwrapped rather than
+ * downloaded at whatever width the page happened to render.
+ */
+export function wpUploadsGallery(namePattern: RegExp): GalleryExtractor {
+  return (html, pageUrl) => {
+    const images: GalleryImage[] = [];
+
+    for (const match of html.matchAll(/["'(](https?:[^"')\s]*\/wp-content\/uploads\/[^"')\s]+)/gi)) {
+      const unwrapped = match[1].replace(/^https?:\/\/i\d\.wp\.com\/([^/]+)/i, "https://$1");
+      const url = absolute(unwrapped.split("?")[0], pageUrl);
+      const filename = url.split("/").pop() ?? "";
+      if (!namePattern.test(filename)) continue;
+      if (!isPlausible(url)) continue;
+      images.push({ url, position: images.length });
+    }
+
+    return dedupe(images);
+  };
+}
+
+/* ----------------------------------------------------------------- META.vn */
+
+/**
+ * meta.vn, whose product images are a filename convention and a resize proxy.
+ *
+ * The page's schema.org block carries exactly one image — the hero — while the
+ * gallery beside it holds two or three more, so reading the structured data
+ * here costs two thirds of the photography. What the shop does instead is name
+ * every shot after the product: `<slug>-g.jpg` is the hero and `<slug>-1.jpg`,
+ * `-2.jpg` are the rest, all under a dated `/Data/image/YYYY/MM/DD/` folder.
+ *
+ * Two things are deliberately dropped. Anything under `/thumb/` is the resize
+ * proxy — `media.meta.vn/thumb/200x200x95/…` is the 200px card image of a file
+ * already collected at full size — and `-600.jpg` is a 600×600 square crop of
+ * the hero rather than a photograph of its own. What is left is the shop's
+ * banners, which never live under a dated image folder, and the product.
+ *
+ * Enumerating `-3.jpg`, `-4.jpg` and so on is not safe here and is not done:
+ * meta.vn answers a missing image with a 1×1 tracking gif and HTTP 200, not a
+ * 404, so a guessed url comes back looking like a successful download.
+ */
+export const metaVnGallery: GalleryExtractor = (html, pageUrl) => {
+  const images: GalleryImage[] = [];
+
+  for (const match of html.matchAll(/["'](https?:[^"')\s]*\/Data\/[Ii]mage\/[^"')\s]+)/g)) {
+    const raw = match[1];
+    if (/\/thumb\//i.test(raw)) continue;
+
+    // Three spellings of one file, folded into one so dedupe can see it:
+    // media.meta.vn and meta.vn serve the same path, and the shop writes the
+    // folder as both `/Data/image/` and `/Data/Image/` — sometimes for two
+    // shots of the same product — where its own server treats the two as the
+    // same file and returns the same bytes for either.
+    const url = absolute(
+      raw
+        .split("?")[0]
+        .replace(/\/\/media\.meta\.vn\//i, "//meta.vn/")
+        .replace(/\/Data\/Image\//, "/Data/image/"),
+      pageUrl,
+    );
+    if (/-600\.(?:jpe?g|png|webp)$/i.test(url)) continue;
+    if (!isPlausible(url)) continue;
+
+    images.push({ url, position: images.length });
+  }
+
+  return dedupe(images);
+};
