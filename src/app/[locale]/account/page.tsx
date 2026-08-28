@@ -1,3 +1,8 @@
+// Per-visitor by definition: this page is the signed-in user's watchlist and
+// alerts, so there is no shell worth prerendering. `instant = false` marks it
+// allowed to block rather than forcing it dynamic (phase 4, docs/performance-plan.md).
+export const instant = false;
+
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";

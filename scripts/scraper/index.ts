@@ -10,6 +10,7 @@ import { scrapeWooCommerce, WOO_SITES } from "./sites/woocommerce";
 import { normalizeScrapedProduct, slugify, type NormalizedItem } from "./normalizer";
 import { canonicalName } from "./colourway";
 import { verifyScrape, printVerificationReport, type SiteVerification } from "./verify";
+import { revalidateCatalogue } from "./revalidate";
 import type { ScraperResult, ScrapedProduct, ScraperSource, ScraperOptions } from "./types";
 
 const ALL_SOURCES: ScraperSource[] = ["vnb", "qvbadminton", "fbshop", "hvshop", "shopee"];
@@ -424,6 +425,11 @@ export async function runScrapers() {
   // --- Optional DB sync ----------------------------------------------------
   if (options.syncDb) {
     await syncToSupabase(normalized, results, options);
+    // Only when the sync itself reported clean. `syncToSupabase` sets
+    // `process.exitCode` on a failed write, and revalidating after a partial
+    // write would publish a half-updated catalogue rather than hold the last
+    // good one until the next run.
+    if (!process.exitCode) await revalidateCatalogue();
   } else if (!options.dryRun) {
     console.log("ℹ️  Not syncing to the database. Re-run with --sync-db to write offers.");
   }

@@ -22,7 +22,7 @@ import {
 } from "@/components/ds/data";
 import { SpecSheet } from "@/components/spec-sheet";
 import { CompareToggle } from "@/components/compare-tray";
-import { WatchPriceButton } from "@/components/watch-price";
+import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
 import {
   getHeadlineVariantPrice,
@@ -31,25 +31,48 @@ import {
   getRackets,
   getReviewsForRacket,
 } from "@/lib/data/repository";
-import { getUser } from "@/lib/supabase/server";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
+import { ReviewDate } from "@/components/review-date";
 import {
   BALANCE_MESSAGE_KEY,
   CONDITION_MESSAGE_KEY,
   FLEX_MESSAGE_KEY,
   formatDong,
-  formatReviewDate,
   formatTension,
 } from "@/lib/format";
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
 import type { Review, SellerTier } from "@/lib/types";
 
+/**
+ * Prerender the rackets people actually open, and let ISR fill in the rest.
+ *
+ * 3.010 rackets across two locales is 6.020 pages, which is both a long build
+ * and a lot of output for pages nobody may request. The ISR guidance is to
+ * prerender a popular subset and generate the others on first visit — with
+ * Cache Components a path not listed here still serves an App Shell instantly
+ * and upgrades in the background, so the tail is not a slow page, just a
+ * slightly later one.
+ *
+ * Court Score order rather than source order: a racket with a real player
+ * score is one people have reviewed, which is a better proxy for "someone will
+ * open this" than wherever the scraper happened to put it. Returning an empty
+ * array is not an option under Cache Components — it raises
+ * `empty-generate-static-params`.
+ */
+const PRERENDERED_RACKETS = 200;
+
 export async function generateStaticParams() {
   const rackets = await getRackets();
-  return rackets.slice(0, 50).map((racket) => ({
-    brand: racket.brandSlug,
-    model: racket.slug,
-  }));
+  return [...rackets]
+    .sort(
+      (a, b) =>
+        (b.courtScore ?? -1) - (a.courtScore ?? -1) || b.specScore - a.specScore,
+    )
+    .slice(0, PRERENDERED_RACKETS)
+    .map((racket) => ({
+      brand: racket.brandSlug,
+      model: racket.slug,
+    }));
 }
 
 export async function generateMetadata({
@@ -91,11 +114,12 @@ export default async function RacketPage({
   const tsel = await getTranslations("sellers");
   const tn = await getTranslations("nav");
 
-  const [offers, reviews, price, user, allRackets] = await Promise.all([
+  // `getUser()` used to be in here, which made a spec sheet wait on a Supabase
+  // Auth round-trip. It lives in <WatchPriceSlot /> now, behind Suspense.
+  const [offers, reviews, price, allRackets] = await Promise.all([
     getOffersForRacket(racket.id),
     getReviewsForRacket(racket.id),
     getHeadlineVariantPrice(racket),
-    getUser(),
     getRackets(),
   ]);
 
@@ -389,10 +413,7 @@ export default async function RacketPage({
               }}
             />
             {headlineVariant && (
-              <WatchPriceButton
-                variantId={headlineVariant.id}
-                signedIn={Boolean(user)}
-              />
+              <WatchPriceSlot variantId={headlineVariant.id} />
             )}
           </div>
         </div>
@@ -707,9 +728,7 @@ async function ReviewCard({
                 : "tierCommunity",
           )}
         />
-        <span className="ml-auto font-mono text-[11px] tabular-nums text-tertiary">
-          {formatReviewDate(review.createdAt, locale)}
-        </span>
+        <ReviewDate iso={review.createdAt} locale={locale} />
       </div>
 
       <div className="mb-2.5 flex flex-wrap gap-1.5">

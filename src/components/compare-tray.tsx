@@ -153,15 +153,32 @@ export function CompareToggle({
   );
 }
 
+/**
+ * The tray is empty until the provider has read localStorage, so during a
+ * prerender it renders nothing at all — which is why the `usePathname()` call
+ * lives in `TrayBody` rather than here.
+ *
+ * That read is URL data, and under Cache Components reading it outside a
+ * `<Suspense>` boundary blocks the prerender for every route the tray sits on,
+ * which is all of them. Moving it behind the empty check means the prerender
+ * never reaches it, so no boundary is needed and nothing has to settle
+ * afterwards: by the time a tray exists, the browser is already running.
+ */
 export function CompareTray() {
+  const { items } = useCompare();
+  if (items.length === 0) return null;
+  return <TrayBody />;
+}
+
+function TrayBody() {
   const t = useTranslations("compare");
   const tc = useTranslations("common");
   const { items, remove, clear, isFull } = useCompare();
   const pathname = usePathname();
+  // The detail page carries its own compare button, so the mobile tray would
+  // be a second one covering it.
   const isRacketDetail = /^\/rackets\/[^/]+\/[^/]+$/.test(pathname);
   const canCompare = items.length >= 2;
-
-  if (items.length === 0) return null;
 
   return (
     <>

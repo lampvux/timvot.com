@@ -134,6 +134,83 @@ their own offers but never their own tier, watchlists are private, and sellers a
 offer to a catalogued variant rather than creating products — that is what keeps the
 catalogue clean. Storage buckets matching `racket-images%` are public-read, admin-write.
 
+## Performance rules the code enforces
+
+The catalogue is 3010 rackets, 3265 variants, 5281 offers and a price_points table
+that grows by ~3265 rows on every `scrape:refresh`. Every rule below exists because
+that scale breaks something a smaller catalogue would have hidden. Check the whole
+list before adding a feature — a new page that reuses the existing helpers inherits
+their costs, it does not escape them.
+
+**Never scan a snapshot array inside a loop over another one.** `enrich` runs once
+per racket; a `snapshot.history.filter(...)` inside it is 3010 × the price table and
+grows every time the scraper runs. Build a `Map` keyed by `racketId` or `variantId`
+once per snapshot, then look up. The same applies to `getDeals`, `getOffersForRacket`,
+and anything new: index first, then iterate. If a helper is O(n×m) it must be
+rewritten before it ships, not after it is slow.
+
+**Nothing in `[locale]/layout.tsx` may read `cookies()`, `headers()` or
+`searchParams`.** One `await cookies()` there opts every route in the app out of
+prerendering, and `getUser()` adds a blocking round-trip to Supabase Auth in front
+of the first byte of every page. Per-user chrome belongs in a leaf component behind
+`<Suspense>`, rendering a signed-out shell as the fallback. Auth state may be read
+optimistically from cookie presence for *display*; anything that gates data still
+calls `getUser()`.
+
+**A page that renders a list paginates it.** The catalogue renders what the URL asks
+for — `page` is a key in `SEARCH_KEYS` like every other filter, so a paginated result
+still survives being pasted into a chat. Rendering 3010 cards produced a multi-megabyte
+RSC payload and a document the browser spent seconds laying out. There is no infinite
+scroll and no client-side "load more" that forks the filter state.
+
+**`"use client"` is for the interactive leaf, not its container.** `RacketCard` was a
+client component because of one `useState` for an image fallback, which shipped 3010
+component instances to the browser per catalogue page. Server-render the card, and put
+the boundary on the button or the image that actually needs it. `useTranslations` is
+not a reason to go client — `getTranslations` does the same job on the server.
+
+**Import icons by name, never the barrel object.** `import { icons } from "lucide-react"`
+pulls all ~1500 icons into the client bundle and defeats `optimizePackageImports`,
+which can only rewrite named imports. `ds/primitives.tsx` keeps an explicit registry of
+the icons the design actually uses; adding an icon means adding a line to it.
+
+**Cache at the data layer, not the page.** `use cache` on the repository's read
+functions, with `cacheTag` per table and `cacheLife` matched to how the data actually
+changes — the catalogue moves when the scraper runs, not when a user loads a page.
+A cached scope may not read cookies or headers; pass what it needs as a serialisable
+argument. `scrape:sync` is what invalidates the catalogue, via `revalidateTag`, so a
+price change does not wait out a timer.
+
+**Fetch the rows a page needs, not the table.** `loadSnapshot` reads seven tables in
+full because the seed fallback has to answer the same questions from memory. That is
+the ceiling, not the target: a new read path adds a Postgres query *and* its seed
+equivalent behind one repository function, so callers still cannot tell which source
+answered. `selectAll` and its unique `.order()` remain mandatory for anything that
+does read a whole table (see the 1000-row cap above).
+
+**Every route that awaits data has a `loading.tsx` or a `<Suspense>` boundary.**
+Without one the browser holds the previous page until the server has finished, which
+on the catalogue meant seconds of nothing. Skeletons match the real layout's box sizes
+so nothing shifts when the content lands.
+
+**A client hook that reads the URL blocks the prerender.** `usePathname`,
+`useSearchParams`, `useParams` and `useSelectedLayoutSegment` are runtime data under Cache
+Components: reading one anywhere outside a `<Suspense>` boundary blocks the static shell
+for every route the component appears on — and for site chrome that is all of them. Put
+the boundary around the part that needs the value, not the whole component: the links
+stay in the shell where they are crawlable and clickable, and only the active highlight
+streams. Where the value is only needed after hydration — a tray that is empty until
+localStorage is read — move the call behind that check instead, and no boundary is needed
+at all.
+
+**`npm run build` passing is not enough for a caching change.** Some Cache Components
+validation runs only in development, so a route can build clean and still be blocked from
+prerendering. Start `next dev` and open the routes you touched before calling it done.
+
+**Run `npm run build` and read the route table before calling a change done.** A route
+that moved from ○ (prerendered) to ƒ (dynamic), or a First Load JS that jumped, is a
+regression to explain — not a detail to discover in production.
+
 ## Design rules the code enforces
 
 Tokens are in `src/app/globals.css`, ported verbatim from the design system; reach for

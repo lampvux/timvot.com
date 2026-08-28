@@ -62,7 +62,10 @@ export const brands: Brand[] = [
 
 /* --------------------------------------------------------------- rackets */
 
-type RacketSeed = Omit<Racket, "variants" | "brandName" | "id" | "heroImageUrl"> & {
+type RacketSeed = Omit<
+  Racket,
+  "variants" | "brandName" | "id" | "heroImageUrl" | "heroThumbUrl"
+> & {
   weightClasses: WeightClass[];
   gripSizes: GripSize[];
 };
@@ -536,7 +539,10 @@ export const rackets: Racket[] = racketSeeds.map((seed) => {
     ...rest,
     id,
     brandName: brand.name,
+    // The seed carries no photography: it exists so the app renders without a
+    // database, and the card falls back to the brand mark.
     heroImageUrl: null,
+    heroThumbUrl: null,
     images: [],
     variants: buildVariants(seed, id),
   };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { usePathname } from "@/i18n/navigation";
 import { Link } from "@/i18n/navigation";
@@ -25,16 +25,89 @@ const TABS: { href: string; key: string; icon: IconName }[] = [
   { href: "/account", key: "account", icon: "UserRound" },
 ];
 
-function isActive(pathname: string, href: string) {
+/** `null` while the pathname is still streaming, which reads as "not active"
+ *  rather than as a wrong guess. */
+function isActive(pathname: string | null, href: string) {
+  if (pathname === null) return false;
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
+}
+
+/**
+ * Which link is highlighted is the only thing here that depends on the URL, and
+ * `usePathname()` is runtime data — under Cache Components, reading it outside
+ * a `<Suspense>` boundary blocks the prerender for every route this chrome
+ * appears on, which is all of them.
+ *
+ * So the links themselves are in the static shell, where they belong: they are
+ * navigation, and they have to work and be crawlable from the first byte. Only
+ * the highlight streams. The fallback renders the same markup with nothing
+ * marked active, so the settle is one underline appearing, not a layout shift.
+ */
+function NavLinks({ pathname }: { pathname: string | null }) {
+  const t = useTranslations("nav");
+
+  return (
+    <>
+      {NAV.map((item) => {
+        const active = isActive(pathname, item.href);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={cx(
+              "py-[19px] text-[14px] no-underline transition-colors duration-[90ms]",
+              active
+                ? "font-semibold text-brand shadow-[inset_0_-2px_0_var(--green-700)]"
+                : "font-medium text-ink-700 hover:text-brand",
+            )}
+          >
+            {t(item.key)}
+          </Link>
+        );
+      })}
+    </>
+  );
+}
+
+function LiveNavLinks() {
+  return <NavLinks pathname={usePathname()} />;
+}
+
+function TabLinks({ pathname }: { pathname: string | null }) {
+  const t = useTranslations("nav");
+
+  return (
+    <>
+      {TABS.map((tab) => {
+        const active = isActive(pathname, tab.href);
+        return (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            aria-current={active ? "page" : undefined}
+            className={cx(
+              "flex flex-col items-center justify-center gap-[3px] no-underline",
+              active ? "text-brand" : "text-tertiary",
+            )}
+          >
+            <Icon name={tab.icon} size="md" />
+            <span className="text-[10.5px] font-semibold">{t(tab.key)}</span>
+          </Link>
+        );
+      })}
+    </>
+  );
+}
+
+function LiveTabLinks() {
+  return <TabLinks pathname={usePathname()} />;
 }
 
 /** 60px top bar on desktop, 52px on mobile. The only element that pins on
  *  every surface. */
-export function TopBar({ signedIn }: { signedIn: boolean }) {
+export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
   const t = useTranslations("nav");
-  const tc = useTranslations("common");
-  const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
 
   return (
@@ -52,24 +125,9 @@ export function TopBar({ signedIn }: { signedIn: boolean }) {
           aria-label={t("rackets")}
           className="hidden items-center gap-6 lg:flex"
         >
-          {NAV.map((item) => {
-            const active = isActive(pathname, item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cx(
-                  "py-[19px] text-[14px] no-underline transition-colors duration-[90ms]",
-                  active
-                    ? "font-semibold text-brand shadow-[inset_0_-2px_0_var(--green-700)]"
-                    : "font-medium text-ink-700 hover:text-brand",
-                )}
-              >
-                {t(item.key)}
-              </Link>
-            );
-          })}
+          <Suspense fallback={<NavLinks pathname={null} />}>
+            <LiveNavLinks />
+          </Suspense>
         </nav>
 
         <div className="ml-auto flex items-center gap-1 lg:gap-3">
@@ -97,14 +155,10 @@ export function TopBar({ signedIn }: { signedIn: boolean }) {
 
           <LanguageSwitcher />
 
-          <Link
-            href={signedIn ? "/account" : "/sign-in"}
-            aria-label={signedIn ? t("account") : tc("signIn")}
-            className="grid size-11 place-items-center rounded-md text-ink-700
-              transition-colors duration-[90ms] hover:bg-[var(--action-ghost-bg-hover)]"
-          >
-            <Icon name="UserRound" size="md" />
-          </Link>
+          {/* Server-rendered and streamed — see components/auth-slot.tsx. The
+              bar is a client component, so who is signed in arrives as a
+              rendered slot rather than a prop the client has to be told. */}
+          {accountSlot}
         </div>
       </div>
 
@@ -131,30 +185,17 @@ export function TopBar({ signedIn }: { signedIn: boolean }) {
 /** 58px tab bar, five destinations, 44px minimum target. */
 export function MobileTabBar() {
   const t = useTranslations("nav");
-  const pathname = usePathname();
 
   return (
     <nav
       aria-label={t("home")}
       className="sticky bottom-0 z-[100] grid h-[58px] grid-cols-5 border-t border-line bg-card lg:hidden"
     >
-      {TABS.map((tab) => {
-        const active = isActive(pathname, tab.href);
-        return (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            aria-current={active ? "page" : undefined}
-            className={cx(
-              "flex flex-col items-center justify-center gap-[3px] no-underline",
-              active ? "text-brand" : "text-tertiary",
-            )}
-          >
-            <Icon name={tab.icon} size="md" />
-            <span className="text-[10.5px] font-semibold">{t(tab.key)}</span>
-          </Link>
-        );
-      })}
+      {/* Five fixed cells either way, so the bar's geometry is in the shell and
+          only the active tint arrives later. */}
+      <Suspense fallback={<TabLinks pathname={null} />}>
+        <LiveTabLinks />
+      </Suspense>
     </nav>
   );
 }

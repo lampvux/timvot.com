@@ -73,7 +73,11 @@
     "sortNewest": "Newest release",
     "emptyTitle": "Nothing matches all of these filters.",
     "emptyBody": "Removing {filter} gives {count} results.",
-    "emptyBodyNoSuggestion": "Try widening the price range or clearing a filter."
+    "emptyBodyNoSuggestion": "Try widening the price range or clearing a filter.",
+    "pagination": "Pagination",
+    "previous": "Previous",
+    "next": "Next",
+    "pageOf": "Page {page} of {pages} · {total} rackets"
   },
   "racket": {
     "cataloguedVariant": "Catalogued variant",

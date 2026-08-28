@@ -217,6 +217,49 @@ by the `is_admin()` policies, and `scripts/scraper/env.ts` reads both `.env` and
 `supabase/scraped-catalogue.sql`, which applies through psql or the Supabase SQL editor
 with no key at all. Apply the migrations first — the file assumes the schema exists.
 
+**Thumbnails.** `npm run scrape:images` now writes a second object beside each stored
+image — a ~400px webp at `<same-key>-thumb.webp` — and records it in
+`racket_images.thumb_url`, with the hero's copy denormalised onto
+`rackets.hero_thumb_url`. The catalogue grid serves that directly with `unoptimized`,
+which is what keeps 3.010 rackets inside Vercel Hobby's 5.000 image transformations a
+month; past that allowance the optimizer answers 402 and cards render their alt text.
+Resizing costs one pass over bytes the crawler already downloaded, and a frame `sharp`
+cannot decode simply produces no thumbnail — the columns are nullable and the card falls
+back to the full-size original.
+
+Images crawled *before* thumbnails existed do not get one from a re-run: `scrape:images`
+skips rackets that already have a gallery, which is what makes it re-runnable. Backfill
+those from the bucket instead of re-crawling every manufacturer site:
+
+```bash
+npm run images:thumbs -- --dry-run   # count what is missing, write nothing
+npm run images:thumbs                # download from Storage, resize, upload, record
+```
+
+It only looks at rows where `thumb_url` is null, so it is safe to interrupt and re-run,
+and contacts no manufacturer.
+
+Apply `supabase/migrations/20260828000000_image_thumbnails.sql` before deploying the code
+that reads those columns. If you forget, the app notices: it retries the racket query
+without them and logs `thumbnail columns are missing`, so you get the full catalogue
+without thumbnails rather than the eighteen-racket seed fallback.
+
+**Publishing the change.** The app serves prices from prerendered pages, so a successful
+`--sync-db` also asks the deployment to drop the caches it just invalidated:
+
+```bash
+REVALIDATE_URL=https://<your-app>/api/revalidate   # the deployed route
+REVALIDATE_SECRET=<same value as the deployment>   # bearer secret, any length
+```
+
+Both are optional and neither is needed locally: with them unset the scraper says so and
+carries on, and the site picks the new prices up when its `cacheLife` window expires. They
+exist because Vercel Hobby caps cron jobs at once per day with ±59 minutes of slop, so a
+schedule cannot be what publishes a price change — the writer has to be. The call fires
+only when the sync reported clean, so a partial write holds the last good catalogue rather
+than publishing half of a new one, and a failure to reach the deployment is a warning
+rather than a failed run.
+
 **Running it on a schedule.** `npm run scrape:refresh` is the shape meant for a cron
 job or a Windows scheduled task: a complete walk of the four sites, no browser, and a
 write straight into Postgres. A full walk takes roughly eight minutes and costs about

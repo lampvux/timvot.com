@@ -1,7 +1,9 @@
 import "server-only";
 
 import { cache } from "react";
+import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { courtScore } from "@/lib/court-score";
 import { balanceTypeOf, median } from "@/lib/format";
 import type {
@@ -12,11 +14,13 @@ import type {
   OfferWithSeller,
   PricePoint,
   Racket,
+  RacketVariant,
   RacketWithMarket,
   Review,
   Seller,
 } from "@/lib/types";
 import * as seed from "./seed";
+import { TAG } from "./tags";
 import {
   mapBrand,
   mapGuide,
@@ -26,6 +30,8 @@ import {
   mapReview,
   mapSeller,
   RACKET_SELECT,
+  RACKET_SELECT_NO_THUMBS,
+  isMissingColumnError,
 } from "./mappers";
 
 /**
@@ -99,8 +105,75 @@ async function selectAll<T>(
   return { data: all, error: null };
 }
 
-/** Deduped per request by React `cache`, so a page hits the DB once. */
-export const loadSnapshot = cache(async (): Promise<Snapshot> => {
+/**
+ * Read every racket, once with thumbnails and once without if the schema is
+ * behind the code.
+ *
+ * PostgREST fails the whole query on an unknown column, and the caller answers
+ * any error by falling back to the seeded catalogue — so deploying the
+ * thumbnail columns ahead of their migration would quietly serve eighteen
+ * rackets instead of three thousand. Retrying without them costs one wasted
+ * round trip in that one situation and nothing at all afterwards, and the
+ * degraded result is "no thumbnails", not "no catalogue".
+ */
+async function readRackets(supabase: SupabaseClient) {
+  const withThumbs = await selectAll((from, to) =>
+    supabase.from("rackets").select(RACKET_SELECT).order("id").range(from, to),
+  );
+
+  if (!withThumbs.error || !isMissingColumnError(withThumbs.error.message)) {
+    return withThumbs;
+  }
+
+  console.warn(
+    "[repository] rackets: thumbnail columns are missing, so the catalogue is " +
+      "being read without them. Apply supabase/migrations/" +
+      "20260828000000_image_thumbnails.sql and redeploy.",
+  );
+
+  return selectAll((from, to) =>
+    supabase
+      .from("rackets")
+      .select(RACKET_SELECT_NO_THUMBS)
+      .order("id")
+      .range(from, to),
+  );
+}
+
+/**
+ * The catalogue read, cached across requests rather than rebuilt for each one.
+ *
+ * `use cache` is what makes a route holding this data prerenderable: without
+ * it Next treats the Supabase call as runtime data and refuses to build a
+ * static shell — "encountered uncached or runtime data during prerendering".
+ * On Vercel Hobby that matters more than the cache itself, because a
+ * prerendered page served from the CDN does not invoke the function at all,
+ * and Active CPU is the budget the free plan actually rations.
+ *
+ * The tags are per table so `scrape:sync` can invalidate what it just wrote
+ * instead of waiting out a timer — see `app/api/revalidate/route.ts`.
+ *
+ * Nothing in here may read `cookies()` or `headers()`: a cached scope has no
+ * request to read them from. `createStaticClient()` is cookie-free by design,
+ * which is why it is the client used here and not `createClient()`.
+ *
+ * Deliberately *not* `use cache: remote`. That needs a platform cache handler
+ * and bills for it; the in-memory default plus prerendering is the right shape
+ * on this plan.
+ */
+async function readSnapshot(): Promise<Snapshot> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(
+    TAG.brands,
+    TAG.rackets,
+    TAG.sellers,
+    TAG.offers,
+    TAG.pricePoints,
+    TAG.reviews,
+    TAG.guides,
+  );
+
   const supabase = createStaticClient();
   if (!supabase) return seedSnapshot();
 
@@ -108,9 +181,7 @@ export const loadSnapshot = cache(async (): Promise<Snapshot> => {
     const [brandRows, racketRows, sellerRows, offerRows, historyRows, reviewRows, guideRows] =
       await Promise.all([
         supabase.from("brands").select("*").order("name"),
-        selectAll((from, to) =>
-          supabase.from("rackets").select(RACKET_SELECT).order("id").range(from, to),
-        ),
+        readRackets(supabase),
         supabase.from("sellers").select("*"),
         selectAll((from, to) =>
           supabase
@@ -168,18 +239,138 @@ export const loadSnapshot = cache(async (): Promise<Snapshot> => {
   } catch {
     return seedSnapshot();
   }
+}
+
+/** Deduped per request by React `cache` on top of the cross-request
+ *  `use cache`, so one render hits the cache once rather than per caller. */
+export const loadSnapshot = cache(readSnapshot);
+
+/* --------------------------------------------------------------- index */
+
+/**
+ * The snapshot, plus the lookups every read below needs.
+ *
+ * `enrich` runs once per racket, and it used to answer "which offers, reviews
+ * and price points are mine?" by scanning the whole of each array. That is
+ * rackets × offers, rackets × reviews and rackets × price points — and the
+ * price table grows by ~3.265 rows on every `scrape:refresh`, so the cost went
+ * up on the scraper's schedule rather than on the feature backlog. At 3.010
+ * rackets and ninety days of scrapes it is roughly 880 million array steps for
+ * one render of the home page.
+ *
+ * Grouping the three tables once turns every one of those scans into a map
+ * read. The work becomes rackets + offers + reviews + price points, and the
+ * gap widens with each scrape instead of closing.
+ *
+ * Nothing here changes a public signature: callers, and the seeded fallback,
+ * cannot tell the difference.
+ */
+interface Index {
+  snapshot: Snapshot;
+  /** Every offer, live or not, by racket. `getOffersForRacket` filters. */
+  offersByRacket: Map<string, Offer[]>;
+  offersBySeller: Map<string, Offer[]>;
+  reviewsByRacket: Map<string, Review[]>;
+  /** Ascending by `observedOn`. Sorted once here, never again per caller. */
+  historyByVariant: Map<string, PricePoint[]>;
+  /** Live offers only — this is what decides the headline variant. */
+  liveOfferCountByVariant: Map<string, number>;
+  sellersById: Map<string, Seller>;
+  variantsById: Map<string, RacketVariant>;
+  /** Keyed `brandSlug/slug`, so a detail page is a lookup and not a scan. */
+  enrichedByPath: Map<string, RacketWithMarket>;
+  enrichedBySlug: Map<string, RacketWithMarket>;
+  enriched: RacketWithMarket[];
+}
+
+/** Push `value` onto the array at `key`, creating it on first use. */
+function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const existing = map.get(key);
+  if (existing) existing.push(value);
+  else map.set(key, [value]);
+}
+
+const EMPTY_OFFERS: readonly Offer[] = [];
+const EMPTY_REVIEWS: readonly Review[] = [];
+const EMPTY_POINTS: readonly PricePoint[] = [];
+
+/**
+ * Built once per request, behind React `cache`, and shared by every read.
+ *
+ * Enrichment happens here too: `getRackets`, `getRacket` and `getDeals` all
+ * want the same enriched list, and computing it three times was the second
+ * half of the same problem.
+ */
+const loadIndex = cache(async (): Promise<Index> => {
+  const snapshot = await loadSnapshot();
+
+  const offersByRacket = new Map<string, Offer[]>();
+  const offersBySeller = new Map<string, Offer[]>();
+  const liveOfferCountByVariant = new Map<string, number>();
+  for (const offer of snapshot.offers) {
+    push(offersByRacket, offer.racketId, offer);
+    push(offersBySeller, offer.sellerId, offer);
+    if (offer.status === "live") {
+      liveOfferCountByVariant.set(
+        offer.variantId,
+        (liveOfferCountByVariant.get(offer.variantId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const reviewsByRacket = new Map<string, Review[]>();
+  for (const review of snapshot.reviews) push(reviewsByRacket, review.racketId, review);
+
+  const historyByVariant = new Map<string, PricePoint[]>();
+  for (const point of snapshot.history) push(historyByVariant, point.variantId, point);
+  // Supabase already orders by `observed_on`, but the seed does not promise to,
+  // and every caller downstream assumes ascending. Sorting the groups is cheap;
+  // sorting the whole table once per variant was not.
+  for (const points of historyByVariant.values())
+    points.sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+  const sellersById = new Map(snapshot.sellers.map((s) => [s.id, s]));
+  const variantsById = new Map(
+    snapshot.rackets.flatMap((r) => r.variants.map((v) => [v.id, v] as const)),
+  );
+
+  const index: Index = {
+    snapshot,
+    offersByRacket,
+    offersBySeller,
+    reviewsByRacket,
+    historyByVariant,
+    liveOfferCountByVariant,
+    sellersById,
+    variantsById,
+    enrichedByPath: new Map(),
+    enrichedBySlug: new Map(),
+    enriched: [],
+  };
+
+  index.enriched = snapshot.rackets.map((racket) => enrich(index, racket));
+  for (const racket of index.enriched) {
+    index.enrichedByPath.set(`${racket.brandSlug}/${racket.slug}`, racket);
+    // First wins: `getRacketsBySlugs` resolves a bare slug, and two brands
+    // could in principle share one.
+    if (!index.enrichedBySlug.has(racket.slug))
+      index.enrichedBySlug.set(racket.slug, racket);
+  }
+
+  return index;
 });
 
 /* ------------------------------------------------------------ enrichment */
 
-function enrich(snapshot: Snapshot, racket: Racket): RacketWithMarket {
-  const variantIds = new Set(racket.variants.map((v) => v.id));
-  const liveOffers = snapshot.offers.filter(
-    (o) => o.racketId === racket.id && o.qtyAvailable > 0,
+function enrich(index: Index, racket: Racket): RacketWithMarket {
+  const liveOffers = (index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS).filter(
+    (o) => o.qtyAvailable > 0,
   );
-  const racketReviews = snapshot.reviews.filter((r) => r.racketId === racket.id);
-  const history = snapshot.history.filter((p) => variantIds.has(p.variantId));
-  const score = courtScore(racket, racketReviews);
+  const racketReviews = index.reviewsByRacket.get(racket.id) ?? EMPTY_REVIEWS;
+  const history = racket.variants
+    .flatMap((v) => index.historyByVariant.get(v.id) ?? EMPTY_POINTS)
+    .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+  const score = courtScore(racket, racketReviews as Review[]);
 
   return {
     ...racket,
@@ -198,8 +389,7 @@ function enrich(snapshot: Snapshot, racket: Racket): RacketWithMarket {
 }
 
 export const getRackets = cache(async (): Promise<RacketWithMarket[]> => {
-  const snapshot = await loadSnapshot();
-  return snapshot.rackets.map((racket) => enrich(snapshot, racket));
+  return (await loadIndex()).enriched;
 });
 
 export const getBrands = cache(async (): Promise<Brand[]> => {
@@ -218,38 +408,31 @@ export async function getRacket(
   brandSlug: string,
   racketSlug: string,
 ): Promise<RacketWithMarket | null> {
-  const rackets = await getRackets();
-  return (
-    rackets.find((r) => r.brandSlug === brandSlug && r.slug === racketSlug) ??
-    null
-  );
+  const index = await loadIndex();
+  return index.enrichedByPath.get(`${brandSlug}/${racketSlug}`) ?? null;
 }
 
 export async function getRacketsBySlugs(
   slugs: string[],
 ): Promise<RacketWithMarket[]> {
   if (slugs.length === 0) return [];
-  const rackets = await getRackets();
+  const index = await loadIndex();
   // Preserve the order the user picked them in.
   return slugs
-    .map((slug) => rackets.find((r) => r.slug === slug))
+    .map((slug) => index.enrichedBySlug.get(slug))
     .filter((r): r is RacketWithMarket => Boolean(r));
 }
 
 export async function getOffersForRacket(
   racketId: string,
 ): Promise<OfferWithSeller[]> {
-  const snapshot = await loadSnapshot();
-  const sellers = new Map(snapshot.sellers.map((s) => [s.id, s]));
-  const variants = new Map(
-    snapshot.rackets.flatMap((r) => r.variants.map((v) => [v.id, v] as const)),
-  );
+  const index = await loadIndex();
 
-  return snapshot.offers
-    .filter((o) => o.racketId === racketId && o.status === "live")
+  return (index.offersByRacket.get(racketId) ?? EMPTY_OFFERS)
+    .filter((o) => o.status === "live")
     .map((offer) => {
-      const seller = sellers.get(offer.sellerId);
-      const variant = variants.get(offer.variantId);
+      const seller = index.sellersById.get(offer.sellerId);
+      const variant = index.variantsById.get(offer.variantId);
       if (!seller || !variant) return null;
       return { ...offer, seller, variant };
     })
@@ -261,20 +444,16 @@ export async function getOffersForRacket(
 export async function getOffersForSeller(
   sellerId: string,
 ): Promise<(OfferWithSeller & { racket: Racket })[]> {
-  const snapshot = await loadSnapshot();
-  const seller = snapshot.sellers.find((s) => s.id === sellerId);
+  const index = await loadIndex();
+  const seller = index.sellersById.get(sellerId);
   if (!seller) return [];
 
-  const rackets = new Map(snapshot.rackets.map((r) => [r.id, r]));
-  const variants = new Map(
-    snapshot.rackets.flatMap((r) => r.variants.map((v) => [v.id, v] as const)),
-  );
+  const rackets = new Map(index.snapshot.rackets.map((r) => [r.id, r]));
 
-  return snapshot.offers
-    .filter((o) => o.sellerId === sellerId)
+  return (index.offersBySeller.get(sellerId) ?? EMPTY_OFFERS)
     .map((offer) => {
       const racket = rackets.get(offer.racketId);
-      const variant = variants.get(offer.variantId);
+      const variant = index.variantsById.get(offer.variantId);
       if (!racket || !variant) return null;
       return { ...offer, seller, variant, racket };
     })
@@ -288,10 +467,10 @@ export async function getSeller(slug: string): Promise<Seller | null> {
 }
 
 export async function getReviewsForRacket(racketId: string): Promise<Review[]> {
-  const snapshot = await loadSnapshot();
-  return snapshot.reviews
-    .filter((r) => r.racketId === racketId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const index = await loadIndex();
+  return [...(index.reviewsByRacket.get(racketId) ?? EMPTY_REVIEWS)].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
 }
 
 /* ------------------------------------------------------------ price data */
@@ -305,15 +484,15 @@ export interface VariantPrice {
   points: PricePoint[];
 }
 
-export async function getVariantPrice(
-  variantId: string,
-): Promise<VariantPrice | null> {
-  const snapshot = await loadSnapshot();
-  const points = snapshot.history
-    .filter((p) => p.variantId === variantId)
-    .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
-
-  if (points.length === 0) return null;
+/**
+ * Shape one variant's price series. The points arrive already sorted from the
+ * index, which is why there is no `.sort()` here — `getDeals` calls this once
+ * per variant, and sorting the whole price table 3.265 times was most of what
+ * made the deals page expensive.
+ */
+function variantPrice(index: Index, variantId: string): VariantPrice | null {
+  const points = index.historyByVariant.get(variantId);
+  if (!points || points.length === 0) return null;
 
   const latest = points[points.length - 1].price;
   const lastThird = points.slice(Math.floor((points.length * 2) / 3));
@@ -328,6 +507,12 @@ export async function getVariantPrice(
   };
 }
 
+export async function getVariantPrice(
+  variantId: string,
+): Promise<VariantPrice | null> {
+  return variantPrice(await loadIndex(), variantId);
+}
+
 /**
  * The variant a racket's headline price and chart are drawn from: the one the
  * most sellers actually stock, because that is the one a buyer is comparing.
@@ -336,25 +521,21 @@ export async function getVariantPrice(
 export async function getHeadlineVariantPrice(
   racket: RacketWithMarket,
 ): Promise<VariantPrice | null> {
-  const snapshot = await loadSnapshot();
-  const offerCounts = new Map<string, number>();
-  for (const offer of snapshot.offers) {
-    if (offer.racketId !== racket.id || offer.status !== "live") continue;
-    offerCounts.set(offer.variantId, (offerCounts.get(offer.variantId) ?? 0) + 1);
-  }
+  const index = await loadIndex();
+  const counts = index.liveOfferCountByVariant;
 
   const candidates = racket.variants.filter((variant) =>
-    racket.history.some((point) => point.variantId === variant.id),
+    index.historyByVariant.has(variant.id),
   );
   if (candidates.length === 0) return null;
 
-  const headline = candidates.sort(
+  const headline = [...candidates].sort(
     (a, b) =>
-      (offerCounts.get(b.id) ?? 0) - (offerCounts.get(a.id) ?? 0) ||
+      (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) ||
       a.weightGrams - b.weightGrams,
   )[0];
 
-  return getVariantPrice(headline.id);
+  return variantPrice(index, headline.id);
 }
 
 /* -------------------------------------------------------------- deals */
@@ -366,12 +547,12 @@ export interface Deal {
 }
 
 export async function getDeals(): Promise<Deal[]> {
-  const rackets = await getRackets();
+  const index = await loadIndex();
   const deals: Deal[] = [];
 
-  for (const racket of rackets) {
+  for (const racket of index.enriched) {
     for (const variant of racket.variants) {
-      const price = await getVariantPrice(variant.id);
+      const price = variantPrice(index, variant.id);
       if (!price) continue;
       if (price.latest < price.median30 && price.delta30 < 0) {
         deals.push({ racket, variantId: variant.id, price });

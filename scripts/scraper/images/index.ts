@@ -41,6 +41,7 @@ import {
   type BucketStrategy,
   type ImageStore,
 } from "./storage";
+import { makeThumbnail } from "./thumbnail";
 import { BrowserSession } from "./browser";
 import type { NormalizedItem } from "../normalizer";
 
@@ -712,6 +713,7 @@ export async function crawlImages() {
     storage_bucket: string;
     storage_path: string;
     public_url: string;
+    thumb_url: string | null;
     position: number;
     is_hero: boolean;
     content_type: string;
@@ -724,7 +726,9 @@ export async function crawlImages() {
 
   const rows: ImageRow[] = [];
   const heroByRacket = new Map<string, string>();
+  const heroThumbByRacket = new Map<string, string>();
   let storedImages = 0;
+  let thumbnailsMade = 0;
   let duplicateImages = 0;
   let done = 0;
 
@@ -854,6 +858,11 @@ export async function crawlImages() {
       seenHere.add(checksum);
 
       try {
+        // Made from bytes already in memory, so this costs one pass over an
+        // image we downloaded anyway. Null when sharp cannot decode the frame
+        // or the result would not be smaller — both fall back to the original.
+        const thumb = await makeThumbnail(file.bytes);
+
         const object = await store!.put({
           provider: job.provider.id,
           brandSlug: job.racket.brandSlug,
@@ -862,10 +871,15 @@ export async function crawlImages() {
           body: file.bytes,
           contentType: file.contentType,
           checksum,
+          thumb,
         });
 
         const isHero = stored === 0;
-        if (isHero) heroByRacket.set(job.racket.id, object.publicUrl);
+        if (isHero) {
+          heroByRacket.set(job.racket.id, object.publicUrl);
+          if (object.thumbUrl) heroThumbByRacket.set(job.racket.id, object.thumbUrl);
+        }
+        if (thumb) thumbnailsMade++;
 
         rows.push({
           id: `img-${job.racket.slug}-${object.checksum.slice(0, 12)}`,
@@ -876,6 +890,7 @@ export async function crawlImages() {
           storage_bucket: object.bucket,
           storage_path: object.path,
           public_url: object.publicUrl,
+          thumb_url: object.thumbUrl,
           position: stored,
           is_hero: isHero,
           content_type: object.contentType,
@@ -1073,11 +1088,19 @@ export async function crawlImages() {
     for (const [racketId, url] of heroByRacket) {
       const { error } = await supabase
         .from("rackets")
-        .update({ hero_image_url: url })
+        .update({
+          hero_image_url: url,
+          // Null when this hero produced no thumbnail, which is also what the
+          // column should say — the card falls back to the full-size image.
+          hero_thumb_url: heroThumbByRacket.get(racketId) ?? null,
+        })
         .eq("id", racketId);
       if (!error) heroesWritten++;
     }
-    console.log(`   hero_image_url set on ${heroesWritten}/${heroByRacket.size} rackets`);
+    console.log(
+      `   hero_image_url set on ${heroesWritten}/${heroByRacket.size} rackets, ` +
+        `${heroThumbByRacket.size} with a thumbnail`,
+    );
   }
 
   // --- Report --------------------------------------------------------------

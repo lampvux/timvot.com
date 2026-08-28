@@ -16,15 +16,51 @@ import type {
  * and carries both locales together. This file is the only place that knows.
  */
 
-export const RACKET_SELECT = `
+/**
+ * The racket read, in two shapes.
+ *
+ * `RACKET_SELECT` is the one to use. `RACKET_SELECT_NO_THUMBS` exists for a
+ * single narrow case: a deployment that is ahead of its database.
+ *
+ * PostgREST rejects the whole query when it names a column the schema does not
+ * have, and `loadSnapshot` answers any query error by falling back to the
+ * seeded catalogue. So shipping the thumbnail columns before
+ * `20260828000000_image_thumbnails.sql` is applied does not show the catalogue
+ * without thumbnails — it shows eighteen seeded rackets instead of three
+ * thousand, with no error anywhere. That is the same class of silent
+ * truncation as the 1000-row cap, and it is worth one retry to avoid.
+ *
+ * Delete this pair once the migration is applied everywhere it needs to be.
+ */
+const RACKET_COLUMNS = `
   id, slug, name, release_year, balance_point_mm, shaft_flex,
   shaft_diameter_mm, frame_shape, frame_material, max_tension_min_lbs,
   max_tension_max_lbs, length_mm, string_pattern, msrp, currency,
   play_style_tags, skill_level, hero_image_url, summary_en, summary_vi,
   brand:brands!inner ( slug, name ),
-  variants:racket_variants ( id, racket_id, weight_class, weight_grams, grip_size, colourway, sku ),
-  images:racket_images ( id, racket_id, provider, source_url, source_page_url, storage_bucket, storage_path, public_url, position, is_hero, content_type, bytes, width, height, checksum, colourway )
+  variants:racket_variants ( id, racket_id, weight_class, weight_grams, grip_size, colourway, sku )`;
+
+const IMAGE_COLUMNS =
+  "id, racket_id, provider, source_url, source_page_url, storage_bucket, " +
+  "storage_path, public_url, position, is_hero, content_type, bytes, width, " +
+  "height, checksum, colourway";
+
+export const RACKET_SELECT = `${RACKET_COLUMNS.replace(
+  "hero_image_url,",
+  "hero_image_url, hero_thumb_url,",
+)},
+  images:racket_images ( ${IMAGE_COLUMNS}, thumb_url )
 `;
+
+export const RACKET_SELECT_NO_THUMBS = `${RACKET_COLUMNS},
+  images:racket_images ( ${IMAGE_COLUMNS} )
+`;
+
+/** True for the PostgREST error that means "this column is not in the schema
+ *  yet", which is the only error the fallback select can fix. */
+export function isMissingColumnError(message: string): boolean {
+  return /column .* does not exist|could not find the .* column/i.test(message);
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>;
@@ -60,6 +96,7 @@ export function mapRacketImage(row: Row): RacketImage {
     storageBucket: row.storage_bucket,
     storagePath: row.storage_path,
     publicUrl: row.public_url ?? null,
+    thumbUrl: row.thumb_url ?? null,
     position: row.position ?? 0,
     isHero: Boolean(row.is_hero),
     contentType: row.content_type ?? null,
@@ -76,7 +113,11 @@ export function mapRacket(row: Row): Racket {
   const images = (row.images ?? [])
     .map(mapRacketImage)
     .sort((a: RacketImage, b: RacketImage) => a.position - b.position);
-  const heroFromGallery = images.find((img: RacketImage) => img.isHero)?.publicUrl ?? images[0]?.publicUrl ?? null;
+  // Same hero for both: whichever row is flagged, else the first by position.
+  const hero =
+    images.find((img: RacketImage) => img.isHero) ?? images[0] ?? null;
+  const heroFromGallery = hero?.publicUrl ?? null;
+  const thumbFromGallery = hero?.thumbUrl ?? null;
 
   return {
     id: row.id,
@@ -98,6 +139,7 @@ export function mapRacket(row: Row): Racket {
     playStyleTags: row.play_style_tags ?? [],
     skillLevel: row.skill_level,
     heroImageUrl: row.hero_image_url ?? heroFromGallery,
+    heroThumbUrl: row.hero_thumb_url ?? thumbFromGallery,
     images,
     summary: { en: row.summary_en ?? "", vi: row.summary_vi ?? "" },
     variants: (row.variants ?? []).map(mapVariant),
@@ -114,7 +156,7 @@ export function mapSeller(row: Row): Seller {
     rating: Number(row.rating ?? 0),
     ordersCount: row.orders_count ?? 0,
     disputeRate: Number(row.dispute_rate ?? 0),
-    since: row.since ?? new Date().getFullYear(),
+    since: row.since ?? 2024,
     about: { en: row.about_en ?? "", vi: row.about_vi ?? "" },
   };
 }

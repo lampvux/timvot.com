@@ -73,7 +73,11 @@
     "sortNewest": "Ra mắt gần nhất",
     "emptyTitle": "Không mẫu nào khớp hết các bộ lọc này.",
     "emptyBody": "Bỏ {filter} sẽ còn {count} kết quả.",
-    "emptyBodyNoSuggestion": "Thử nới khoảng giá hoặc bỏ bớt một bộ lọc."
+    "emptyBodyNoSuggestion": "Thử nới khoảng giá hoặc bỏ bớt một bộ lọc.",
+    "pagination": "Phân trang",
+    "previous": "Trước",
+    "next": "Tiếp",
+    "pageOf": "Trang {page} trên {pages} · {total} vợt"
   },
   "racket": {
     "cataloguedVariant": "Phiên bản đã lập hồ sơ",
