@@ -5,7 +5,7 @@ live in `CLAUDE.md` under **Performance rules the code enforces** — that secti
 thing future features must follow. This file tracks *this* body of work.
 
 **Status:** phases 1, 2, 3, 3b, 4 and 5 done. Phase 0 partly done. **One phase remains: 6, and it is optional.**
-**Next:** deploy and measure (phase 0's open items). Phase 6 is a memory argument, not a speed one — measure first.
+**Next:** deploy and measure (phase 0's open items). Optional: the full gallery crawl, and phase 6.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
 
@@ -348,10 +348,31 @@ intact. The degraded state is "no thumbnails", not "no catalogue".
 Both select shapes are checked to name identical columns apart from the thumbnail ones, so
 the fallback cannot silently drop a field.
 
-**Still to do, and it needs a real run:** `npm run scrape:images` has not been executed
-against the live bucket from here, so no thumbnails exist yet and every card is still on
-the `heroImageUrl` path. Apply the migration, run the crawler, and the grid moves off the
-metered optimizer on its own.
+#### Applied and run — 2026-08-28
+
+- [x] Migration applied via `npm run migrate` (`DIRECT_URL`). Columns verified present.
+- [x] **`scripts/scraper/images/backfill-thumbnails.ts` written and run.** This was a gap
+      in the phase as first shipped: `scrape:images` writes a thumbnail only for images it
+      stores *now*, and it skips rackets that already have a gallery — that skip is what
+      makes the crawler re-runnable. So the 2.194 images crawled before thumbnails existed
+      would never have got one. `--refresh` would fix it by re-crawling every manufacturer
+      site; the backfill reads the bytes out of our own bucket instead, contacting nobody.
+      **2.188 thumbnails written, 0 failed**, plus 6 in a verification batch.
+- [x] `scrape:images` run (bounded, `--limit=25`) to exercise the crawler's own thumbnail
+      path: 14 rackets stored, 70 images, **14/14 with a thumbnail**.
+
+**State now:** 2.264 images, **0 without a thumbnail**; 429 of 3.056 rackets have a hero
+and all 429 have a hero thumbnail. Measured on four heroes: ~93 KB → 8 KB, about 91%
+smaller. The live catalogue serves 14 thumbnails on page one with **zero `/_next/image`
+calls**; the 126 prerendered `/_next/image` references left are the detail-page gallery,
+which is where the optimizer is meant to stay.
+
+**Not done — the full gallery crawl.** 2.627 rackets still have no image at all. A full
+`scrape:images` attempts roughly 1.250 of them (the rest are brands with no manufacturer
+site in `providers.ts` — li-ning, fleet, vs, proace, felet, kawasaki, flypower, adidas).
+That is hours of browser-driven external crawling, and the crawler records rows only after
+the whole walk, so an interrupted run loses its work. Worth running deliberately, not as a
+step inside another task.
 
 ### Phase 4 — Cache Components · ✅ done
 

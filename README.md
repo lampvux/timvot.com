@@ -227,6 +227,18 @@ Resizing costs one pass over bytes the crawler already downloaded, and a frame `
 cannot decode simply produces no thumbnail — the columns are nullable and the card falls
 back to the full-size original.
 
+Images crawled *before* thumbnails existed do not get one from a re-run: `scrape:images`
+skips rackets that already have a gallery, which is what makes it re-runnable. Backfill
+those from the bucket instead of re-crawling every manufacturer site:
+
+```bash
+npm run images:thumbs -- --dry-run   # count what is missing, write nothing
+npm run images:thumbs                # download from Storage, resize, upload, record
+```
+
+It only looks at rows where `thumb_url` is null, so it is safe to interrupt and re-run,
+and contacts no manufacturer.
+
 Apply `supabase/migrations/20260828000000_image_thumbnails.sql` before deploying the code
 that reads those columns. If you forget, the app notices: it retries the racket query
 without them and logs `thumbnail columns are missing`, so you get the full catalogue
