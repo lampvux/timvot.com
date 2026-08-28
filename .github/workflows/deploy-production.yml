@@ -109,29 +109,32 @@ jobs:
           cores="$(nproc)"
           asked="${{ inputs.prerendered_rackets }}"
 
-          # Next gives static generation one worker per core, and a worker runs
-          # out of heap near 145 pages. Raising the heap does not move this:
-          # `build/index.js` creates the static worker with `isolatedMemory: true`,
-          # which deletes --max-old-space-size from the worker's NODE_OPTIONS on
-          # purpose. Pages per worker is the only lever that actually binds.
+          # Next.js creates static workers with `isolatedMemory: true`, which
+          # deletes --max-old-space-size from worker processes' NODE_OPTIONS.
+          # By default Next calculates workers as `os.cpus().length - 1` (1 worker on 2-core runners),
+          # causing a single worker to attempt processing all pages and run out of V8 heap near ~70 pages.
           #
-          # This route contributes 2 pages per racket (one per locale) and the
-          # rest of the app about 75, so the most rackets this runner can take is
-          # (145 * cores - 75) / 2.
-          budget=$(( (145 * cores - 75) / 2 ))
+          # We set NEXT_BUILD_CPUS=4 (read by `next.config.ts`) to force Next.js to use 4 static workers.
+          # With 4 workers and ~55 pages per worker ceiling, this runner can process:
+          # (55 * 4 - 75) / 2 = 72 rackets (~219 pages).
+          workers=4
+          pages_per_worker_limit=55
+          budget=$(( (pages_per_worker_limit * workers - 75) / 2 ))
           rackets="$asked"
           if [ "$rackets" -gt "$budget" ]; then
             rackets="$budget"
-            echo "::warning::${asked} rackets needs more than this runner's ${cores} cores can build. Using ${rackets}, the most that fits. Nothing is lost from the catalogue — unlisted paths still serve an App Shell and upgrade in the background."
+            echo "::warning::${asked} rackets needs more than this runner's ${workers} workers can build. Using ${rackets}, the most that fits safely. Nothing is lost from the catalogue — unlisted paths still serve an App Shell and upgrade in the background."
           fi
 
           pages=$(( rackets * 2 + 75 ))
           echo "cores             : $cores"
+          echo "static workers    : $workers (via NEXT_BUILD_CPUS)"
           echo "requested rackets : $asked"
           echo "building rackets  : $rackets"
           echo "prerendered pages : ~$pages"
-          echo "pages per worker  : ~$(( pages / cores ))   (heap gives out near 145)"
+          echo "pages per worker  : ~$(( pages / workers ))   (heap ceiling near ~65-70 per worker)"
           echo "PRERENDERED_RACKETS=$rackets" >> "$GITHUB_ENV"
+          echo "NEXT_BUILD_CPUS=$workers" >> "$GITHUB_ENV"
 
       - name: Typecheck
         run: npm run typecheck
@@ -148,13 +151,10 @@ jobs:
 
       - name: Build with production settings
         env:
-          # Set by the fitting step above, which may have lowered what was asked
-          # for to what this runner's cores can actually build.
-          #
-          # No NODE_OPTIONS heap flag here: Next deletes --max-old-space-size
-          # from the static-generation worker (`isolatedMemory: true`), so it
-          # would do nothing and only look like a fix. Measured: a 7 GB parent
-          # heap crashed at the same page count as the default.
+          # NODE_OPTIONS increases heap size for parent Node process (Turbopack & TypeScript).
+          # NEXT_BUILD_CPUS forces Next static generation to use multiple workers.
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          NEXT_BUILD_CPUS: ${{ env.NEXT_BUILD_CPUS }}
           PRERENDERED_RACKETS: ${{ env.PRERENDERED_RACKETS }}
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
