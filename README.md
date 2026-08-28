@@ -318,9 +318,10 @@ npm run scrape:images -- --bucket-strategy=per-provider
 | ---- | ------- | ------------ |
 | `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn` |
 | `--limit=` | all | Cap the rackets crawled this run |
-| `--max-images=` | `12` | Images stored per racket, across all its colourway pages |
+| `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
 | `--min-pixels=` | `40000` | Drop anything smaller than 200×200 |
+| `--min-gallery=` | `2` | Below this, ask the brand's next provider too and keep the richer gallery; `0` disables |
 | `--bucket=` | `racket-images` | Or set `SUPABASE_IMAGE_BUCKET` |
 | `--bucket-strategy=` | `shared` | `shared` = one bucket, brand folders; `per-provider` = one bucket each |
 | `--refresh` | off | Re-crawl rackets that already have images |
@@ -369,9 +370,22 @@ a current-season line, not a catalogue, so two more official Yonex sites sit beh
 | `yonex-uk` | www.yonex.co.uk (Shopify) | 35 | The only official site publishing ASTROX 88D Pro/Tour and 88S Pro. |
 | `yonex-jp` | www.yonex.co.jp (product JSON) | 49 | The Japanese line, keyed by model code. One shot each. |
 
-They are declared in that order because `index.ts` takes the first provider that matches a
-racket and stops, so the extra properties only ever fill gaps rather than displacing a
-better gallery with a worse one.
+They are declared in that order because `index.ts` asks the first provider that matches a
+racket, so the extra properties only ever fill gaps rather than displacing a better gallery
+with a worse one.
+
+That ordering assumes the site declared first has the better photography, and for the US
+storefront it is nearly always right. Nearly: yonex.com carries a **one-shot placeholder**
+page for each of the ASTROX 88 D/S frames — it does not really sell them in the US, which
+is why yonex.co.uk is in this table at all — while the UK publishes six shots of each. Once
+the matcher learned to read `ASTROX 88 S PRO` as "Astrox 88S Pro", the placeholder started
+winning, and six flagship rackets would have gone from six photographs to one.
+
+So order still decides who is asked first, and a gallery that clears `--min-gallery`
+(default 2) still ends it there — no extra request is made for the ~90% of rackets whose
+first provider answers properly. Only a suspiciously thin result costs a look at the next
+site, and then the **richer** gallery is the one kept. Set `--min-gallery=0` to switch the
+second look off entirely.
 
 Japan is the odd one out and needed a new source kind. It has no per-product page — every
 card links out to yonexshop.jp — and it names products in katakana, which will never
@@ -562,6 +576,21 @@ letters are collapsed back into the initialism they came from, because Proace wr
 `S.D.S 350` where the retailers write `SDS 350`. Where a source supplies a product name,
 the name and the URL slug are both tried and the better result is kept.
 
+**Where the space inside a model number goes.** Yonex prints `ASTROX 88 S PRO`; every
+Vietnamese retailer, and so this catalogue, writes "Astrox 88S Pro". Those tokenise
+differently and the strict comparison calls them different rackets — which cost the whole
+ASTROX 88 D/S family, Yonex's best-selling doubles frames, their photography. So when the
+strict comparison fails, both sides are re-cut at every letter/digit boundary (`88s` →
+`88`,`s`) and compared once more.
+
+That second pass has to clear a **higher** bar than the first: nothing may trail the model.
+The two allowances do not compose — re-cutting `fx7` into `fx` + `7` manufactures exactly
+the SKU fragment the trailing-token rule forgives, and stacking them hands "Promax FX" the
+PROMAX FX7 page, "Astrox 22" the ASTROX 22RX and "Prototype X-1" the X1.2. Requiring the
+re-cut to be exact keeps all 23 of the matches it wins — every one of them verified against
+the name the manufacturer prints — and refuses those four. It also subsumes the Gosen alias
+below: "Trivista GX800" now reaches `TRIVISTA GX 800` without one.
+
 **Where the manufacturer and the catalogue disagree about the name.** Victor prints a code
 on the frame — `ARS-100X`, `TK-F`, `BRS-12` — and spells the name out on the web page:
 Auraspeed 100X, Thruster F, Brave Sword 12. The catalogue holds both forms, because the
@@ -732,6 +761,41 @@ one that did not is HT Power 30-V2, a discontinued frame whose page is still in 
 sitemap and still references three photographs — all three of which now 404 on FZ's own
 server, through the CDN and directly. There is nothing to fetch, and the run reports it
 rather than papering over it.
+
+**Yonex needed the same treatment, for the opposite reason.** The gallery crawler matches
+66 of the 77 racquets yonex.com publishes. The other 11 are the aluminium Muscle Power and
+B-series beginners' frames, the two Isometric TR training racquets, the E13 pair and the
+Muscle Power 2 Junior — frames no Vietnamese retailer in the scrape stocks, so there was
+no row for their photography to hang off and `scrape:images` reported them unmatched every
+run. `scripts/scraper/yonex-catalogue.ts` writes those rows, and follows every rule the
+Forza importer set: real values where Yonex prints them, the pipeline's own placeholders
+where it does not, `msrp` 0 with the run saying so, and existing rows never touched.
+
+```bash
+npx tsx scripts/scraper/yonex-catalogue.ts            # crawl and report, write nothing
+npx tsx scripts/scraper/yonex-catalogue.ts --sync-db  # insert the rows we do not hold
+```
+
+Yonex publishes `Frame`, `Shaft`, `Flex`, `Weight / Grip`, `Stringing Advice`, `Length`,
+`Color(s)` and `Item Code`, and publishes **balance for no frame on any of its three
+sites** — so unlike Forza there is nothing to key a balance mapping to, and these 11 take
+the flat 295 mm that 3025 of the catalogue's other rackets already carry. Two readings
+needed care:
+
+- **`Hi-Flex` is the flexible end of Yonex's range, not a stiff one.** The name describes
+  how much flex the shaft has. Mapped to `flexible`; `Extra Stiff` is `extra-stiff`.
+- **`U (105g and below)` is a ceiling, not a measurement**, and it is the only weight the
+  four aluminium frames carry. The number kept is the 105 Yonex printed rather than a
+  midpoint invented here — every candidate is a guess about a racket that weighs *at most*
+  105 g, and only one of them is traceable to the page. `weight_class` has no U and U is
+  Yonex's heaviest class, so it lands in 2U. All four are named at the end of the run.
+
+**Whether the catalogue already holds a racket is a matching question, not an id lookup.**
+The id is minted from Yonex's spelling and the catalogue's came from retailers: Yonex
+prints `ASTROX 88 S PRO` and the catalogue holds `Astrox 88S Pro`, which are two different
+ids for one frame. Checking by id inserts a second row for seven frames already here — the
+whole ASTROX 88 D/S family plus NANOFLARE 1000 Z. So the importer asks `match.ts`, the
+same reconciliation the gallery crawler uses, and inserts 11 rather than 18.
 
 ### The one retailer, and the two brands that needed it
 

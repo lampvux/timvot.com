@@ -59,6 +59,46 @@ const seedSnapshot = (): Snapshot => ({
   source: "seed",
 });
 
+/**
+ * PostgREST's page size, and the reason this file has to page at all.
+ *
+ * A Supabase request is capped at `db-max-rows` — 1000 by default — and a
+ * truncated response arrives with no error and nothing to say it was cut. The
+ * catalogue passed 1000 rackets some time ago, so the snapshot held the first
+ * 1000 and `getRacket` answered "no such racket" for the other 2037: every one
+ * of those detail pages 404ed, gallery and all, while the rows sat in Postgres.
+ * Five of the seven tables read here are over the cap now.
+ */
+const PAGE_SIZE = 1000;
+
+/**
+ * Read a whole table rather than its first page.
+ *
+ * `page` is a factory, not a query: a range has to be applied to a fresh
+ * builder each time round. Every caller orders by a unique column, because
+ * paging an unordered result is what silently duplicates some rows and drops
+ * others — Postgres makes no promise about row order between two statements.
+ */
+async function selectAll<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const all: T[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    if (!data || data.length === 0) break;
+
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+
+  return { data: all, error: null };
+}
+
 /** Deduped per request by React `cache`, so a page hits the DB once. */
 export const loadSnapshot = cache(async (): Promise<Snapshot> => {
   const supabase = createStaticClient();
@@ -68,11 +108,36 @@ export const loadSnapshot = cache(async (): Promise<Snapshot> => {
     const [brandRows, racketRows, sellerRows, offerRows, historyRows, reviewRows, guideRows] =
       await Promise.all([
         supabase.from("brands").select("*").order("name"),
-        supabase.from("rackets").select(RACKET_SELECT),
+        selectAll((from, to) =>
+          supabase.from("rackets").select(RACKET_SELECT).order("id").range(from, to),
+        ),
         supabase.from("sellers").select("*"),
-        supabase.from("offers").select("*").eq("status", "live"),
-        supabase.from("price_points").select("*").order("observed_on"),
-        supabase.from("reviews").select("*").eq("status", "published"),
+        selectAll((from, to) =>
+          supabase
+            .from("offers")
+            .select("*")
+            .eq("status", "live")
+            .order("id")
+            .range(from, to),
+        ),
+        // `observed_on` is what the chart wants and is not unique; `id` breaks
+        // the ties so the page boundaries are stable.
+        selectAll((from, to) =>
+          supabase
+            .from("price_points")
+            .select("*")
+            .order("observed_on")
+            .order("id")
+            .range(from, to),
+        ),
+        selectAll((from, to) =>
+          supabase
+            .from("reviews")
+            .select("*")
+            .eq("status", "published")
+            .order("id")
+            .range(from, to),
+        ),
         supabase.from("guides").select("*"),
       ]);
 

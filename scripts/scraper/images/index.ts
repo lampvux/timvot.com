@@ -64,6 +64,11 @@ interface CliOptions {
   /** Cap on colourway pages read per racket. */
   maxPages: number;
   minPixels: number;
+  /**
+   * A gallery this small is treated as a placeholder, and the next provider
+   * covering the brand is asked as well. See `Job.alternatives`.
+   */
+  minGallery: number;
   bucket: string;
   strategy: BucketStrategy;
   concurrency: number;
@@ -108,6 +113,10 @@ function parseArgs(): CliOptions {
     // 200×200 keeps out favicons and swatch chips without excluding a
     // legitimately small studio shot.
     minPixels: flags["min-pixels"] ? parseInt(String(flags["min-pixels"]), 10) : 200 * 200,
+    // Two: one photograph is a catalogue placeholder, and every site here that
+    // genuinely sells a frame publishes at least a second angle of it. Set 0 to
+    // switch the second look off and take the first provider's answer always.
+    minGallery: flags["min-gallery"] ? parseInt(String(flags["min-gallery"]), 10) : 2,
     bucket: String(flags.bucket ?? process.env.SUPABASE_IMAGE_BUCKET ?? "racket-images"),
     strategy: strategy === "per-provider" ? "per-provider" : "shared",
     concurrency: flags.concurrency ? parseInt(String(flags.concurrency), 10) : 3,
@@ -249,6 +258,8 @@ interface CrawledImage extends GalleryImage {
   contentType: string;
   width: number | null;
   height: number | null;
+  /** sha256 of `bytes`, computed once here and reused by the store. */
+  checksum: string;
 }
 
 interface RacketOutcome {
@@ -315,13 +326,27 @@ async function readGallery(
  * that comes back below `--min-pixels`, is dropped here rather than uploaded
  * and cleaned up later. A bucket full of 88×110 Magento thumbnails looks like a
  * working crawl in the row count and is useless on a spec page.
+ *
+ * `--max-images` counts *distinct photographs*, which is not the same as
+ * counting gallery entries. A Magento product page lists every shot twice —
+ * once in the main gallery and once under the colour swatch for the default
+ * colourway, at a second URL (`…-05.png` and `…-05_1.png`) holding byte-
+ * identical files. Slicing the entry list to the cap before noticing that spent
+ * half the budget on copies: NANOFLARE 002 FEEL publishes 18 entries that are
+ * 12 distinct photographs, and a cap of 12 entries stored 6 of them, dropping
+ * the six `all_*` studio shots that sat past the cut. So the cap is applied
+ * after the bytes are hashed, and `maxFetch` bounds the work that dedupe costs.
  */
 async function downloadGallery(
   images: (GalleryImage & { pageUrl: string })[],
   options: CliOptions,
   delayMs: number,
 ): Promise<CrawledImage[]> {
-  const wanted = images.slice(0, options.maxImages);
+  // Three entries per wanted photograph. Magento's duplication is 2×; the extra
+  // headroom covers a page that also carries a video poster or a size chart,
+  // and still refuses to walk a gallery of arbitrary length.
+  const maxFetch = Number.isFinite(options.maxImages) ? options.maxImages * 3 : images.length;
+  const wanted = images.slice(0, maxFetch);
 
   const downloaded = await pool(wanted, options.concurrency, delayMs, async (image) => {
     try {
@@ -347,13 +372,26 @@ async function downloadGallery(
         contentType,
         width: size?.width ?? null,
         height: size?.height ?? null,
+        checksum: sha256(res.body),
       } satisfies CrawledImage;
     } catch {
       return null;
     }
   });
 
-  return downloaded.filter((image): image is CrawledImage => image !== null);
+  // First-seen order, keyed on content. Position is the gallery's own ordering,
+  // so the copy that survives is the one the manufacturer listed first.
+  const unique: CrawledImage[] = [];
+  const seen = new Set<string>();
+  for (const image of downloaded) {
+    if (image === null) continue;
+    if (seen.has(image.checksum)) continue;
+    seen.add(image.checksum);
+    unique.push(image);
+    if (unique.length >= options.maxImages) break;
+  }
+
+  return unique;
 }
 
 /* -------------------------------------------------------------------- main */
@@ -511,6 +549,23 @@ export async function crawlImages() {
     /** The alias that matched, when the catalogue name itself did not. */
     matchedAs?: string;
     candidatesConsidered: number;
+    /**
+     * The other providers that also matched this racket, in declaration order.
+     *
+     * Provider order encodes which site is expected to have the better
+     * photography, and for a brand's own flagship storefront that is nearly
+     * always right. Nearly: yonex.com carries a one-shot placeholder page for
+     * the ASTROX 88 D/S family — frames it does not really sell in the US —
+     * while yonex.co.uk, declared second, publishes six shots of each. Taking
+     * the first provider that matches and asking no further question means the
+     * placeholder wins and the racket loses five photographs.
+     *
+     * So order still decides who is asked first, and a gallery that clears
+     * `--min-gallery` still ends it there. It is only a suspiciously thin
+     * result that costs a look at the next site, and then the richer gallery
+     * is the one kept.
+     */
+    alternatives: Omit<Job, "alternatives">[];
   }
 
   const jobs: Job[] = [];
@@ -529,6 +584,12 @@ export async function crawlImages() {
       });
       continue;
     }
+
+    const matches: Omit<Job, "alternatives">[] = [];
+    // A racket is now compared against every provider that covers its brand, so
+    // "yonex.co.uk does not sell it either" is only worth reporting when no site
+    // had it at all. Held back until the providers are exhausted.
+    const misses: RacketOutcome[] = [];
 
     for (const provider of providersForBrand(racket.brandSlug)) {
       if (!options.providers.includes(provider.id)) continue;
@@ -554,7 +615,7 @@ export async function crawlImages() {
       }
 
       if (!match) {
-        outcomes.push({
+        misses.push({
           racketId: racket.id,
           racketSlug: racket.slug,
           racketName: racket.name,
@@ -567,7 +628,7 @@ export async function crawlImages() {
       }
 
       if (match.rivals.length > 0 && !options.allowAmbiguous) {
-        outcomes.push({
+        misses.push({
           racketId: racket.id,
           racketSlug: racket.slug,
           racketName: racket.name,
@@ -582,7 +643,7 @@ export async function crawlImages() {
         continue;
       }
 
-      jobs.push({
+      matches.push({
         racket,
         provider,
         pages: [match.candidate, ...match.siblings].slice(0, options.maxPages),
@@ -590,8 +651,14 @@ export async function crawlImages() {
         matchedAs,
         candidatesConsidered: discovery.candidates.length,
       });
-      break; // one provider per racket; the first that matches wins
     }
+
+    // The first provider that matched still leads; the rest are only consulted
+    // if its gallery comes back thin. See `Job.alternatives`.
+    const [primary, ...rest] = matches;
+    if (primary) jobs.push({ ...primary, alternatives: rest });
+    // One row per racket that nothing could be found for, not one per site.
+    else if (misses.length > 0) outcomes.push(misses[0]);
   }
 
   const matched = jobs.length;
@@ -661,24 +728,23 @@ export async function crawlImages() {
   let duplicateImages = 0;
   let done = 0;
 
-  for (const job of queue) {
+  /** One provider's answer for one racket: what it published, and what we got. */
+  interface Attempt {
+    job: Omit<Job, "alternatives">;
+    allowedPages: MatchCandidate[];
+    images: (GalleryImage & { pageUrl: string })[];
+    files: CrawledImage[];
+    failures: string[];
+  }
+
+  /** Read one provider's pages for one racket and download what they carry. */
+  const attemptProvider = async (job: Omit<Job, "alternatives">): Promise<Attempt> => {
     const robots = await robotsFor(job.provider.origin, USER_AGENT);
     const delayMs = Math.max(options.delayMs, job.provider.politenessMs ?? 0, robots.crawlDelayMs);
 
     const allowedPages = job.pages.filter((page) => isAllowed(robots, page.url));
-
     if (allowedPages.length === 0) {
-      outcomes.push({
-        racketId: job.racket.id,
-        racketSlug: job.racket.slug,
-        racketName: job.racket.name,
-        brandSlug: job.racket.brandSlug,
-        provider: job.provider.id,
-        status: "skipped",
-        pageUrl: job.pages[0].url,
-        detail: "robots.txt disallows this url",
-      });
-      continue;
+      return { job, allowedPages, images: [], files: [], failures: [] };
     }
 
     // Read every page of the racket's family and pool their galleries. Each
@@ -715,6 +781,38 @@ export async function crawlImages() {
       for (const page of perPage) if (rank < page.length) images.push(page[rank]);
     }
 
+    const files = images.length === 0 ? [] : await downloadGallery(images, options, delayMs);
+    return { job, allowedPages, images, files, failures };
+  };
+
+  for (const queued of queue) {
+    let best = await attemptProvider(queued);
+
+    // A gallery this thin is a placeholder page, not a listing, and the site
+    // declared after this one may be the one that actually sells the frame.
+    // Only then is it asked, and only a richer answer displaces this one.
+    for (const alternative of queued.alternatives) {
+      if (best.files.length >= options.minGallery) break;
+      const other = await attemptProvider(alternative);
+      if (other.files.length > best.files.length) best = other;
+    }
+
+    const { job, allowedPages, images, files, failures } = best;
+
+    if (allowedPages.length === 0) {
+      outcomes.push({
+        racketId: job.racket.id,
+        racketSlug: job.racket.slug,
+        racketName: job.racket.name,
+        brandSlug: job.racket.brandSlug,
+        provider: job.provider.id,
+        status: "skipped",
+        pageUrl: job.pages[0].url,
+        detail: "robots.txt disallows this url",
+      });
+      continue;
+    }
+
     if (images.length === 0) {
       outcomes.push({
         racketId: job.racket.id,
@@ -735,7 +833,6 @@ export async function crawlImages() {
       continue;
     }
 
-    const files = await downloadGallery(images, options, delayMs);
     let stored = 0;
 
     // Per racket, not global: the same photograph legitimately appears under
@@ -744,12 +841,12 @@ export async function crawlImages() {
     const seenHere = new Set<string>();
 
     for (const file of files) {
-      // Hash first, upload second. Manufacturers publish the same photograph
-      // twice on one page — once in the main gallery and once under the colour
-      // swatch that happens to be the default — so a good fraction of every
-      // gallery is a duplicate, and uploading them before noticing means paying
-      // for the transfer and then throwing the object away.
-      const checksum = sha256(file.bytes);
+      // `downloadGallery` has already dropped the duplicates within this page's
+      // gallery — manufacturers publish the same photograph twice on one page,
+      // once in the main gallery and once under the default colour swatch. This
+      // guard catches the case it cannot see: the same shot arriving from two
+      // different colourway *pages* of the same racket.
+      const { checksum } = file;
       if (seenHere.has(checksum)) {
         duplicateImages++;
         continue;

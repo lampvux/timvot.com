@@ -144,6 +144,32 @@ export function tokenise(text: string): string[] {
   return tokens;
 }
 
+/**
+ * The same tokens, cut again wherever letters meet digits.
+ *
+ * A model number is written with the space in whichever place the writer felt
+ * like putting it, and the two sides of this comparison are written by
+ * different people. Yonex prints ASTROX 88 S PRO on its own product page; every
+ * Vietnamese retailer, and therefore this catalogue, writes "Astrox 88S Pro".
+ * `88s` and `88`+`s` are the same designation and tokenise to different sets,
+ * so the strict comparison calls them different rackets and six of Yonex's
+ * best-selling frames — the whole 88 D/S family — lose their photography.
+ * "Nanoflare 1000Z" against NANOFLARE 1000 Z is the same fault.
+ *
+ * Cutting both sides at every letter/digit boundary normalises that away:
+ * `88s` → `88`,`s` and `1000z` → `1000`,`z`, on the model and the candidate
+ * alike.
+ */
+function splitAlnum(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (const token of tokens) {
+    const parts = token.match(/\d+|[a-z]+/g);
+    if (parts && parts.length > 1) out.push(...parts);
+    else out.push(token);
+  }
+  return out;
+}
+
 /** The last path segment, which is the product key on every site we crawl. */
 export function slugOfUrl(url: string): string {
   try {
@@ -169,12 +195,48 @@ export function compare(modelTokens: string[], candidateSlug: string, brandToken
   const candidateTokens = tokenise(candidateSlug);
   if (candidateTokens.length === 0) return null;
 
-  // The brand often prefixes the candidate ("victor-thruster-k-330"), and some
-  // templates bake the page title into the slug ("…-sports-gear-yonex"). Both
-  // are implied by which provider we are talking to, so neither carries
-  // information about which product this is.
+  const strict = compareTokens(modelTokens, candidateTokens, brandTokens);
+  if (strict) return strict;
+
+  // The two sides may only disagree about where the space goes inside a model
+  // number. Re-cut both at every letter/digit boundary and try once more; if
+  // that is the only difference, they agree now. See `splitAlnum`.
+  //
+  // This pass has to clear a higher bar than the strict one: nothing may trail
+  // the model. The two allowances do not compose — splitting `fx7` into `fx` and
+  // `7` manufactures precisely the SKU fragment that `isCodeLike` forgives, and
+  // stacking the two hands "Promax FX" the PROMAX FX7 page, "Astrox 22" the
+  // ASTROX 22RX, "Technix 1.2" the 1.2i and "Prototype X-1" the X1.2. A racket
+  // whose name needs both a re-cut *and* a forgiven suffix to match is a racket
+  // this refuses, which is the same answer it gives everywhere else it cannot
+  // tell two frames apart.
+  const model = splitAlnum(modelTokens);
+  const candidate = splitAlnum(filterFurniture(candidateTokens, brandTokens));
+  if (model.length === modelTokens.length && candidate.length === candidateTokens.length) {
+    return null;
+  }
+
+  // The brand and furniture are already filtered out of `candidate`.
+  return compareTokens(model, candidate, []) === "exact" ? "exact" : null;
+}
+
+/**
+ * The brand often prefixes the candidate ("victor-thruster-k-330"), and some
+ * templates bake the page title into the slug ("…-sports-gear-yonex"). Both are
+ * implied by which provider we are talking to, so neither carries information
+ * about which product this is.
+ */
+function filterFurniture(candidateTokens: string[], brandTokens: string[]): string[] {
   const brand = new Set(brandTokens);
-  const remaining = candidateTokens.filter((token) => !brand.has(token) && !FURNITURE.has(token));
+  return candidateTokens.filter((token) => !brand.has(token) && !FURNITURE.has(token));
+}
+
+function compareTokens(
+  modelTokens: string[],
+  candidateTokens: string[],
+  brandTokens: string[],
+): MatchTier | null {
+  const remaining = filterFurniture(candidateTokens, brandTokens);
 
   if (remaining.length < modelTokens.length) return null;
 
