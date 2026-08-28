@@ -425,6 +425,46 @@ still fully dynamic, and it is the page phase 5's catalogue split was already sc
 
 ### Phase 5 — Make the wait legible · ✅ done
 
+#### Follow-up: `usePathname()` in the chrome blocked every prerender
+
+Enabling Cache Components in phase 4 made three client components in the locale layout
+block the prerender of every route, and the production build did not say so — only
+`next dev` did:
+
+```
+Route "/[locale]/rackets/[brand]/[model]": Next.js encountered URL data
+`usePathname()` in a Client Component outside of <Suspense>.
+```
+
+`usePathname()` is URL data. Under Cache Components, reading it anywhere in the tree
+outside a boundary blocks the shell — and this chrome is on every page. Fixed at the
+right granularity rather than by wrapping whole components, because the links themselves
+belong in the static shell: they are navigation, and they have to work and be crawlable
+from the first byte.
+
+- **`TopBar` / `MobileTabBar`** — the links render in the shell; only the *highlight*
+  streams. `isActive(null, …)` is `false`, so the fallback shows the same markup with
+  nothing marked active and the settle is one underline appearing, not a layout shift.
+- **`CompareTray`** — no boundary needed. The tray is empty until the provider reads
+  localStorage, so it returns `null` during prerender; moving the pathname read into a
+  `TrayBody` child behind that check means the prerender never reaches it. By the time a
+  tray exists the browser is already running.
+- **`LanguageSwitcher`** — found by audit, not by the error, and it would have surfaced
+  next. Its *appearance* is now in the shell and only its *behaviour* streams: the label
+  comes from `useLocale()` (provider context, not URL), so the fallback already shows the
+  right language and nothing changes visually. The button is disabled until the pathname
+  arrives — not yet interactive rather than interactive-but-broken, since without a
+  pathname there is nowhere to switch to.
+
+Verified in `next dev`, which is where it appeared: all seven previously-failing routes
+return 200 with no `CLIENT_HOOK_DYNAMIC` and no error lines, and the served HTML still
+carries the active underline and `aria-current="page"`. Build still 475 pages.
+
+**Lesson worth keeping:** `npm run build` passing is not sufficient evidence for a Cache
+Components migration. Some validation runs only in development, so a route can build
+clean and still be blocked from prerendering. Run `next dev` and open the routes.
+
+
 Phase 4 handed this phase a concrete worklist rather than a general intention, and it is
 now empty: **every `instant = false` that was debt has been removed.**
 

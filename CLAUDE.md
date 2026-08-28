@@ -193,6 +193,20 @@ Without one the browser holds the previous page until the server has finished, w
 on the catalogue meant seconds of nothing. Skeletons match the real layout's box sizes
 so nothing shifts when the content lands.
 
+**A client hook that reads the URL blocks the prerender.** `usePathname`,
+`useSearchParams`, `useParams` and `useSelectedLayoutSegment` are runtime data under Cache
+Components: reading one anywhere outside a `<Suspense>` boundary blocks the static shell
+for every route the component appears on — and for site chrome that is all of them. Put
+the boundary around the part that needs the value, not the whole component: the links
+stay in the shell where they are crawlable and clickable, and only the active highlight
+streams. Where the value is only needed after hydration — a tray that is empty until
+localStorage is read — move the call behind that check instead, and no boundary is needed
+at all.
+
+**`npm run build` passing is not enough for a caching change.** Some Cache Components
+validation runs only in development, so a route can build clean and still be blocked from
+prerendering. Start `next dev` and open the routes you touched before calling it done.
+
 **Run `npm run build` and read the route table before calling a change done.** A route
 that moved from ○ (prerendered) to ƒ (dynamic), or a First Load JS that jumped, is a
 regression to explain — not a detail to discover in production.
