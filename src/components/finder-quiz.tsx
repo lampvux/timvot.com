@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/navigation";
 import { Button, Eyebrow, Icon } from "@/components/ds/primitives";
@@ -77,10 +77,14 @@ export function FinderQuiz() {
   const chosen = answers[question.key];
   const isLast = step === questions.length - 1;
 
+  const [, startTransition] = useTransition();
+
   const advance = () => {
     if (!chosen) return;
     if (isLast) {
-      router.push({ pathname: "/finder", query: answers });
+      startTransition(() => {
+        router.push({ pathname: "/finder", query: answers });
+      });
       return;
     }
     setStep((current) => current + 1);

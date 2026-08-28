@@ -45,6 +45,7 @@ export async function Pagination({
       {prev ? (
         <Link
           href={{ pathname: "/rackets", query: pageQuery(filters, prev) }}
+          scroll={false}
           rel="prev"
           className={cx(STEP, "border-line-strong bg-card text-primary hover:bg-sunken")}
         >
@@ -70,6 +71,7 @@ export async function Pagination({
       {next ? (
         <Link
           href={{ pathname: "/rackets", query: pageQuery(filters, next) }}
+          scroll={false}
           rel="next"
           className={cx(STEP, "border-line-strong bg-card text-primary hover:bg-sunken")}
         >

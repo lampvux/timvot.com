@@ -20,10 +20,12 @@ export async function RacketCard({
   racket,
   compact,
   mobileLayout = "stacked",
+  priority = false,
 }: {
   racket: RacketWithMarket;
   compact?: boolean;
   mobileLayout?: "stacked" | "horizontal";
+  priority?: boolean;
 }) {
   const t = await getTranslations("common");
   const te = await getTranslations("enums");
@@ -73,6 +75,7 @@ export async function RacketCard({
               src={src}
               alt=""
               fill
+              priority={priority}
               /* A crawled thumbnail is already ~400px webp, so there is nothing
                  left for the optimizer to do — and every transformation it
                  skips is one back inside Vercel Hobby's 5.000 a month. Rackets

@@ -123,9 +123,9 @@ export default async function HomePage({
           {/* 4 up on desktop, 2 up on tablet, a scroll rail on mobile where
               the clipped second card signals scroll without a chevron. */}
           <div className="rail -mx-4 px-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:gap-5 sm:overflow-visible sm:px-0 lg:grid-cols-4">
-            {trending.map((racket) => (
+            {trending.map((racket, index) => (
               <div key={racket.id} className="w-[208px] shrink-0 sm:w-auto">
-                <RacketCard racket={racket} compact />
+                <RacketCard racket={racket} priority={index < 4} compact />
               </div>
             ))}
           </div>
