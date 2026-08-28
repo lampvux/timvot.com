@@ -1,8 +1,5 @@
-"use client";
-
-import { useState } from "react";
 import Image from "next/image";
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { Card, cx } from "@/components/ds/primitives";
 import { BalanceMini } from "@/components/ds/data";
@@ -11,8 +8,15 @@ import { BALANCE_MESSAGE_KEY, formatDong } from "@/lib/format";
 import type { RacketWithMarket } from "@/lib/types";
 
 /** The catalogue card. Every card carries the mini balance rule — the motif
- *  repeats and stays informative rather than decorative. */
-export function RacketCard({
+ *  repeats and stays informative rather than decorative.
+ *
+ *  This is a server component. It used to be `"use client"` for a single
+ *  `useState` tracking a failed image, which meant an unfiltered catalogue
+ *  shipped 3.010 client component instances — the whole grid arrived twice,
+ *  once as HTML and once as props in the RSC payload, and then hydrated. The
+ *  fallback below needs no JavaScript, so only `CompareToggle` crosses the
+ *  boundary now. */
+export async function RacketCard({
   racket,
   compact,
   mobileLayout = "stacked",
@@ -21,12 +25,9 @@ export function RacketCard({
   compact?: boolean;
   mobileLayout?: "stacked" | "horizontal";
 }) {
-  const t = useTranslations("common");
-  const te = useTranslations("enums");
-  const tr = useTranslations("racket");
-
-  const [imageError, setImageError] = useState(false);
-  const showImage = Boolean(racket.heroImageUrl && !imageError);
+  const t = await getTranslations("common");
+  const te = await getTranslations("enums");
+  const tr = await getTranslations("racket");
 
   const weightClasses = [
     ...new Set(racket.variants.map((v) => v.weightClass)),
@@ -52,19 +53,23 @@ export function RacketCard({
               : "aspect-[1.15/1]",
           )}
         >
-          {showImage ? (
+          {/* The fallback sits underneath rather than behind a state flag. A
+              missing or broken file simply reveals it — no `onError`, and so
+              no reason for this component to run in the browser. The image
+              carries an empty alt because the heading below is the accessible
+              name; that also means a failed load collapses silently instead of
+              painting a broken-image glyph over the brand mark. */}
+          <span className="font-mono text-[11px] text-[var(--text-disabled)]">
+            {racket.brandName.toUpperCase()}
+          </span>
+          {racket.heroImageUrl && (
             <Image
-              src={racket.heroImageUrl!}
-              alt={racket.name}
+              src={racket.heroImageUrl}
+              alt=""
               fill
-              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+              sizes="(max-width: 640px) 96px, (max-width: 1024px) 50vw, 33vw"
               className="object-contain p-2 transition-transform duration-300 group-hover:scale-105"
-              onError={() => setImageError(true)}
             />
-          ) : (
-            <span className="font-mono text-[11px] text-[var(--text-disabled)]">
-              {racket.brandName.toUpperCase()}
-            </span>
           )}
         </div>
 
@@ -151,7 +156,7 @@ export function RacketCard({
         </div>
         {mobileHorizontal && (
           <div className="mt-1.5 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] tabular-nums text-tertiary sm:hidden">
-            {racket.balancePointMm} mm Â· {weightClasses} {gripSizes} Â·{" "}
+            {racket.balancePointMm} mm · {weightClasses} {gripSizes} ·{" "}
             {t("sellers", { count: racket.sellerCount })}
           </div>
         )}

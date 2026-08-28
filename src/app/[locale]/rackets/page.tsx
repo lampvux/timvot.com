@@ -17,7 +17,14 @@ import {
   getBrands,
   getRackets,
 } from "@/lib/data/repository";
-import { parseFilters, type SearchParams } from "@/lib/filters";
+import { Pagination } from "@/components/pagination";
+import {
+  PAGE_SIZE,
+  pageCount,
+  parseFilters,
+  parsePage,
+  type SearchParams,
+} from "@/lib/filters";
 import { BALANCE_MESSAGE_KEY, FLEX_MESSAGE_KEY } from "@/lib/format";
 
 export async function generateMetadata({
@@ -46,11 +53,19 @@ export default async function CatalogPage({
   const t = await getTranslations("catalog");
   const te = await getTranslations("enums");
 
-  const filters = parseFilters(await searchParams);
+  const search = await searchParams;
+  const filters = parseFilters(search);
   const [allRackets, brands] = await Promise.all([getRackets(), getBrands()]);
 
+  // `results` stays the full match set: the heading count, the empty-state
+  // suggestions and the facet counts are all answers about the whole result,
+  // not about one page of it. Only the grid is sliced.
   const results = applyFilters(allRackets, filters);
   const counts = facetCounts(allRackets, filters);
+
+  const pages = pageCount(results.length);
+  const page = Math.min(parsePage(search), pages);
+  const pageResults = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const facets: FacetCounts = {
     brands: toRecord(counts.brands),
@@ -140,15 +155,23 @@ export default async function CatalogPage({
             }
           />
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
-            {results.map((racket) => (
-              <RacketCard
-                key={racket.id}
-                racket={racket}
-                mobileLayout="horizontal"
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+              {pageResults.map((racket) => (
+                <RacketCard
+                  key={racket.id}
+                  racket={racket}
+                  mobileLayout="horizontal"
+                />
+              ))}
+            </div>
+            <Pagination
+              filters={filters}
+              page={page}
+              pages={pages}
+              total={results.length}
+            />
+          </>
         )}
       </div>
     </div>

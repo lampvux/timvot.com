@@ -4,7 +4,7 @@ Tracking document for the speed work on Shuttlecraft. Rules distilled from this 
 live in `CLAUDE.md` under **Performance rules the code enforces** — that section is the
 thing future features must follow. This file tracks *this* body of work.
 
-**Status:** phases 1 and 2 done. Phase 0 partly done. Phases 3–6 open.
+**Status:** phases 1, 2 and 3 done. Phase 0 partly done. Phases 3b, 4, 5, 6 open.
 **Next:** phase 4 — the route table stays all-`ƒ` until `use cache` lands. See the correction under phase 2.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
@@ -89,11 +89,11 @@ overage to buy.
 | --- | --- | --- | --- | --- |
 | 01 | Enrichment scans the price table once per racket | `repository.ts` → `enrich()` | ~10M steps now, ~880M at 90 days of scrapes | 1 ✅ |
 | 02 | `getDeals` re-filters and re-sorts history per variant | `repository.ts` → `getDeals()` | 3.265 scans + 3.265 sorts | 1 ✅ |
-| 03 | Catalogue renders every match, no pagination | `rackets/page.tsx` | 3.010 cards in one RSC payload | 3 |
+| 03 | Catalogue renders every match, no pagination | `rackets/page.tsx` | 3.010 cards in one RSC payload | 3 ✅ |
 | 04 | `getUser()` in the locale layout reads cookies | `[locale]/layout.tsx` | every route dynamic + blocking auth call | 2 ✅ (flip needs 4) |
-| 05 | Whole lucide icon set ships to the browser | `ds/primitives.tsx` | ~1.500 icons bundled, 17 used | 3 |
+| 05 | Whole lucide icon set ships to the browser | `ds/primitives.tsx` | ~1.500 icons bundled, 26 used | 3 ✅ |
 | 06 | No cache anywhere | — | full snapshot per request | 4 |
-| 07 | `RacketCard` is a client component for one `useState` | `racket-card.tsx` | 3.010 client instances hydrated | 3 |
+| 07 | `RacketCard` is a client component for one `useState` | `racket-card.tsx` | 3.010 client instances hydrated | 3 ✅ |
 | 08 | Snapshot pulls every `racket_images` row, all columns | `mappers.ts` → `RACKET_SELECT` | checksum, bytes, width, height per image | 6 |
 | 09 | No Suspense or `loading.tsx` on any route | `app/**` | browser holds the old page until done | 5 |
 | 10 | `compress: false` disables gzip on the Node server | `next.config.ts` | uncompressed HTML off Vercel | 5 |
@@ -253,18 +253,67 @@ and it is the precondition for the bigger one.
 
 ---
 
-### Phase 3 — Payload · ☐ open
+### Phase 3 — Payload · ✅ done (app side; one scraper item carried to phase 3b)
 
-- [ ] **Paginate**, in the URL. Add `page` to `SEARCH_KEYS` in `lib/filters.ts`. Keep the
-      total in the heading. Prev/next as real `<Link>`s carrying the current filters. No
-      infinite scroll — it forks filter state out of the URL.
-- [ ] **Server-render `RacketCard`.** Swap `useTranslations` for `getTranslations`;
-      render the brand-name placeholder *underneath* the image so a broken load reveals it
-      with no JS. Only `CompareToggle` stays a client component.
-- [ ] **Icon registry.** Replace `import { icons } from "lucide-react"` with an explicit
-      map of the 17 icons in use. `optimizePackageImports` cannot help with the barrel
-      object — it rewrites named imports, and `icons` is one export referencing all of
-      them. Bonus: `IconName` becomes a closed union of what the design actually uses.
+- [x] **Paginated, in the URL.** `page` added to `SEARCH_KEYS`, `PAGE_SIZE = 24` (divides
+      evenly by the grid's 1, 2 and 3 columns, so no page ends on a ragged row).
+      `src/components/pagination.tsx` renders prev/next as real `<Link>`s carrying the
+      current filters — server-rendered, so paging ships no JavaScript.
+      **`page` is deliberately not part of `CatalogFilters`:** `applyFilters` and
+      `facetCounts` must see the whole result set or the counts are wrong, and keeping it
+      out means `filtersToQuery` drops it for free, so changing any facet resets to page 1
+      without a line of code saying so. Logic tested: page-count boundaries, `parsePage`
+      against junk input, and that every item lands on exactly one page across totals from
+      0 to 3.010.
+- [x] **`RacketCard` is a server component.** `useTranslations` → `getTranslations`, and
+      the failed-image `useState` is gone: the brand-name placeholder sits *underneath*
+      the image, which now carries `alt=""` because the heading below is the accessible
+      name — so a broken load collapses silently and reveals the placeholder with no JS.
+      Only `CompareToggle` still crosses the boundary.
+- [x] **Icon registry.** `import { icons } from "lucide-react"` replaced with 26 named
+      imports. `IconName` is now `keyof typeof ICONS`, a closed union — which is also how
+      the list was verified: the compiler enumerates any name the registry misses. My
+      first count of 17 was wrong; it came from a grep that missed ternary usages
+      (`BellRing`, `Check`, `TrendingUp`, `TrendingDown`, `Search`) and picked up five
+      brand names that are not icons at all.
+- [x] **Image config trimmed.** `imageSizes: [96, 256, 384]`, `deviceSizes: [640, 828,
+      1080, 1200]` — seven widths instead of the default sixteen. `minimumCacheTTL` raised
+      to 31 days. The card's mobile `sizes` was `100vw` for a box that is 96px wide, which
+      was requesting a full-width transformation per card.
+- [x] `npm run typecheck` and `npm run build` pass.
+
+**Result — measured.** Total client chunks, built both ways:
+
+| | Client JS |
+| --- | --- |
+| Before (barrel icons, client card) | 1.536 KB |
+| After | **1.034 KB** |
+
+**502 KB less, a third of the bundle**, before counting the RSC payload saved by rendering
+24 cards instead of 3.010 — which is the larger win on the 100 GB transfer allowance and
+does not show up in this number.
+
+Also fixed in passing: the mobile card line had a mojibake `Â·` where a `·` belonged.
+
+---
+
+### Phase 3b — Image thumbnails in the scraper · ☐ open
+
+Split out of phase 3 because it spans `scripts/scraper/`, not the app. Phase 3 reduced the
+*widths* per image; this reduces the *count*, which is what the 5K/month cap actually
+rations.
+
+- [ ] Have `scripts/scraper/images/` write a ~400px webp thumbnail alongside the original
+      when it stores to the `racket-images%` bucket. It already downloads every file, so
+      the resize happens once, in a script we already run.
+- [ ] Serve that thumbnail from `RacketCard` with `unoptimized`, taking the catalogue grid
+      off the metered optimizer entirely.
+- [ ] Keep `next/image` optimization for the detail-page gallery only, which caps
+      transformations at roughly the number of detail pages actually visited.
+
+**Do not do the second step without the first.** Setting `unoptimized` on the current
+full-size originals would trade a transformation problem for a Fast Data Transfer problem,
+and Hobby only allows 100 GB of that.
 
 #### Images — revised for Hobby
 

@@ -1,5 +1,32 @@
 import type { ComponentProps, ReactNode } from "react";
-import { icons } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BadgeCheck,
+  Bell,
+  BellRing,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  CircleCheck,
+  GitCompare,
+  House,
+  Info,
+  Languages,
+  LayoutGrid,
+  LogOut,
+  Maximize2,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+  TriangleAlert,
+  UserRound,
+  X,
+} from "lucide-react";
 
 /**
  * Shuttlecraft primitives.
@@ -15,7 +42,49 @@ export function cx(...parts: (string | false | null | undefined)[]): string {
 
 /* ------------------------------------------------------------------ Icon */
 
-export type IconName = keyof typeof icons;
+/**
+ * The icons the design uses, named one by one.
+ *
+ * This was `import { icons } from "lucide-react"`, which is a single export
+ * holding roughly 1500 glyphs — so the whole set landed in the client bundle
+ * and `optimizePackageImports` could do nothing about it. That option rewrites
+ * named imports to deep paths; a barrel object referencing everything defeats
+ * it by construction.
+ *
+ * Naming them also makes `IconName` a closed union of what actually exists in
+ * the design rather than of everything lucide ships, so a typo is a type error
+ * instead of a silently missing glyph. Adding an icon means adding a line here.
+ */
+const ICONS = {
+  ArrowLeft,
+  ArrowRight,
+  BadgeCheck,
+  Bell,
+  BellRing,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  CircleCheck,
+  GitCompare,
+  House,
+  Info,
+  Languages,
+  LayoutGrid,
+  LogOut,
+  Maximize2,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+  TriangleAlert,
+  UserRound,
+  X,
+} as const;
+
+export type IconName = keyof typeof ICONS;
 
 const ICON_PX = { sm: 16, md: 20, lg: 24 } as const;
 
@@ -28,7 +97,7 @@ export function Icon({
   size?: keyof typeof ICON_PX;
   className?: string;
 }) {
-  const Glyph = icons[name];
+  const Glyph = ICONS[name];
   if (!Glyph) return null;
   const px = ICON_PX[size];
   return (
