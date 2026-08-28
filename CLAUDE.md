@@ -34,10 +34,19 @@ npm run scrape         # full walk + Playwright verification
 npm run scrape:sync    # also upsert into Postgres (needs SUPABASE_SERVICE_ROLE_KEY)
 npm run scrape:sql     # emit supabase/scraped-catalogue.sql instead (no key needed)
 npm run scrape:images:dry   # manufacturer gallery crawl, match-only, no credentials
+npx tsx scripts/scraper/forza-catalogue.ts   # manufacturer pages as catalogue rows,
+npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
 ```
 
 `npm run scrape -- --site=vnb --pages=5 --verbose` is the shape for narrowing a run;
 `--verify-only` re-checks a scrape already on disk without walking the sites again.
+
+The two `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
+shop and yields offers, and a manufacturer that quotes no price would need a seller and a
+price invented for every row. They write rackets with no offers, and never touch a racket
+the catalogue already holds. Whether it *does* hold one is decided by `images/match.ts`,
+not by the row id — the id comes from the manufacturer's spelling and the catalogue's came
+from retailers, so `ASTROX 88 S PRO` and `Astrox 88S Pro` are two ids for one frame.
 
 `supabase db push` is not used — it needs an interactive password prompt.
 `scripts/migrate.ts` runs the same SQL over the Management API or a direct
@@ -57,6 +66,13 @@ from Supabase when the keys are present and from `src/lib/data/seed.ts` when the
 not — same shapes either way, so no caller branches on which. Never add a second data
 path; extend the repository instead. Derived values (Court Score, lowest price, seller
 count, balance type) are computed there, so pages receive `RacketWithMarket`, not rows.
+
+Every table read there goes through `selectAll`, which pages with `range` until a short
+page arrives. PostgREST caps a response at 1000 rows and reports no error when it
+truncates, so a plain `.select()` silently returned the first 1000 of 3037 rackets and
+404ed every detail page beyond it. Five of the seven tables are over the cap. A new
+`.select()` without `selectAll` — or with `selectAll` but no unique `.order()` to page
+against — reintroduces that.
 
 **`src/lib/types.ts` is the schema.** Field names there become the Postgres columns,
 the filter facets, the comparison rows and the Finder inputs. Renaming one is a
