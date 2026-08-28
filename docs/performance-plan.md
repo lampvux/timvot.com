@@ -4,8 +4,8 @@ Tracking document for the speed work on Shuttlecraft. Rules distilled from this 
 live in `CLAUDE.md` under **Performance rules the code enforces** — that section is the
 thing future features must follow. This file tracks *this* body of work.
 
-**Status:** phases 1, 2, 3 and 4 done. Phase 0 partly done. Phases 3b, 5, 6 open.
-**Next:** phase 5 — seven routes carry `instant = false` from phase 4, and `/rackets` is the one that matters.
+**Status:** phases 1, 2, 3, 4 and 5 done. Phase 0 partly done. **Two phases remain: 3b and 6.**
+**Next:** phase 3b (scraper thumbnails, closes the image budget) or phase 6 (query-shaped reads, optional). Neither blocks the other.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
 
@@ -95,8 +95,8 @@ overage to buy.
 | 06 | No cache anywhere | — | full snapshot per request | 4 ✅ |
 | 07 | `RacketCard` is a client component for one `useState` | `racket-card.tsx` | 3.010 client instances hydrated | 3 ✅ |
 | 08 | Snapshot pulls every `racket_images` row, all columns | `mappers.ts` → `RACKET_SELECT` | checksum, bytes, width, height per image | 6 |
-| 09 | No Suspense or `loading.tsx` on any route | `app/**` | browser holds the old page until done | 5 |
-| 10 | `compress: false` disables gzip on the Node server | `next.config.ts` | uncompressed HTML off Vercel | 5 |
+| 09 | No Suspense or `loading.tsx` on any route | `app/**` | browser holds the old page until done | 5 ✅ |
+| 10 | `compress: false` disables gzip on the Node server | `next.config.ts` | uncompressed HTML off Vercel | 5 ✅ |
 
 ---
 
@@ -404,34 +404,52 @@ behind `<Suspense>` so the rest of the route prerenders.
 `/rackets` is the one that matters. It is the most-visited page after the home page, it is
 still fully dynamic, and it is the page phase 5's catalogue split was already scoped to fix.
 
-### Phase 5 — Make the wait legible · ☐ open
+### Phase 5 — Make the wait legible · ✅ done
 
-Phase 4 handed this phase a concrete worklist rather than a general intention: **remove
-`instant = false` from five routes** by moving their `searchParams` read into a child
-behind `<Suspense>`. Each one that lands turns a `ƒ` into a `◐`.
+Phase 4 handed this phase a concrete worklist rather than a general intention, and it is
+now empty: **every `instant = false` that was debt has been removed.**
 
-- [ ] **`/rackets`** — the one that matters. Most-visited page after the home page and
-      still fully dynamic. The split was already scoped below: the rail and heading render
-      from the URL alone, only the grid streams.
-- [ ] **`/compare`**, **`/finder`** — same shape, smaller stakes.
-- [ ] **`/sign-in`**, **`/sign-up`** — they read `searchParams` only to surface a callback
-      error or notice. Smallest of the five.
-- [ ] Leave `instant = false` on **`/account`** and **`/seller/dashboard`**. Those are
-      per-visitor by definition and have no shell worth prerendering; the opt-out there is
-      the right answer, not debt.
-- [ ] `loading.tsx` per route group — catalogue, detail, deals, sellers. Skeletons reuse
-      the real components' box sizes so nothing shifts.
-- [ ] Split the catalogue below the rail: `FilterRail` and the heading render from the
-      URL alone. Only the results grid goes behind `<Suspense>`, keyed on the filter
-      string.
-- [ ] `useTransition` in `FilterRail` so a pending facet dims rather than looking ignored.
-- [ ] Detail page: stream offers, reviews and price history below the fold; spec sheet
-      and gallery land first.
-- [ ] Drop `compress: false` from `next.config.ts`, or comment it as deliberate because
-      Vercel's edge compresses. As written it serves uncompressed HTML from `next start`
-      anywhere else.
+- [x] **`/rackets`** — the page body moved into `<CatalogResults>` behind `<Suspense>`,
+      with the `searchParams` promise passed down instead of awaited at the top. That await
+      was what blocked the prerender for the whole route.
+- [x] **`/compare`**, **`/finder`** — same split.
+- [x] **`/sign-in`**, **`/sign-up`** — same split; only the callback error or notice is
+      per-request, so only that streams.
+- [x] **`/forgot-password`, `/reset-password`** — opt-out removed outright. They never read
+      `searchParams`; the blanket comment I put on all four auth pages in phase 4 was wrong
+      for these two.
+- [x] `src/components/skeletons.tsx` — every box matches the real component's geometry: the
+      rail is `--filter-rail-w`, the card image is the same `1.15/1` aspect, the grid has
+      the same three breakpoints. `bg-sunken` rather than a shimmer, because the design
+      system has no animated placeholder and motion there would be decoration.
+- [x] `loading.tsx` for catalogue, compare, finder and the racket detail page. These cover
+      client-side navigation, where the in-page Suspense boundary does not apply — same
+      skeleton either way, so both paths look identical to a visitor.
+- [x] `compress: false` kept, now with a comment saying it is a hosting assumption rather
+      than a preference: Vercel's edge compresses, and this ships uncompressed HTML from
+      `next start` anywhere else.
 
----
+**Result — measured.**
+
+| | After phase 4 | After phase 5 |
+| --- | --- | --- |
+| Route entries partial-prerendered (`◐`) | 27 | **42** |
+| Route entries dynamic (`ƒ`) | 23 | **8** |
+| Routes carrying `instant = false` | 7 | **2** |
+
+The eight remaining dynamic entries are the four that should be, across locales:
+`/account` and `/seller/dashboard` (per-visitor by definition), `/api/revalidate` (a POST
+handler) and `/auth/callback` (a one-time code exchange). Nothing left on the list is debt.
+
+#### Two items dropped, with reasons
+
+- **`useTransition` in `FilterRail`** — already there. `useFilterBody` wraps its
+  `router.replace` in a transition and dims with `pending && "opacity-70"`. Nothing to do.
+- **Streaming the detail page's offers, reviews and history below the fold** — dropped,
+  because it would buy nothing. All three come from `loadIndex()`, which resolves from the
+  one `use cache`d snapshot, so there is no independent slow dependency to stream past.
+  Splitting them would add boundaries without removing a wait. The plan assumed they were
+  separate reads; phase 1's indexing is what made them not be.
 
 ### Phase 6 — Read rows, not tables · ☐ open, defer if 1–5 land the numbers
 

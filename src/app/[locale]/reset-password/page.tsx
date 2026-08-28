@@ -1,7 +1,3 @@
-// Reads searchParams to surface a callback error or notice. Small enough to
-// Suspense-split in phase 5; opted out for now (docs/performance-plan.md).
-export const instant = false;
-
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";

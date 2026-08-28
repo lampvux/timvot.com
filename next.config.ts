@@ -8,6 +8,12 @@ EventEmitter.defaultMaxListeners = 25;
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
+  /**
+   * Off because Vercel's edge compresses every response itself, so doing it in
+   * the Node process too would be work done twice. This is a hosting
+   * assumption, not a preference: served from `next start` anywhere else, this
+   * ships uncompressed HTML — turn it back on if this ever runs off Vercel.
+   */
   compress: false,
   typedRoutes: false,
 

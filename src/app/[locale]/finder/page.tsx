@@ -1,7 +1,4 @@
-// Renders answers out of searchParams. The quiz itself could prerender; that
-// split is phase 5 work (docs/performance-plan.md).
-export const instant = false;
-
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
@@ -21,6 +18,7 @@ import { getRackets } from "@/lib/data/repository";
 import { BUDGET_RANGE, parseAnswers, runFinder } from "@/lib/finder";
 import { BALANCE_MESSAGE_KEY, FLEX_MESSAGE_KEY, formatDong } from "@/lib/format";
 import type { SearchParams } from "@/lib/filters";
+import { FinderSkeleton } from "@/components/skeletons";
 
 export async function generateMetadata({
   params,
@@ -32,6 +30,7 @@ export async function generateMetadata({
   return { title: t("title") };
 }
 
+/** Shell prerenders; the quiz or its answers stream. */
 export default async function FinderPage({
   params,
   searchParams,
@@ -40,6 +39,22 @@ export default async function FinderPage({
   searchParams: Promise<SearchParams>;
 }) {
   const { locale } = await params;
+  setRequestLocale(locale);
+
+  return (
+    <Suspense fallback={<FinderSkeleton />}>
+      <FinderBody locale={locale} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function FinderBody({
+  locale,
+  searchParams,
+}: {
+  locale: Locale;
+  searchParams: Promise<SearchParams>;
+}) {
   setRequestLocale(locale);
 
   const t = await getTranslations("finder");

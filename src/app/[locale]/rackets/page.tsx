@@ -1,9 +1,4 @@
-// Reads searchParams for filters, sort and page, so the results grid cannot be
-// in the static shell. Phase 5 splits this properly: the rail and heading render
-// from the URL alone, and only the grid goes behind Suspense. Until then the
-// route is allowed to block (docs/performance-plan.md).
-export const instant = false;
-
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
@@ -24,6 +19,7 @@ import {
   getRackets,
 } from "@/lib/data/repository";
 import { Pagination } from "@/components/pagination";
+import { CatalogSkeleton } from "@/components/skeletons";
 import {
   PAGE_SIZE,
   pageCount,
@@ -46,6 +42,21 @@ export async function generateMetadata({
 const toRecord = <T extends string>(map: Map<T, number>): Record<string, number> =>
   Object.fromEntries(map.entries());
 
+/**
+ * The catalogue's shell prerenders; the filtered result streams into it.
+ *
+ * Everything on this page is a function of `searchParams` — the rail's checked
+ * boxes, the heading's count, the grid — so none of it can be in the static
+ * shell. What can is the page's geometry, and that is what `CatalogSkeleton`
+ * holds: the same rail width, the same three-column grid, the same card boxes.
+ * A visitor gets that from the CDN immediately instead of a blank document,
+ * and the results replace it without moving anything.
+ *
+ * The `searchParams` promise is passed down rather than awaited here. Awaiting
+ * it in the page body is what made this route `ƒ` — Cache Components treats it
+ * as runtime data, and reading it outside a `<Suspense>` boundary blocks the
+ * prerender for the whole route.
+ */
 export default async function CatalogPage({
   params,
   searchParams,
@@ -54,6 +65,22 @@ export default async function CatalogPage({
   searchParams: Promise<SearchParams>;
 }) {
   const { locale } = await params;
+  setRequestLocale(locale);
+
+  return (
+    <Suspense fallback={<CatalogSkeleton />}>
+      <CatalogResults locale={locale} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function CatalogResults({
+  locale,
+  searchParams,
+}: {
+  locale: Locale;
+  searchParams: Promise<SearchParams>;
+}) {
   setRequestLocale(locale);
 
   const t = await getTranslations("catalog");

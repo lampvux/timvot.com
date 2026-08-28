@@ -1,11 +1,9 @@
-// Reads searchParams to surface a callback error or notice. Small enough to
-// Suspense-split in phase 5; opted out for now (docs/performance-plan.md).
-export const instant = false;
-
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { AuthForm } from "@/components/auth-form";
+import { AuthFormSkeleton } from "@/components/skeletons";
 import { enabledOAuthProviders, isSupabaseConfigured } from "@/lib/supabase/config";
 
 export async function generateMetadata({
@@ -18,6 +16,8 @@ export async function generateMetadata({
   return { title: t("signUpTitle") };
 }
 
+/** The form is the same for everyone; only the callback error or notice in
+ *  `searchParams` is per-request, so only that streams. */
 export default async function SignUpPage({
   params,
   searchParams,
@@ -26,8 +26,24 @@ export default async function SignUpPage({
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const { locale } = await params;
-  const { error, notice } = await searchParams;
   setRequestLocale(locale);
+
+  return (
+    <Suspense fallback={<AuthFormSkeleton />}>
+      <SignUpBody locale={locale} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function SignUpBody({
+  locale,
+  searchParams,
+}: {
+  locale: Locale;
+  searchParams: Promise<{ error?: string; notice?: string }>;
+}) {
+  setRequestLocale(locale);
+  const { error, notice } = await searchParams;
 
   return (
     <div className="page-shell py-12 lg:py-20">

@@ -1,8 +1,4 @@
-// The whole page is a function of `?ids=`, so there is no shell that is not
-// already the empty state. Opted out until phase 5 splits the picked-racket
-// columns behind a Suspense boundary (docs/performance-plan.md).
-export const instant = false;
-
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
@@ -22,6 +18,7 @@ import {
   formatTension,
 } from "@/lib/format";
 import type { SearchParams } from "@/lib/filters";
+import { CompareSkeleton } from "@/components/skeletons";
 
 export async function generateMetadata({
   params,
@@ -35,6 +32,8 @@ export async function generateMetadata({
 
 const FLEX_ORDER = ["flexible", "medium", "stiff", "extra-stiff"];
 
+/** Shell prerenders; the picked rackets stream. Reading `?ids=` at the top of
+ *  the page is what would block the whole route's prerender. */
 export default async function ComparePage({
   params,
   searchParams,
@@ -43,6 +42,22 @@ export default async function ComparePage({
   searchParams: Promise<SearchParams>;
 }) {
   const { locale } = await params;
+  setRequestLocale(locale);
+
+  return (
+    <Suspense fallback={<CompareSkeleton />}>
+      <CompareBody locale={locale} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function CompareBody({
+  locale,
+  searchParams,
+}: {
+  locale: Locale;
+  searchParams: Promise<SearchParams>;
+}) {
   setRequestLocale(locale);
 
   const t = await getTranslations("compare");
