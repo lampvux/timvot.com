@@ -59,7 +59,34 @@ import type { Review, SellerTier } from "@/lib/types";
  * array is not an option under Cache Components — it raises
  * `empty-generate-static-params`.
  */
-const PRERENDERED_RACKETS = 200;
+/**
+ * Held down by the builder, not by taste.
+ *
+ * Static generation accumulates memory per page and does not give it back, and
+ * Vercel's Hobby builder runs it in **one worker** — the build log says
+ * `Generating static pages using 1 worker`. At 200 rackets (475 pages) it dies
+ * around page 53 with `JavaScript heap out of memory`. Reproduced locally with
+ * `experimental.cpus: 1`: same crash, ~146 pages in.
+ *
+ * The ceiling is roughly 145 pages on one worker. This route contributes
+ * `2 × PRERENDERED_RACKETS` (one per locale) and the rest of the app about 75,
+ * so 30 gives 135 with a little headroom. Locally, with fifteen workers each
+ * taking a thirtieth of the pages, 475 builds fine — which is exactly why this
+ * passed here and failed there.
+ *
+ * Raising `NODE_OPTIONS=--max-old-space-size` does **not** help: it does not
+ * reach the static-generation worker. A 6 GB parent heap crashed at the same
+ * page count as the default.
+ *
+ * Nothing is lost from the catalogue by this. Under Cache Components a path not
+ * listed here still serves an App Shell instantly and upgrades in the
+ * background — the tail is a slightly later page, not a missing one.
+ *
+ * Raise this only alongside more build workers (a Pro build machine, or
+ * building in CI) or a fix for the per-page accumulation. See
+ * `docs/performance-plan.md`.
+ */
+const PRERENDERED_RACKETS = 30;
 
 export async function generateStaticParams() {
   const rackets = await getRackets();

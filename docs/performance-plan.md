@@ -551,6 +551,68 @@ every racket with every variant and every `racket_images` row.
 
 ---
 
+## Vercel build OOM — 2026-08-28
+
+The first production build on `main` failed:
+
+```
+Build machine configuration: 2 cores, 8 GB
+Generating static pages using 1 worker (53/475)
+FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory
+```
+
+### What it is not
+
+**Not the cached snapshot.** Measured against the live project: the whole catalogue is
+**37 MB** of heap — 3.056 rackets carrying 2.264 image rows (4 MB serialized), 2.958
+offers, 6.519 price points. Nowhere near 1.8 GB. Phase 6's memory argument is real, but
+it is not this.
+
+**Not something more heap fixes.** `NODE_OPTIONS=--max-old-space-size=6144`, on a machine
+with 8 GB, crashed at *the same page count* as the default 1.85 GB — the setting does not
+reach the static-generation worker. Do not reach for it.
+
+**Not a WeakMap away.** Memoising the index on the snapshot object was tried and reverted:
+`use cache` hands back a fresh snapshot per render, so the memo never hit. Reverted rather
+than left in place, because code carrying a comment that claims a benefit it does not
+deliver is worse than no code.
+
+### What it is
+
+Static generation accumulates memory per page and does not give it back, and **Hobby runs
+it in one worker** — the build log says so plainly. Reproduced locally with
+`experimental.cpus: 1`: the same crash, ~146 pages in. Locally with fifteen workers the
+same 475 pages build fine, each worker taking a thirtieth of them.
+
+That is the entire difference between the passing local build and the failing Vercel one,
+and it is why a green local build was not evidence. The same lesson as the `usePathname`
+follow-up, in a new costume.
+
+The ceiling is roughly **145 pages per worker**. Measured: 111 pages ✓, 131 ✓, 475 ✗.
+
+### Fix applied
+
+`PRERENDERED_RACKETS` 200 → **30**, giving `2 × 30 + ~75 = 135` pages. Nothing is lost
+from the catalogue: under Cache Components a path not listed still serves an App Shell
+instantly and upgrades in the background, so the tail is a slightly later page rather than
+a missing one.
+
+### Still unexplained, and worth chasing
+
+**Roughly 12 MB retained per prerendered page**, against a catalogue that measures 37 MB in
+total. That number is not accounted for, and until it is, page count is the only lever.
+Raising the prerender count needs either more workers or an explanation for that 12 MB.
+
+### On building in CI instead
+
+Building in GitHub Actions and deploying with `vercel deploy --prebuilt` would work: more
+cores means more workers means fewer pages each. It treats the symptom rather than the
+cause and costs a pipeline to maintain, so it is worth it only to prerender substantially
+more than 30 rackets before the per-page cost is understood. Larger Vercel build machines
+are Pro and Enterprise only, so that route is not available on this plan.
+
+---
+
 ## Open decisions
 
 | Decision | Notes |
