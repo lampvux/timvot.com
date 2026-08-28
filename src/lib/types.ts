@@ -61,6 +61,8 @@ export interface RacketImage {
   storageBucket: string;
   storagePath: string;
   publicUrl: string | null;
+  /** ~400px webp derived at crawl time. Null means fall back to publicUrl. */
+  thumbUrl: string | null;
   position: number;
   isHero: boolean;
   contentType: string | null;
@@ -94,6 +96,16 @@ export interface Racket {
 
   variants: RacketVariant[];
   heroImageUrl: string | null;
+
+  /**
+   * The hero image resized to card size at crawl time.
+   *
+   * The catalogue grid serves this directly with `unoptimized`, which is what
+   * keeps 3.010 rackets inside Vercel Hobby's 5.000 image transformations a
+   * month. Null means no thumbnail was crawled and the card falls back to
+   * `heroImageUrl` through the optimizer.
+   */
+  heroThumbUrl: string | null;
   images?: RacketImage[];
 
   /** Editorial one-liner, the "knowledgeable shop owner" sentence. */

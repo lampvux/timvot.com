@@ -217,6 +217,21 @@ by the `is_admin()` policies, and `scripts/scraper/env.ts` reads both `.env` and
 `supabase/scraped-catalogue.sql`, which applies through psql or the Supabase SQL editor
 with no key at all. Apply the migrations first — the file assumes the schema exists.
 
+**Thumbnails.** `npm run scrape:images` now writes a second object beside each stored
+image — a ~400px webp at `<same-key>-thumb.webp` — and records it in
+`racket_images.thumb_url`, with the hero's copy denormalised onto
+`rackets.hero_thumb_url`. The catalogue grid serves that directly with `unoptimized`,
+which is what keeps 3.010 rackets inside Vercel Hobby's 5.000 image transformations a
+month; past that allowance the optimizer answers 402 and cards render their alt text.
+Resizing costs one pass over bytes the crawler already downloaded, and a frame `sharp`
+cannot decode simply produces no thumbnail — the columns are nullable and the card falls
+back to the full-size original.
+
+Apply `supabase/migrations/20260828000000_image_thumbnails.sql` before deploying the code
+that reads those columns. If you forget, the app notices: it retries the racket query
+without them and logs `thumbnail columns are missing`, so you get the full catalogue
+without thumbnails rather than the eighteen-racket seed fallback.
+
 **Publishing the change.** The app serves prices from prerendered pages, so a successful
 `--sync-db` also asks the deployment to drop the caches it just invalidated:
 

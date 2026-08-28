@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { courtScore } from "@/lib/court-score";
 import { balanceTypeOf, median } from "@/lib/format";
 import type {
@@ -29,6 +30,8 @@ import {
   mapReview,
   mapSeller,
   RACKET_SELECT,
+  RACKET_SELECT_NO_THUMBS,
+  isMissingColumnError,
 } from "./mappers";
 
 /**
@@ -103,6 +106,41 @@ async function selectAll<T>(
 }
 
 /**
+ * Read every racket, once with thumbnails and once without if the schema is
+ * behind the code.
+ *
+ * PostgREST fails the whole query on an unknown column, and the caller answers
+ * any error by falling back to the seeded catalogue — so deploying the
+ * thumbnail columns ahead of their migration would quietly serve eighteen
+ * rackets instead of three thousand. Retrying without them costs one wasted
+ * round trip in that one situation and nothing at all afterwards, and the
+ * degraded result is "no thumbnails", not "no catalogue".
+ */
+async function readRackets(supabase: SupabaseClient) {
+  const withThumbs = await selectAll((from, to) =>
+    supabase.from("rackets").select(RACKET_SELECT).order("id").range(from, to),
+  );
+
+  if (!withThumbs.error || !isMissingColumnError(withThumbs.error.message)) {
+    return withThumbs;
+  }
+
+  console.warn(
+    "[repository] rackets: thumbnail columns are missing, so the catalogue is " +
+      "being read without them. Apply supabase/migrations/" +
+      "20260828000000_image_thumbnails.sql and redeploy.",
+  );
+
+  return selectAll((from, to) =>
+    supabase
+      .from("rackets")
+      .select(RACKET_SELECT_NO_THUMBS)
+      .order("id")
+      .range(from, to),
+  );
+}
+
+/**
  * The catalogue read, cached across requests rather than rebuilt for each one.
  *
  * `use cache` is what makes a route holding this data prerenderable: without
@@ -143,9 +181,7 @@ async function readSnapshot(): Promise<Snapshot> {
     const [brandRows, racketRows, sellerRows, offerRows, historyRows, reviewRows, guideRows] =
       await Promise.all([
         supabase.from("brands").select("*").order("name"),
-        selectAll((from, to) =>
-          supabase.from("rackets").select(RACKET_SELECT).order("id").range(from, to),
-        ),
+        readRackets(supabase),
         supabase.from("sellers").select("*"),
         selectAll((from, to) =>
           supabase

@@ -32,12 +32,12 @@ import {
   getReviewsForRacket,
 } from "@/lib/data/repository";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
+import { ReviewDate } from "@/components/review-date";
 import {
   BALANCE_MESSAGE_KEY,
   CONDITION_MESSAGE_KEY,
   FLEX_MESSAGE_KEY,
   formatDong,
-  formatReviewDate,
   formatTension,
 } from "@/lib/format";
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
@@ -728,9 +728,7 @@ async function ReviewCard({
                 : "tierCommunity",
           )}
         />
-        <span className="ml-auto font-mono text-[11px] tabular-nums text-tertiary">
-          {formatReviewDate(review.createdAt, locale)}
-        </span>
+        <ReviewDate iso={review.createdAt} locale={locale} />
       </div>
 
       <div className="mb-2.5 flex flex-wrap gap-1.5">

@@ -4,8 +4,8 @@ Tracking document for the speed work on Shuttlecraft. Rules distilled from this 
 live in `CLAUDE.md` under **Performance rules the code enforces** — that section is the
 thing future features must follow. This file tracks *this* body of work.
 
-**Status:** phases 1, 2, 3, 4 and 5 done. Phase 0 partly done. **Two phases remain: 3b and 6.**
-**Next:** phase 3b (scraper thumbnails, closes the image budget) or phase 6 (query-shaped reads, optional). Neither blocks the other.
+**Status:** phases 1, 2, 3, 3b, 4 and 5 done. Phase 0 partly done. **One phase remains: 6, and it is optional.**
+**Next:** deploy and measure (phase 0's open items). Phase 6 is a memory argument, not a speed one — measure first.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
 
@@ -297,42 +297,61 @@ Also fixed in passing: the mobile card line had a mojibake `Â·` where a `·` b
 
 ---
 
-### Phase 3b — Image thumbnails in the scraper · ☐ open
+### Phase 3b — Image thumbnails in the scraper · ✅ done
 
-Split out of phase 3 because it spans `scripts/scraper/`, not the app. Phase 3 reduced the
-*widths* per image; this reduces the *count*, which is what the 5K/month cap actually
-rations.
+Phase 3 reduced the *widths* per image; this reduces the *count*, which is what the
+5K/month cap actually rations.
 
-- [ ] Have `scripts/scraper/images/` write a ~400px webp thumbnail alongside the original
-      when it stores to the `racket-images%` bucket. It already downloads every file, so
-      the resize happens once, in a script we already run.
-- [ ] Serve that thumbnail from `RacketCard` with `unoptimized`, taking the catalogue grid
-      off the metered optimizer entirely.
-- [ ] Keep `next/image` optimization for the detail-page gallery only, which caps
-      transformations at roughly the number of detail pages actually visited.
+- [x] `scripts/scraper/images/thumbnail.ts` — `makeThumbnail` produces a ~400px webp with
+      `sharp`, from bytes the crawler already downloaded. Never upscales, and returns
+      `null` rather than throwing when sharp cannot decode a frame or the result would not
+      be smaller than the source. A thumbnail is an optimisation; losing the full-size
+      image we just fetched because the derived one failed is not a trade worth making.
+- [x] `storage.ts` stores it at `<same-key>-thumb.webp`, in the same brand subtree — so a
+      takedown is still one prefix delete rather than two lists to reconcile. A failed
+      thumbnail upload warns and returns `thumbUrl: null`; it does not fail the put.
+- [x] Migration `20260828000000_image_thumbnails.sql` adds `racket_images.thumb_path` /
+      `thumb_url` and `rackets.hero_thumb_url`, all nullable and read as `thumb ?? original`
+      so a racket crawled before this keeps working and a re-crawl fills it in. No backfill
+      step to forget.
+- [x] `types.ts`, `mappers.ts`, `seed.ts` and `generate-seed.ts` carry the new fields —
+      the schema change touches all four, as `CLAUDE.md` says it must. `supabase/seed.sql`
+      regenerated rather than hand-edited.
+- [x] `RacketCard` serves `heroThumbUrl` with `unoptimized`, falling back to
+      `heroImageUrl` through the optimizer when no thumbnail was crawled.
+- [x] `sharp` declared as a devDependency. It was already present as a transitive Next
+      dependency, which is not something to rely on.
+- [x] Tested: key derivation across five path shapes, resize/aspect/format, the
+      no-upscale rule, and null on garbage and empty input.
 
-**Do not do the second step without the first.** Setting `unoptimized` on the current
-full-size originals would trade a transformation problem for a Fast Data Transfer problem,
-and Hobby only allows 100 GB of that.
+#### The deployment hazard this surfaced, and the guard for it
 
-#### Images — revised for Hobby
+Adding columns to `RACKET_SELECT` broke the build before anything else did. PostgREST
+rejects the whole query when it names a column the schema lacks, and `readSnapshot`
+answers *any* query error by falling back to the seeded catalogue. So the first build
+after this change produced **113 pages in 4.6s instead of 475 in 2.2min** — eighteen
+seeded rackets standing in for three thousand, with no error anywhere.
 
-The original plan (trim `deviceSizes`, raise `minimumCacheTTL`) is not enough against a
-5K/month transformation cap and 3.010 hero images.
+That is the same class of failure as the 1000-row cap: correct-looking output, silently
+wrong data. So `readRackets` now retries once with `RACKET_SELECT_NO_THUMBS` when the
+error says a column is missing, and logs what to do about it:
 
-- [ ] **Do not run catalogue thumbnails through `next/image` optimization.**
-      `scripts/scraper/images/` already downloads each image and writes it to a
-      `racket-images%` Supabase bucket. Have it also write a pre-sized thumbnail
-      (~400px webp) at that point, and serve it with `unoptimized`. The resize happens
-      once, in a script we already run, instead of 3.010 times against a metered API.
-- [ ] Reserve `next/image` optimization for the detail-page gallery, which caps
-      transformations at roughly the number of detail pages actually visited.
-- [ ] Trim `images.deviceSizes` / `imageSizes` to the widths the gallery genuinely
-      requests, and raise `minimumCacheTTL` — transformations are billed per cache MISS
-      and STALE, so a long TTL directly reduces the count.
-- [ ] Keep `priority` on the gallery hero only. Never on cards.
+```
+[repository] rackets: thumbnail columns are missing, so the catalogue is being
+read without them. Apply supabase/migrations/20260828000000_image_thumbnails.sql
+and redeploy.
+```
 
----
+Verified against the un-migrated database: **475 pages again**, warning logged, catalogue
+intact. The degraded state is "no thumbnails", not "no catalogue".
+
+Both select shapes are checked to name identical columns apart from the thumbnail ones, so
+the fallback cannot silently drop a field.
+
+**Still to do, and it needs a real run:** `npm run scrape:images` has not been executed
+against the live bucket from here, so no thumbnails exist yet and every card is still on
+the `heroImageUrl` path. Apply the migration, run the crawler, and the grid moves off the
+metered optimizer on its own.
 
 ### Phase 4 — Cache Components · ✅ done
 

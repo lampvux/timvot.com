@@ -36,6 +36,12 @@ export async function RacketCard({
   const price = racket.lowestPrice ?? racket.msrp;
   const mobileHorizontal = mobileLayout === "horizontal";
 
+  // Prefer the copy the image crawler already sized for this box. Falling back
+  // to the full-size original keeps rackets crawled before thumbnails existed
+  // rendering, at the cost of one transformation each.
+  const hasThumb = Boolean(racket.heroThumbUrl);
+  const src = racket.heroThumbUrl ?? racket.heroImageUrl;
+
   return (
     <Card padding="sm" interactive className="flex h-full flex-col">
       <Link
@@ -62,11 +68,16 @@ export async function RacketCard({
           <span className="font-mono text-[11px] text-[var(--text-disabled)]">
             {racket.brandName.toUpperCase()}
           </span>
-          {racket.heroImageUrl && (
+          {src && (
             <Image
-              src={racket.heroImageUrl}
+              src={src}
               alt=""
               fill
+              /* A crawled thumbnail is already ~400px webp, so there is nothing
+                 left for the optimizer to do — and every transformation it
+                 skips is one back inside Vercel Hobby's 5.000 a month. Rackets
+                 crawled before thumbnails existed still go through it. */
+              unoptimized={hasThumb}
               sizes="(max-width: 640px) 96px, (max-width: 1024px) 50vw, 33vw"
               className="object-contain p-2 transition-transform duration-300 group-hover:scale-105"
             />

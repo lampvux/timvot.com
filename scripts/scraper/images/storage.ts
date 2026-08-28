@@ -46,6 +46,10 @@ export interface StoredObject {
   checksum: string;
   bytes: number;
   contentType: string;
+  /** Null when no thumbnail was supplied, or when storing it failed. The
+   *  catalogue falls back to the original, so this is never fatal. */
+  thumbPath: string | null;
+  thumbUrl: string | null;
 }
 
 export interface PutRequest {
@@ -55,6 +59,12 @@ export interface PutRequest {
   position: number;
   body: Uint8Array;
   contentType: string;
+  /**
+   * Card-sized copy of `body`, when one could be made. Stored beside the
+   * original under the same key plus `-thumb.webp`, so the two are found and
+   * deleted together — a takedown is still one prefix delete.
+   */
+  thumb?: { body: Uint8Array; contentType: string } | null;
   /**
    * sha256 of `body`, computed by the caller.
    *
@@ -180,6 +190,22 @@ export function readDimensions(body: Uint8Array): { width: number; height: numbe
   return null;
 }
 
+/**
+ * The thumbnail sits beside its original, differing only in suffix:
+ *
+ *   yonex/astrox-88-s-pro/00-1a2b3c4d.jpg
+ *   yonex/astrox-88-s-pro/00-1a2b3c4d-thumb.webp
+ *
+ * Same brand subtree, so "take Victor's photography down" is still one prefix
+ * delete rather than two lists to reconcile.
+ */
+export function thumbKeyFor(path: string): string {
+  // Only a real extension on the final segment. An unescaped `.` here matches
+  // any character, which quietly ate the last path segment instead of the
+  // suffix — `a/b/01-ff` became `a/b-thumb.webp`, a key in the wrong folder.
+  return `${path.replace(/\.[^./]+$/, "")}-thumb.webp`;
+}
+
 /* ------------------------------------------------------ Supabase Storage */
 
 export interface SupabaseStoreOptions {
@@ -290,6 +316,8 @@ export class SupabaseImageStore implements ImageStore {
       extension: extensionFor(request.contentType),
     });
 
+    const thumbPath = request.thumb ? thumbKeyFor(path) : null;
+
     if (this.options.dryRun) {
       return {
         bucket,
@@ -298,6 +326,8 @@ export class SupabaseImageStore implements ImageStore {
         checksum,
         bytes: request.body.byteLength,
         contentType: request.contentType,
+        thumbPath,
+        thumbUrl: thumbPath ? `${bucket}/${thumbPath}` : null,
       };
     }
 
@@ -314,6 +344,28 @@ export class SupabaseImageStore implements ImageStore {
 
     const { data } = this.options.client.storage.from(bucket).getPublicUrl(path);
 
+    // The thumbnail is an optimisation and its column is nullable, so a failure
+    // here costs the card its small copy and nothing else. Losing the original
+    // we just uploaded because the derived one would not store is not a trade
+    // worth making, so this does not throw.
+    let thumbUrl: string | null = null;
+    if (request.thumb && thumbPath) {
+      const { error: thumbError } = await this.options.client.storage
+        .from(bucket)
+        .upload(thumbPath, request.thumb.body, {
+          contentType: request.thumb.contentType,
+          upsert: true,
+          cacheControl: "31536000",
+        });
+
+      if (thumbError) {
+        console.warn(`   ⚠️  thumbnail ${bucket}/${thumbPath}: ${thumbError.message}`);
+      } else {
+        thumbUrl = this.options.client.storage.from(bucket).getPublicUrl(thumbPath)
+          .data.publicUrl;
+      }
+    }
+
     return {
       bucket,
       path,
@@ -321,6 +373,8 @@ export class SupabaseImageStore implements ImageStore {
       checksum,
       bytes: request.body.byteLength,
       contentType: request.contentType,
+      thumbPath: thumbUrl ? thumbPath : null,
+      thumbUrl,
     };
   }
 }
