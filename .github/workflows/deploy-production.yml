@@ -1,0 +1,187 @@
+name: Deploy production (prebuilt)
+
+# Build on a GitHub runner, deploy the output to Vercel, tag the release.
+#
+# Why this exists: Vercel's Hobby builder runs Next's static generation in a
+# single worker, and that worker runs out of heap at roughly 145 pages. A
+# GitHub runner has more cores, so static generation gets more workers and the
+# per-worker ceiling stops binding — which is what lets `prerendered_rackets`
+# go well above the 30 the Hobby builder can survive.
+#
+# Deliberately manual. Vercel's own git integration still builds every push to
+# main at the default 30 rackets, and that path has to keep working on its own;
+# this is the deliberate, larger release, not a replacement for it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit SHA on main to build (full or short)"
+        required: true
+        type: string
+      prerendered_rackets:
+        description: "Racket detail pages to prerender, per locale. Hobby's own builder caps out near 30; a runner handles far more."
+        required: false
+        default: "200"
+        type: string
+      tag:
+        description: "Release tag. Blank generates v<YYYY.MM.DD>-<short-sha>."
+        required: false
+        type: string
+      dry_run:
+        description: "Build only — do not deploy, do not tag."
+        required: false
+        default: false
+        type: boolean
+
+# One production deploy at a time. Not cancel-in-progress: interrupting a
+# half-finished deploy is worse than making the next one wait.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+  # Pinned. `vercel@latest` changing under a release is not a surprise worth having.
+  VERCEL_CLI_VERSION: "59.3.0"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # Only what creating the tag and release needs.
+      contents: write
+
+    steps:
+      - name: Check required configuration
+        run: |
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            case "$name" in
+              VERCEL_TOKEN) value='${{ secrets.VERCEL_TOKEN }}' ;;
+              VERCEL_ORG_ID) value='${{ vars.VERCEL_ORG_ID }}' ;;
+              VERCEL_PROJECT_ID) value='${{ vars.VERCEL_PROJECT_ID }}' ;;
+            esac
+            if [ -z "$value" ]; then echo "::error::$name is not set"; missing=1; fi
+          done
+          # Fail here rather than three steps later inside a Vercel CLI error.
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Checkout the requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          # Full history: the ancestry check below and the tag both need it.
+          fetch-depth: 0
+
+      - name: Verify the commit is on main
+        run: |
+          git fetch origin main --quiet
+          sha="$(git rev-parse HEAD)"
+          # The input is meant to name a commit that is already on main. Deploying
+          # something that is not would put unreviewed code into production under a
+          # release tag, which is the one thing this workflow must not do quietly.
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$sha is not an ancestor of origin/main. Merge it first."
+            exit 1
+          fi
+          {
+            echo "SHA=$sha"
+            echo "SHORT_SHA=$(git rev-parse --short=8 HEAD)"
+          } >> "$GITHUB_ENV"
+          echo "Deploying $sha"
+          git log -1 --pretty='  %s%n  by %an on %ad' --date=short
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the runtime Vercel uses, so a build-time failure here is a
+          # real failure and not a version difference.
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Report the build budget
+        run: |
+          cores="$(nproc)"
+          rackets="${{ inputs.prerendered_rackets }}"
+          # Each racket is one page per locale, and the rest of the app adds ~75.
+          pages=$(( rackets * 2 + 75 ))
+          echo "cores            : $cores"
+          echo "prerendered pages: ~$pages  (${rackets} rackets x 2 locales + ~75)"
+          echo "pages per worker : ~$(( pages / cores ))  (heap gives out near 145)"
+          if [ $(( pages / cores )) -gt 145 ]; then
+            echo "::warning::~$(( pages / cores )) pages per worker is above the ~145 where the heap has failed before. Lower prerendered_rackets if this build OOMs."
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Install the Vercel CLI
+        # Pinned via VERCEL_CLI_VERSION above, so a CLI release cannot change what
+        # this workflow does between two runs of the same commit.
+        run: npm install -g "vercel@${VERCEL_CLI_VERSION}"
+
+      - name: Pull production environment from Vercel
+        # Brings down the project settings and the production env vars, so the
+        # build here matches the one Vercel would have run itself.
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with production settings
+        env:
+          PRERENDERED_RACKETS: ${{ inputs.prerendered_rackets }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy the build output
+        if: ${{ !inputs.dry_run }}
+        id: deploy
+        run: |
+          url="$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed: $url"
+
+      - name: Tag the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="v$(date -u +%Y.%m.%d)-${SHORT_SHA}"
+          fi
+
+          # Re-tagging the same name would silently point an existing release at
+          # different code. Refuse instead.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists. Pass a different one."
+            exit 1
+          fi
+
+          gh release create "$tag" \
+            --target "$SHA" \
+            --title "$tag" \
+            --notes "Production deploy of \`${SHORT_SHA}\`.
+
+          - Deployment: ${{ steps.deploy.outputs.url }}
+          - Prerendered rackets: ${{ inputs.prerendered_rackets }}
+          - Built on GitHub Actions and deployed with \`vercel deploy --prebuilt\`.
+          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          echo "Released $tag"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Production deploy"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${SHA:-unknown}\` |"
+            echo "| Prerendered rackets | ${{ inputs.prerendered_rackets }} |"
+            echo "| Deployment | ${{ steps.deploy.outputs.url || '— (dry run)' }} |"
+            echo "| Tag | ${{ inputs.tag || '(auto)' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

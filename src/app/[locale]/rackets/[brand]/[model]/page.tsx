@@ -85,8 +85,23 @@ import type { Review, SellerTier } from "@/lib/types";
  * Raise this only alongside more build workers (a Pro build machine, or
  * building in CI) or a fix for the per-page accumulation. See
  * `docs/performance-plan.md`.
+ *
+ * `PRERENDERED_RACKETS` in the environment overrides the default, which is what
+ * `.github/workflows/deploy-production.yml` uses: a GitHub runner has more
+ * cores than the Hobby builder, so static generation gets more workers and the
+ * per-worker page ceiling stops binding. **30 stays the default on purpose** —
+ * it is what Vercel's own git integration can survive, and that build must keep
+ * working whether or not anyone uses the workflow.
  */
-const PRERENDERED_RACKETS = 30;
+const DEFAULT_PRERENDERED_RACKETS = 30;
+
+const PRERENDERED_RACKETS = (() => {
+  const raw = Number(process.env.PRERENDERED_RACKETS);
+  // Cache Components rejects an empty `generateStaticParams`, so the floor is 1
+  // rather than 0 — see `empty-generate-static-params`.
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_PRERENDERED_RACKETS;
+  return Math.floor(raw);
+})();
 
 export async function generateStaticParams() {
   const rackets = await getRackets();
