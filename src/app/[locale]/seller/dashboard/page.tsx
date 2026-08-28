@@ -1,3 +1,7 @@
+// A seller's own offers. Same reasoning as /account: nothing here is shared
+// between visitors, so there is no static shell to ship.
+export const instant = false;
+
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";

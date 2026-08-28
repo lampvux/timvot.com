@@ -43,12 +43,36 @@ import {
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
 import type { Review, SellerTier } from "@/lib/types";
 
+/**
+ * Prerender the rackets people actually open, and let ISR fill in the rest.
+ *
+ * 3.010 rackets across two locales is 6.020 pages, which is both a long build
+ * and a lot of output for pages nobody may request. The ISR guidance is to
+ * prerender a popular subset and generate the others on first visit — with
+ * Cache Components a path not listed here still serves an App Shell instantly
+ * and upgrades in the background, so the tail is not a slow page, just a
+ * slightly later one.
+ *
+ * Court Score order rather than source order: a racket with a real player
+ * score is one people have reviewed, which is a better proxy for "someone will
+ * open this" than wherever the scraper happened to put it. Returning an empty
+ * array is not an option under Cache Components — it raises
+ * `empty-generate-static-params`.
+ */
+const PRERENDERED_RACKETS = 200;
+
 export async function generateStaticParams() {
   const rackets = await getRackets();
-  return rackets.slice(0, 50).map((racket) => ({
-    brand: racket.brandSlug,
-    model: racket.slug,
-  }));
+  return [...rackets]
+    .sort(
+      (a, b) =>
+        (b.courtScore ?? -1) - (a.courtScore ?? -1) || b.specScore - a.specScore,
+    )
+    .slice(0, PRERENDERED_RACKETS)
+    .map((racket) => ({
+      brand: racket.brandSlug,
+      model: racket.slug,
+    }));
 }
 
 export async function generateMetadata({

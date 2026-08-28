@@ -1,3 +1,8 @@
+// The whole page is a function of `?ids=`, so there is no shell that is not
+// already the empty state. Opted out until phase 5 splits the picked-racket
+// columns behind a Suspense boundary (docs/performance-plan.md).
+export const instant = false;
+
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";

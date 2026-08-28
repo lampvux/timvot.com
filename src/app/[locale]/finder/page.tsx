@@ -1,3 +1,7 @@
+// Renders answers out of searchParams. The quiz itself could prerender; that
+// split is phase 5 work (docs/performance-plan.md).
+export const instant = false;
+
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";

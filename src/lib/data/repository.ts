@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
+import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
 import { courtScore } from "@/lib/court-score";
 import { balanceTypeOf, median } from "@/lib/format";
@@ -18,6 +19,7 @@ import type {
   Seller,
 } from "@/lib/types";
 import * as seed from "./seed";
+import { TAG } from "./tags";
 import {
   mapBrand,
   mapGuide,
@@ -100,8 +102,40 @@ async function selectAll<T>(
   return { data: all, error: null };
 }
 
-/** Deduped per request by React `cache`, so a page hits the DB once. */
-export const loadSnapshot = cache(async (): Promise<Snapshot> => {
+/**
+ * The catalogue read, cached across requests rather than rebuilt for each one.
+ *
+ * `use cache` is what makes a route holding this data prerenderable: without
+ * it Next treats the Supabase call as runtime data and refuses to build a
+ * static shell — "encountered uncached or runtime data during prerendering".
+ * On Vercel Hobby that matters more than the cache itself, because a
+ * prerendered page served from the CDN does not invoke the function at all,
+ * and Active CPU is the budget the free plan actually rations.
+ *
+ * The tags are per table so `scrape:sync` can invalidate what it just wrote
+ * instead of waiting out a timer — see `app/api/revalidate/route.ts`.
+ *
+ * Nothing in here may read `cookies()` or `headers()`: a cached scope has no
+ * request to read them from. `createStaticClient()` is cookie-free by design,
+ * which is why it is the client used here and not `createClient()`.
+ *
+ * Deliberately *not* `use cache: remote`. That needs a platform cache handler
+ * and bills for it; the in-memory default plus prerendering is the right shape
+ * on this plan.
+ */
+async function readSnapshot(): Promise<Snapshot> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(
+    TAG.brands,
+    TAG.rackets,
+    TAG.sellers,
+    TAG.offers,
+    TAG.pricePoints,
+    TAG.reviews,
+    TAG.guides,
+  );
+
   const supabase = createStaticClient();
   if (!supabase) return seedSnapshot();
 
@@ -169,7 +203,11 @@ export const loadSnapshot = cache(async (): Promise<Snapshot> => {
   } catch {
     return seedSnapshot();
   }
-});
+}
+
+/** Deduped per request by React `cache` on top of the cross-request
+ *  `use cache`, so one render hits the cache once rather than per caller. */
+export const loadSnapshot = cache(readSnapshot);
 
 /* --------------------------------------------------------------- index */
 

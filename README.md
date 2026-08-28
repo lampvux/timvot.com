@@ -217,6 +217,22 @@ by the `is_admin()` policies, and `scripts/scraper/env.ts` reads both `.env` and
 `supabase/scraped-catalogue.sql`, which applies through psql or the Supabase SQL editor
 with no key at all. Apply the migrations first — the file assumes the schema exists.
 
+**Publishing the change.** The app serves prices from prerendered pages, so a successful
+`--sync-db` also asks the deployment to drop the caches it just invalidated:
+
+```bash
+REVALIDATE_URL=https://<your-app>/api/revalidate   # the deployed route
+REVALIDATE_SECRET=<same value as the deployment>   # bearer secret, any length
+```
+
+Both are optional and neither is needed locally: with them unset the scraper says so and
+carries on, and the site picks the new prices up when its `cacheLife` window expires. They
+exist because Vercel Hobby caps cron jobs at once per day with ±59 minutes of slop, so a
+schedule cannot be what publishes a price change — the writer has to be. The call fires
+only when the sync reported clean, so a partial write holds the last good catalogue rather
+than publishing half of a new one, and a failure to reach the deployment is a warning
+rather than a failed run.
+
 **Running it on a schedule.** `npm run scrape:refresh` is the shape meant for a cron
 job or a Windows scheduled task: a complete walk of the four sites, no browser, and a
 write straight into Postgres. A full walk takes roughly eight minutes and costs about

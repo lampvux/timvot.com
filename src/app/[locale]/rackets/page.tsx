@@ -1,3 +1,9 @@
+// Reads searchParams for filters, sort and page, so the results grid cannot be
+// in the static shell. Phase 5 splits this properly: the rail and heading render
+// from the URL alone, and only the grid goes behind Suspense. Until then the
+// route is allowed to block (docs/performance-plan.md).
+export const instant = false;
+
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";

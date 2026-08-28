@@ -4,8 +4,8 @@ Tracking document for the speed work on Shuttlecraft. Rules distilled from this 
 live in `CLAUDE.md` under **Performance rules the code enforces** — that section is the
 thing future features must follow. This file tracks *this* body of work.
 
-**Status:** phases 1, 2 and 3 done. Phase 0 partly done. Phases 3b, 4, 5, 6 open.
-**Next:** phase 4 — the route table stays all-`ƒ` until `use cache` lands. See the correction under phase 2.
+**Status:** phases 1, 2, 3 and 4 done. Phase 0 partly done. Phases 3b, 5, 6 open.
+**Next:** phase 5 — seven routes carry `instant = false` from phase 4, and `/rackets` is the one that matters.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
 
@@ -90,9 +90,9 @@ overage to buy.
 | 01 | Enrichment scans the price table once per racket | `repository.ts` → `enrich()` | ~10M steps now, ~880M at 90 days of scrapes | 1 ✅ |
 | 02 | `getDeals` re-filters and re-sorts history per variant | `repository.ts` → `getDeals()` | 3.265 scans + 3.265 sorts | 1 ✅ |
 | 03 | Catalogue renders every match, no pagination | `rackets/page.tsx` | 3.010 cards in one RSC payload | 3 ✅ |
-| 04 | `getUser()` in the locale layout reads cookies | `[locale]/layout.tsx` | every route dynamic + blocking auth call | 2 ✅ (flip needs 4) |
+| 04 | `getUser()` in the locale layout reads cookies | `[locale]/layout.tsx` | every route dynamic + blocking auth call | 2 ✅ + 4 ✅ |
 | 05 | Whole lucide icon set ships to the browser | `ds/primitives.tsx` | ~1.500 icons bundled, 26 used | 3 ✅ |
-| 06 | No cache anywhere | — | full snapshot per request | 4 |
+| 06 | No cache anywhere | — | full snapshot per request | 4 ✅ |
 | 07 | `RacketCard` is a client component for one `useState` | `racket-card.tsx` | 3.010 client instances hydrated | 3 ✅ |
 | 08 | Snapshot pulls every `racket_images` row, all columns | `mappers.ts` → `RACKET_SELECT` | checksum, bytes, width, height per image | 6 |
 | 09 | No Suspense or `loading.tsx` on any route | `app/**` | browser holds the old page until done | 5 |
@@ -334,40 +334,91 @@ The original plan (trim `deviceSizes`, raise `minimumCacheTTL`) is not enough ag
 
 ---
 
-### Phase 4 — Cache Components, reframed for Hobby · ☐ open
+### Phase 4 — Cache Components · ✅ done
 
-Enable the flag and mark the read path, but understand what it buys on this plan:
-`use cache` makes a route's shell **prerenderable**; prerendering is what makes it free.
+The phase that finally moved the route table. `use cache` makes a route's shell
+**prerenderable**; prerendering is what makes it free — a CDN hit does not invoke the
+function, which is the only thing that protects 4 CPU-hours a month.
 
-- [ ] `cacheComponents: true` in `next.config.ts` (this also makes PPR the App Router
-      default, which is what makes phase 2's static shell pay off). **This is the phase
-      that moves the route table** — phase 2 alone does not, see its correction.
-      Flipping the flag on its own fails the build with
-      `Route "/[locale]/rackets/[brand]/[model]": Next.js encountered uncached or
-      runtime data during prerendering`, so the flag and the `use cache` marks below
-      have to land together.
-- [ ] `cacheLife` profiles matched to the scrape cadence, not to page loads.
-- [ ] `"use cache"` + `cacheTag("rackets", "offers", "price-points", "reviews")` on the
-      repository reads.
-- [ ] **Prerender the detail pages.** `generateStaticParams` currently returns 50 of
-      3.010 and none of them prerender because the layout is dynamic. After phase 2 they
-      prerender for real. Return the top few hundred by Court Score and let ISR fill in
-      the rest on demand — the ISR docs recommend exactly this to keep builds inside the
-      45-minute cap, and 3.010 × 2 locales is 6.020 pages.
-- [ ] **On-demand revalidation from the writer.** `scrape:sync` calls `revalidateTag`
-      through a small authenticated route after a successful sync, so a price change
-      appears when it is scraped. Hobby crons are once-per-day with ±59 min precision, so
-      on-demand is the mechanism and `cacheLife` is only the safety net.
-- [ ] **Do not use `'use cache: remote'`.** It needs a platform cache handler and incurs
-      fees; the in-memory default plus ISR is the right shape for this plan.
-- [ ] Read `node_modules/next/dist/docs/01-app/02-guides/migrating-to-cache-components.md`
-      first. It is in the repo, it is version-accurate, and this Next diverges from
-      training data.
+- [x] `cacheComponents: true` in `next.config.ts`, with `cacheLife` profiles matched to
+      the scrape cadence rather than to page loads: `catalogue` (6h revalidate) for specs
+      and names, `prices` (15m) for what people reload for.
+- [x] `"use cache"` + `cacheLife("catalogue")` + `cacheTag(...)` on the repository's
+      `readSnapshot`. `loadSnapshot` stays wrapped in React `cache` on top, so one render
+      hits the cross-request cache once rather than per caller.
+- [x] `src/lib/data/tags.ts` — tag names in one place. They are a contract between a node
+      script and a deployed route, so a typo on either side would fail silently as a price
+      that never appears. `isCacheTag` makes the route reject unknown tags with a 400
+      rather than reporting success having revalidated nothing.
+- [x] `src/app/api/revalidate/route.ts` — POST, bearer secret compared in constant time,
+      `revalidateTag(tag, "max")` for stale-while-revalidate. Refuses when no secret is
+      configured rather than being an open cache-eviction endpoint. Auth logic tested
+      against twelve cases (no secret, empty secret, prefix, suffix, wrong case, missing
+      header).
+- [x] `scripts/scraper/revalidate.ts`, called from `--sync-db` **only when the sync
+      reported clean** — revalidating after a partial write would publish a half-updated
+      catalogue instead of holding the last good one. Never fails the run: a cache that
+      refreshes on its timer is a slower update, not a wrong one.
+- [x] `REVALIDATE_URL` / `REVALIDATE_SECRET` documented in `.env.example`; with neither
+      set the scraper says so and carries on, which is the local-database case.
+- [x] `generateStaticParams` raised from 50 to **200 rackets, ordered by Court Score**
+      instead of scraper order — a racket people have reviewed is a better proxy for one
+      people will open. The tail is not left behind: under Cache Components an unlisted
+      path serves an App Shell instantly and upgrades in the background.
+- [x] Did **not** use `use cache: remote`.
 
----
+**Result — measured.**
+
+| | Before phase 4 | After |
+| --- | --- | --- |
+| Prerendered HTML files | 4 | **472** |
+| Routes in `prerender-manifest` | 3 | **439** |
+| Route entries partial-prerendered (`◐`) | 0 | **27** |
+| Route entries dynamic (`ƒ`) | all | 23 |
+| Build time | 55s (163 pages) | 119s (475 pages) |
+
+Build time is the cost, and it is affordable: 119s locally against a 45-minute cap, with
+room to raise `PRERENDERED_RACKETS` later if the Active CPU figure justifies it.
+
+#### Two things the migration guide changed
+
+1. **`revalidateTag` now takes a cache profile as a second argument.** `revalidateTag(tag)`
+   is a type error under Cache Components; `revalidateTag(tag, "max")` is stale-while-
+   revalidate. `updateTag` is the read-your-own-writes alternative but only works in a
+   Server Action, and the caller here is a node script.
+2. **Route segment config `dynamic` is incompatible with `cacheComponents`** and fails the
+   build outright. The revalidate route's `export const dynamic = "force-dynamic"` had to
+   go; a route handler that reads a request body is dynamic anyway.
+
+#### Debt this phase created — seven routes opted out
+
+`instant = false` is set on `/account`, `/seller/dashboard`, `/compare`, `/finder`,
+`/rackets`, and the four auth pages. That marks a segment *allowed to block*; it does not
+force it dynamic, which is why `/forgot-password` and `/reset-password` still prerender.
+
+Two of those are honest and permanent — `/account` and `/seller/dashboard` are per-visitor
+by definition and have no shell worth shipping. The rest are **phase 5 work**: they read
+`searchParams` at the top of the component, and the fix is to move that read into a child
+behind `<Suspense>` so the rest of the route prerenders.
+
+`/rackets` is the one that matters. It is the most-visited page after the home page, it is
+still fully dynamic, and it is the page phase 5's catalogue split was already scoped to fix.
 
 ### Phase 5 — Make the wait legible · ☐ open
 
+Phase 4 handed this phase a concrete worklist rather than a general intention: **remove
+`instant = false` from five routes** by moving their `searchParams` read into a child
+behind `<Suspense>`. Each one that lands turns a `ƒ` into a `◐`.
+
+- [ ] **`/rackets`** — the one that matters. Most-visited page after the home page and
+      still fully dynamic. The split was already scoped below: the rail and heading render
+      from the URL alone, only the grid streams.
+- [ ] **`/compare`**, **`/finder`** — same shape, smaller stakes.
+- [ ] **`/sign-in`**, **`/sign-up`** — they read `searchParams` only to surface a callback
+      error or notice. Smallest of the five.
+- [ ] Leave `instant = false` on **`/account`** and **`/seller/dashboard`**. Those are
+      per-visitor by definition and have no shell worth prerendering; the opt-out there is
+      the right answer, not debt.
 - [ ] `loading.tsx` per route group — catalogue, detail, deals, sellers. Skeletons reuse
       the real components' box sizes so nothing shifts.
 - [ ] Split the catalogue below the rail: `FilterRail` and the heading render from the

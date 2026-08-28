@@ -10,6 +10,35 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const nextConfig: NextConfig = {
   compress: false,
   typedRoutes: false,
+
+  /**
+   * Cache Components. This is what lets a route ship a prerendered static
+   * shell while the per-visitor parts stream, and on Vercel Hobby that is the
+   * whole game: a CDN hit does not invoke the function, and Active CPU (4
+   * hours a month) is the budget the free plan actually rations.
+   *
+   * It also makes PPR the App Router default, so `experimental.ppr` and
+   * `experimental_ppr` are gone rather than merely unused.
+   */
+  cacheComponents: true,
+
+  /**
+   * Windows matched to how the data actually moves, which is when the scraper
+   * runs — not when somebody loads a page.
+   *
+   * `revalidate` is the safety net here, not the mechanism: `scrape:sync`
+   * calls `revalidateTag` through /api/revalidate the moment it finishes, so a
+   * price change appears when it is scraped. That matters on Hobby, where
+   * cron jobs are capped at once per day with ±59 minutes of slop and so
+   * cannot be the trigger.
+   */
+  cacheLife: {
+    // Specs, names and images. These change when a catalogue scrape lands.
+    catalogue: { stale: 3600, revalidate: 21600, expire: 86400 },
+    // Prices and deals move faster and are the reason anyone reloads.
+    prices: { stale: 300, revalidate: 900, expire: 3600 },
+  },
+
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
