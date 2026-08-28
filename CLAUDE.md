@@ -203,6 +203,14 @@ streams. Where the value is only needed after hydration — a tray that is empty
 localStorage is read — move the call behind that check instead, and no boundary is needed
 at all.
 
+**Prerendered page count is capped by the builder, not by taste.** Static generation
+retains memory per page, and Vercel Hobby runs it in a single worker — about 145 pages
+before the heap is gone. A local build with fifteen workers proves nothing about it, and
+`NODE_OPTIONS=--max-old-space-size` does not help because it never reaches that worker.
+Count what a route multiplies: `generateStaticParams` entries times locales. Under Cache
+Components an unlisted path still serves an App Shell instantly, so prerendering fewer is
+a latency trade, not a missing page.
+
 **`npm run build` passing is not enough for a caching change.** Some Cache Components
 validation runs only in development, so a route can build clean and still be blocked from
 prerendering. Start `next dev` and open the routes you touched before calling it done.
