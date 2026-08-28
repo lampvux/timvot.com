@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
@@ -7,6 +8,7 @@ import { fontVariables } from "@/app/fonts";
 import { AccountSlot } from "@/components/auth-slot";
 import { CompareProvider, CompareTray } from "@/components/compare-tray";
 import { MobileTabBar, SiteFooter, TopBar } from "@/components/site-chrome";
+import { NavigationProgress } from "@/components/navigation-progress";
 import "@/app/globals.css";
 
 export function generateStaticParams() {
@@ -55,6 +57,9 @@ export default async function LocaleLayout({
   return (
     <html lang={locale} className={fontVariables}>
       <body className="min-h-dvh">
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         <NextIntlClientProvider>
           <CompareProvider>
             <a

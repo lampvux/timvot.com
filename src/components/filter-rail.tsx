@@ -50,7 +50,7 @@ function useFilterBody({ filters, facets, brands }: FilterProps) {
 
   const push = (next: CatalogFilters) => {
     startTransition(() => {
-      router.replace({ pathname: "/rackets", query: filtersToQuery(next) });
+      router.replace({ pathname: "/rackets", query: filtersToQuery(next) }, { scroll: false });
     });
   };
 
@@ -306,7 +306,7 @@ export function ActiveFilterPills({
 
   const push = (next: CatalogFilters) =>
     startTransition(() => {
-      router.replace({ pathname: "/rackets", query: filtersToQuery(next) });
+      router.replace({ pathname: "/rackets", query: filtersToQuery(next) }, { scroll: false });
     });
 
   const pills: { key: string; label: string; onRemove: () => void; mono?: boolean }[] =
@@ -419,13 +419,16 @@ export function SortSelect({ filters }: { filters: CatalogFilters }) {
           value={filters.sort}
           onChange={(event) =>
             startTransition(() => {
-              router.replace({
-                pathname: "/rackets",
-                query: filtersToQuery({
-                  ...filters,
-                  sort: event.target.value as SortKey,
-                }),
-              });
+              router.replace(
+                {
+                  pathname: "/rackets",
+                  query: filtersToQuery({
+                    ...filters,
+                    sort: event.target.value as SortKey,
+                  }),
+                },
+                { scroll: false },
+              );
             })
           }
           options={[

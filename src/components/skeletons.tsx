@@ -148,3 +148,108 @@ export function AuthFormSkeleton() {
     </div>
   );
 }
+
+export function DealsSkeleton() {
+  return (
+    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+      <span className="sr-only">Loading price drop deals</span>
+      <Bar className="h-3 w-24" />
+      <Bar className="mt-2 h-9 w-2/3 max-w-[24rem]" />
+      <div className="mt-6 overflow-hidden rounded-md border border-line bg-card">
+        <div className="h-10 border-b border-line bg-sunken" />
+        {Array.from({ length: 8 }, (_, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[1fr_120px_100px_90px] items-center gap-4 border-b border-line px-4 py-3.5 last:border-0"
+          >
+            <div>
+              <Bar className="h-4 w-44" />
+              <Bar className="mt-1 h-3 w-20" />
+            </div>
+            <Bar className="h-4 w-16" />
+            <Bar className="h-5 w-24" />
+            <Bar className="h-4 w-20" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SellersSkeleton() {
+  return (
+    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+      <span className="sr-only">Loading sellers directory</span>
+      <Bar className="h-3 w-24" />
+      <Bar className="mt-2 h-9 w-3/4 max-w-[26rem]" />
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="rounded-md border border-line bg-card p-4">
+            <Bar className="h-5 w-24" />
+            <Bar className="mt-2 h-3.5 w-full" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="rounded-md border border-line bg-card p-5">
+            <Bar className="h-5 w-36" />
+            <Bar className="mt-2 h-4 w-20" />
+            <Bar className="mt-3 h-3.5 w-full" />
+            <Bar className="mt-1.5 h-3.5 w-4/5" />
+            <div className="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
+              <Bar className="h-4 w-12" />
+              <Bar className="h-4 w-12" />
+              <Bar className="h-4 w-12" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function GuidesSkeleton() {
+  return (
+    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+      <span className="sr-only">Loading buying guides</span>
+      <Bar className="h-3 w-24" />
+      <Bar className="mt-2 h-9 w-2/3 max-w-[26rem]" />
+      <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="rounded-md border border-line bg-card p-6">
+            <Bar className="h-6 w-4/5" />
+            <Bar className="mt-3 h-4 w-full" />
+            <Bar className="mt-1.5 h-4 w-3/4" />
+            <Bar className="mt-4 h-3 w-24" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SellerDetailSkeleton() {
+  return (
+    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+      <span className="sr-only">Loading seller profile</span>
+      <Bar className="h-3 w-20" />
+      <Bar className="mt-2 h-9 w-64" />
+      <Bar className="mt-3 h-4 w-32" />
+      <Bar className="mt-4 h-4 w-full max-w-[42rem]" />
+      <div className="mt-8 overflow-hidden rounded-md border border-line bg-card">
+        <div className="h-10 border-b border-line bg-sunken" />
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="flex items-center justify-between border-b border-line px-4 py-3.5 last:border-0">
+            <div>
+              <Bar className="h-4 w-40" />
+              <Bar className="mt-1 h-3 w-24" />
+            </div>
+            <Bar className="h-5 w-24" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
