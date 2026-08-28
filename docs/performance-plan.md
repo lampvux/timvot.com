@@ -4,7 +4,8 @@ Tracking document for the speed work on Shuttlecraft. Rules distilled from this 
 live in `CLAUDE.md` under **Performance rules the code enforces** — that section is the
 thing future features must follow. This file tracks *this* body of work.
 
-**Status:** phase 1 done and measured (63×–145×). Phase 0 partly done. Phases 2–6 open.
+**Status:** phases 1 and 2 done. Phase 0 partly done. Phases 3–6 open.
+**Next:** phase 4 — the route table stays all-`ƒ` until `use cache` lands. See the correction under phase 2.
 **Branch:** `perf/catalogue-read-path`
 **Target platform:** Vercel, Hobby (free) plan — verified against the docs, see below.
 
@@ -89,7 +90,7 @@ overage to buy.
 | 01 | Enrichment scans the price table once per racket | `repository.ts` → `enrich()` | ~10M steps now, ~880M at 90 days of scrapes | 1 ✅ |
 | 02 | `getDeals` re-filters and re-sorts history per variant | `repository.ts` → `getDeals()` | 3.265 scans + 3.265 sorts | 1 ✅ |
 | 03 | Catalogue renders every match, no pagination | `rackets/page.tsx` | 3.010 cards in one RSC payload | 3 |
-| 04 | `getUser()` in the locale layout reads cookies | `[locale]/layout.tsx` | every route dynamic + blocking auth call | 2 |
+| 04 | `getUser()` in the locale layout reads cookies | `[locale]/layout.tsx` | every route dynamic + blocking auth call | 2 ✅ (flip needs 4) |
 | 05 | Whole lucide icon set ships to the browser | `ds/primitives.tsx` | ~1.500 icons bundled, 17 used | 3 |
 | 06 | No cache anywhere | — | full snapshot per request | 4 |
 | 07 | `RacketCard` is a client component for one `useState` | `racket-card.tsx` | 3.010 client instances hydrated | 3 |
@@ -118,11 +119,16 @@ overage to buy.
       ƒ /[locale]/guides                   … (all ƒ)
       ```
 
-      This is finding 04 confirmed rather than argued. Worse: the build spends
-      **68s generating 140 pages** from `generateStaticParams` and then serves every
-      one of them dynamically, because the `cookies()` read in the locale layout
-      poisons the whole tree. That is 68 seconds of build time producing nothing.
-      This table is the before-picture for phase 2.
+      Worse: the build spends **68s generating 140 pages** from
+      `generateStaticParams` and then serves every one of them dynamically. No HTML
+      is emitted for any locale route — `.next/server/app/vi/` holds only
+      subdirectories, and `prerender-manifest.json` lists three routes, none of them
+      a page. That is 68 seconds of build time producing nothing.
+
+      The cause is **two** things, not one: the `cookies()` read in the locale layout
+      *and* the uncached Supabase reads on every data page. Phase 2 removes the first
+      from the critical path; phase 4 has to cache the second before the table moves.
+      See the correction under phase 2.
 
 - [ ] Time `loadSnapshot`, `getRackets`, `getDeals` against a real Supabase snapshot.
 - [ ] Record actual row counts in the linked project, especially `price_points`.
@@ -183,21 +189,67 @@ That is what makes this a quota-survival fix and not only a speed fix.
 
 ---
 
-### Phase 2 — Static shell · ☐ open
+### Phase 2 — Static shell · ✅ done (structurally) — see the correction below
 
-`[locale]/layout.tsx` awaits `getUser()`, which reads `cookies()`. That single await
-opts every route out of prerendering and puts a Supabase Auth round-trip in front of the
-first byte of every page. **Blocks phase 4** — a `use cache` scope cannot read cookies,
-so while the layout does, the repository is uncacheable through it.
+`[locale]/layout.tsx` awaited `getUser()`, which reads `cookies()`, putting a Supabase
+Auth round-trip in front of the first byte of every page. **Blocks phase 4** — a
+`use cache` scope cannot read cookies, so while the layout did, the repository was
+uncacheable through it.
 
-- [ ] Drop `signedIn` from `TopBar`; the layout awaits nothing.
-- [ ] Add a leaf `<AuthSlot />` server component behind `<Suspense>`, signed-out markup
-      as the fallback, fixed width so nothing shifts.
-- [ ] Same on the racket detail page — it currently awaits `getUser()` in the same
-      `Promise.all` as the catalogue read.
-- [ ] Write the security boundary into the component: cookie presence may decide which
-      nav link to paint, never which data to return. Watchlist, price alerts and the
-      seller dashboard keep calling `getUser()`; RLS stays the real gate.
+- [x] `TopBar` takes an `accountSlot: ReactNode` instead of `signedIn: boolean`. The
+      layout now awaits nothing at all.
+- [x] `src/components/auth-slot.tsx` — `<AccountSlot />` owns the `getUser()` read behind
+      `<Suspense>`, with the signed-out link as the fallback. Both states render identical
+      markup, so the 44px target never moves.
+- [x] `src/components/watch-price-slot.tsx` — same treatment for the racket detail page,
+      which awaited `getUser()` in the same `Promise.all` as the catalogue read. A spec
+      sheet no longer waits on auth.
+- [x] Security boundary written into both components: what resolves there decides which
+      link to paint and nothing else. `WatchPriceButton` already re-establishes the user
+      with `supabase.auth.getUser()` before upserting, and the `watchlist` RLS policy is
+      the real gate.
+- [x] `npm run typecheck` and `npm run build` pass.
+
+#### Correction — phase 2 does not flip the route table on its own
+
+I said this phase would recover the 68s of wasted build time and turn routes static. That
+was wrong, and the build says so: **the route table is unchanged, still all `ƒ`.**
+
+Two things were mixed up:
+
+1. **A `<Suspense>` boundary buys nothing without PPR.** Partial prerendering is what lets
+   a static shell ship while a `cookies()` branch streams. Without `cacheComponents: true`
+   there is no PPR, so a `cookies()` read *anywhere* in the tree — inside a boundary or
+   not — still makes the whole route dynamic.
+
+2. **`force-static` on the home page "worked", misleadingly.** It prerendered without
+   error only because `createClient()` catches the `cookies()` throw and falls back to
+   `createStaticClient()`. The page silently rendered signed-out. That fallback is
+   deliberate and correct for `generateStaticParams`, but it means force-static is not a
+   valid test of whether a route is prerenderable.
+
+Enabling `cacheComponents: true` as an experiment made Next name the real blocker:
+
+```
+Error: Route "/[locale]/rackets/[brand]/[model]": Next.js encountered uncached
+or runtime data during prerendering.
+
+`fetch(...)`, `cookies()`, `headers()`, `params`, `searchParams`, or
+`connection()` accessed outside of `<Suspense>` prevents the route from being
+prerendered […]
+  - [cache] For uncached data (fetch, database calls): cache the access with "use cache"
+```
+
+So the uncached Supabase reads block prerendering too, not only the auth call — and Next's
+own prescription is the `"use cache"` on the repository that phase 4 already plans.
+
+**The dependency is mutual, not one-way.** Phase 2's structure is required for phase 4
+(cookies cannot live in a cached scope). Phase 4's flag is required for phase 2 to show up
+in the route table. Neither pays off alone; the flip happens when both are in.
+
+**What phase 2 is worth on its own:** every page render stops blocking on a Supabase Auth
+round-trip before its first byte. That is a real latency win today, on a dynamic route,
+and it is the precondition for the bigger one.
 
 ---
 
@@ -239,7 +291,12 @@ Enable the flag and mark the read path, but understand what it buys on this plan
 `use cache` makes a route's shell **prerenderable**; prerendering is what makes it free.
 
 - [ ] `cacheComponents: true` in `next.config.ts` (this also makes PPR the App Router
-      default, which is what makes phase 2's static shell pay off).
+      default, which is what makes phase 2's static shell pay off). **This is the phase
+      that moves the route table** — phase 2 alone does not, see its correction.
+      Flipping the flag on its own fails the build with
+      `Route "/[locale]/rackets/[brand]/[model]": Next.js encountered uncached or
+      runtime data during prerendering`, so the flag and the `use cache` marks below
+      have to land together.
 - [ ] `cacheLife` profiles matched to the scrape cadence, not to page loads.
 - [ ] `"use cache"` + `cacheTag("rackets", "offers", "price-points", "reviews")` on the
       repository reads.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { usePathname } from "@/i18n/navigation";
 import { Link } from "@/i18n/navigation";
@@ -31,9 +31,8 @@ function isActive(pathname: string, href: string) {
 
 /** 60px top bar on desktop, 52px on mobile. The only element that pins on
  *  every surface. */
-export function TopBar({ signedIn }: { signedIn: boolean }) {
+export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
   const t = useTranslations("nav");
-  const tc = useTranslations("common");
   const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -97,14 +96,10 @@ export function TopBar({ signedIn }: { signedIn: boolean }) {
 
           <LanguageSwitcher />
 
-          <Link
-            href={signedIn ? "/account" : "/sign-in"}
-            aria-label={signedIn ? t("account") : tc("signIn")}
-            className="grid size-11 place-items-center rounded-md text-ink-700
-              transition-colors duration-[90ms] hover:bg-[var(--action-ghost-bg-hover)]"
-          >
-            <Icon name="UserRound" size="md" />
-          </Link>
+          {/* Server-rendered and streamed — see components/auth-slot.tsx. The
+              bar is a client component, so who is signed in arrives as a
+              rendered slot rather than a prop the client has to be told. */}
+          {accountSlot}
         </div>
       </div>
 

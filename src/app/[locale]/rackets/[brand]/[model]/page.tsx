@@ -22,7 +22,7 @@ import {
 } from "@/components/ds/data";
 import { SpecSheet } from "@/components/spec-sheet";
 import { CompareToggle } from "@/components/compare-tray";
-import { WatchPriceButton } from "@/components/watch-price";
+import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
 import {
   getHeadlineVariantPrice,
@@ -31,7 +31,6 @@ import {
   getRackets,
   getReviewsForRacket,
 } from "@/lib/data/repository";
-import { getUser } from "@/lib/supabase/server";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
 import {
   BALANCE_MESSAGE_KEY,
@@ -91,11 +90,12 @@ export default async function RacketPage({
   const tsel = await getTranslations("sellers");
   const tn = await getTranslations("nav");
 
-  const [offers, reviews, price, user, allRackets] = await Promise.all([
+  // `getUser()` used to be in here, which made a spec sheet wait on a Supabase
+  // Auth round-trip. It lives in <WatchPriceSlot /> now, behind Suspense.
+  const [offers, reviews, price, allRackets] = await Promise.all([
     getOffersForRacket(racket.id),
     getReviewsForRacket(racket.id),
     getHeadlineVariantPrice(racket),
-    getUser(),
     getRackets(),
   ]);
 
@@ -389,10 +389,7 @@ export default async function RacketPage({
               }}
             />
             {headlineVariant && (
-              <WatchPriceButton
-                variantId={headlineVariant.id}
-                signedIn={Boolean(user)}
-              />
+              <WatchPriceSlot variantId={headlineVariant.id} />
             )}
           </div>
         </div>
