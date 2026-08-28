@@ -603,6 +603,51 @@ a missing one.
 total. That number is not accounted for, and until it is, page count is the only lever.
 Raising the prerender count needs either more workers or an explanation for that 12 MB.
 
+### `--max-old-space-size` cannot raise the static-generation heap
+
+Worth writing down, because it looks like it should work and quietly does not.
+
+Next creates the static-generation worker in `node_modules/next/dist/build/index.js`:
+
+```js
+// remove --max-old-space-size flag as it can cause memory issues.
+isolatedMemory: true,
+```
+
+and `lib/worker.js` acts on that:
+
+```js
+if (isolatedMemory) {
+  delete nodeOptions['max-old-space-size'];
+  delete nodeOptions['max_old_space_size'];
+}
+```
+
+It is hardcoded, with no config option. Confirmed by probing from inside a page render
+during a build: with `NODE_OPTIONS=--max-old-space-size=8192` on the parent, the worker
+reports `NODE_OPTIONS=--enable-source-maps` and a limit of **4144 MB** — the machine
+default. The flag is not ignored, it is deleted.
+
+**The one way to make it apply** is `experimental.workerThreads: true`, which turns the
+workers into threads sharing the parent's V8 settings. Probed: the worker then reports
+**7216 MB** under `--max-old-space-size=7168`. But it does not solve the problem — 475
+pages in a single worker still died at 7 GB, because the per-page cost is ~15 MB and
+475 × 15 MB ≈ 7 GB. Raising the ceiling buys a little room, not a different shape.
+
+**Pages per worker is the lever that binds.** Measured, at default heap:
+
+| Workers | Pages | Result |
+| --- | --- | --- |
+| 1 | 475 | crash, ~146 in |
+| 1 | 131 | builds |
+| 4 | 475 | builds, 3.4 min |
+| 15 | 475 | builds, 2.2 min |
+
+Four workers carry 475 pages at 119 each — comfortably under the ~145 ceiling. That is
+why the CI workflow works at 200 rackets where Hobby's single worker cannot, and it is
+why the workflow clamps the request to `(145 × cores − 75) / 2` rather than trusting the
+input.
+
 ### On building in CI instead
 
 Building in GitHub Actions and deploying with `vercel deploy --prebuilt` would work: more

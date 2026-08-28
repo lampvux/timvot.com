@@ -104,18 +104,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Report the build budget
+      - name: Fit the prerender count to this runner
         run: |
           cores="$(nproc)"
-          rackets="${{ inputs.prerendered_rackets }}"
-          # Each racket is one page per locale, and the rest of the app adds ~75.
-          pages=$(( rackets * 2 + 75 ))
-          echo "cores            : $cores"
-          echo "prerendered pages: ~$pages  (${rackets} rackets x 2 locales + ~75)"
-          echo "pages per worker : ~$(( pages / cores ))  (heap gives out near 145)"
-          if [ $(( pages / cores )) -gt 145 ]; then
-            echo "::warning::~$(( pages / cores )) pages per worker is above the ~145 where the heap has failed before. Lower prerendered_rackets if this build OOMs."
+          asked="${{ inputs.prerendered_rackets }}"
+
+          # Next gives static generation one worker per core, and a worker runs
+          # out of heap near 145 pages. Raising the heap does not move this:
+          # `build/index.js` creates the static worker with `isolatedMemory: true`,
+          # which deletes --max-old-space-size from the worker's NODE_OPTIONS on
+          # purpose. Pages per worker is the only lever that actually binds.
+          #
+          # This route contributes 2 pages per racket (one per locale) and the
+          # rest of the app about 75, so the most rackets this runner can take is
+          # (145 * cores - 75) / 2.
+          budget=$(( (145 * cores - 75) / 2 ))
+          rackets="$asked"
+          if [ "$rackets" -gt "$budget" ]; then
+            rackets="$budget"
+            echo "::warning::${asked} rackets needs more than this runner's ${cores} cores can build. Using ${rackets}, the most that fits. Nothing is lost from the catalogue — unlisted paths still serve an App Shell and upgrade in the background."
           fi
+
+          pages=$(( rackets * 2 + 75 ))
+          echo "cores             : $cores"
+          echo "requested rackets : $asked"
+          echo "building rackets  : $rackets"
+          echo "prerendered pages : ~$pages"
+          echo "pages per worker  : ~$(( pages / cores ))   (heap gives out near 145)"
+          echo "PRERENDERED_RACKETS=$rackets" >> "$GITHUB_ENV"
 
       - name: Typecheck
         run: npm run typecheck
@@ -132,7 +148,14 @@ jobs:
 
       - name: Build with production settings
         env:
-          PRERENDERED_RACKETS: ${{ inputs.prerendered_rackets }}
+          # Set by the fitting step above, which may have lowered what was asked
+          # for to what this runner's cores can actually build.
+          #
+          # No NODE_OPTIONS heap flag here: Next deletes --max-old-space-size
+          # from the static-generation worker (`isolatedMemory: true`), so it
+          # would do nothing and only look like a fix. Measured: a 7 GB parent
+          # heap crashed at the same page count as the default.
+          PRERENDERED_RACKETS: ${{ env.PRERENDERED_RACKETS }}
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy the build output

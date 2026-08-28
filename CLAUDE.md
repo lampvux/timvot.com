@@ -204,9 +204,12 @@ localStorage is read — move the call behind that check instead, and no boundar
 at all.
 
 **Prerendered page count is capped by the builder, not by taste.** Static generation
-retains memory per page, and Vercel Hobby runs it in a single worker — about 145 pages
-before the heap is gone. A local build with fifteen workers proves nothing about it, and
-`NODE_OPTIONS=--max-old-space-size` does not help because it never reaches that worker.
+retains roughly 15 MB per page, and Vercel Hobby runs it in a single worker — about 145
+pages before the heap is gone. A local build with fifteen workers proves nothing about it.
+`NODE_OPTIONS=--max-old-space-size` is not the answer and never will be: Next creates the
+static worker with `isolatedMemory: true`, which *deletes* that flag — hardcoded, no
+config. **Pages per worker is the only lever that binds**, so the number to reason about
+is `pages / cores`, kept under ~145.
 Count what a route multiplies: `generateStaticParams` entries times locales. Under Cache
 Components an unlisted path still serves an App Shell instantly, so prerendering fewer is
 a latency trade, not a missing page.
