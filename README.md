@@ -939,6 +939,58 @@ site does cooperate is a config entry in `providers.ts`, not new code — declar
 as well, so a card render needs no join; `racket_images` is the gallery behind it. Nothing
 in the app reads the gallery yet — that is a UI change, not part of the crawl.
 
+## Releasing from GitHub Actions
+
+`.github/workflows/deploy-production.yml` builds on a GitHub runner and ships the output
+to Vercel with `vercel deploy --prebuilt`, then tags the release.
+
+It exists for one reason: **Vercel's Hobby builder runs Next's static generation in a
+single worker**, and that worker runs out of heap at roughly 145 pages. A runner has more
+cores, so static generation gets more workers and the ceiling stops binding — which is
+what lets a release prerender far more racket pages than the 30 the Hobby builder can
+survive. See "Vercel build OOM" in `docs/performance-plan.md` for the measurements.
+
+It is deliberately manual, and it does not replace Vercel's git integration: pushes to
+`main` still build on Vercel at the default 30 rackets, and that path has to keep working
+on its own.
+
+### Configuration you add once
+
+**Settings → Secrets and variables → Actions.**
+
+| Where | Name | Value |
+| --- | --- | --- |
+| Secret | `VERCEL_TOKEN` | Account Settings → Tokens → Create. Scope it to this project. |
+| Variable | `VERCEL_ORG_ID` | Vercel → Team/Account Settings → General → ID |
+| Variable | `VERCEL_PROJECT_ID` | Vercel → the project → Settings → General → Project ID |
+
+The two IDs are not secret — they are the values `vercel link` writes to
+`.vercel/project.json` — so they are repository **variables**, not secrets. Only the token
+is a secret. The workflow checks all three up front and fails with the missing name rather
+than dying inside a CLI error three steps later.
+
+### Running it
+
+Actions → **Deploy production (prebuilt)** → Run workflow.
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `commit` | — | SHA to build. Must already be an ancestor of `main`; the workflow refuses otherwise, so a release tag can never point at unreviewed code. |
+| `prerendered_rackets` | `200` | Detail pages per locale. The workflow prints pages-per-worker and warns above ~145. |
+| `tag` | blank | Blank generates `v<YYYY.MM.DD>-<short-sha>`. An existing tag is refused rather than moved. |
+| `dry_run` | `false` | Build only — no deploy, no tag. Use it to check a page count before committing to a release. |
+
+Production deploys are serialised by a concurrency group, and it does not cancel in
+progress: making the next deploy wait beats interrupting one halfway.
+
+### Choosing `prerendered_rackets`
+
+Pages ≈ `2 × rackets + 75`. The runner reports its own core count, and the useful figure is
+pages per worker — under ~145 it builds, above it the heap has failed before. On a 4-core
+runner that puts the ceiling near 250 rackets. Anything not prerendered still serves an App
+Shell instantly and upgrades in the background, so a lower number costs latency on the
+tail, not pages.
+
 ## Security
 
 RLS is on for every table (`supabase/migrations/*_init.sql`). The catalogue is public and
