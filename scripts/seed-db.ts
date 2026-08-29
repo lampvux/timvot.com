@@ -8,6 +8,7 @@ import {
   reviews,
   sellers,
 } from "../src/lib/data/seed";
+import { stringOffers, stringPriceHistory, strings } from "../src/lib/data/string-seed";
 
 export async function seedDatabase() {
   console.log("=================================================");
@@ -167,6 +168,31 @@ export async function seedDatabase() {
     created_at: r.createdAt,
   }));
   await supabase.from("reviews").upsert(reviewRows, { onConflict: "id" });
+
+  // Seed strings after brands and sellers, which these rows reference.
+  console.log(`🔹 Ingesting ${strings.length} strings and ${stringOffers.length} string offers...`);
+  const stringRows = strings.map((string) => ({
+    id: string.id, slug: string.slug,
+    brand_id: brands.find((brand) => brand.slug === string.brandSlug)!.id,
+    name: string.name, gauge_mm: string.gaugeMm, cross_gauge_mm: string.crossGaugeMm,
+    feel: string.feel, durability: string.durability, repulsion: string.repulsion,
+    control: string.control, play_style_tags: string.playStyleTags,
+    skill_levels: string.skillLevels, summary_en: string.summary.en, summary_vi: string.summary.vi,
+  }));
+  const { error: stringErr } = await supabase.from("strings").upsert(stringRows, { onConflict: "id" });
+  if (stringErr) throw new Error(`Error seeding strings: ${stringErr.message}`);
+
+  const { error: stringOfferErr } = await supabase.from("string_offers").upsert(
+    stringOffers.map((offer) => ({ id: offer.id, string_id: offer.stringId, seller_id: offer.sellerId, price: offer.price, currency: offer.currency, qty_available: offer.qtyAvailable, status: offer.status, updated_at: offer.updatedAt })),
+    { onConflict: "id" },
+  );
+  if (stringOfferErr) throw new Error(`Error seeding string offers: ${stringOfferErr.message}`);
+
+  const { error: stringHistoryErr } = await supabase.from("string_price_points").upsert(
+    stringPriceHistory.map((point) => ({ string_id: point.stringId, observed_on: point.observedOn, price: point.price })),
+    { onConflict: "string_id,observed_on" },
+  );
+  if (stringHistoryErr) throw new Error(`Error seeding string history: ${stringHistoryErr.message}`);
 
   console.log("\n🎉 Database seeding finished successfully!");
 }

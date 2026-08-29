@@ -69,7 +69,24 @@ npm run seed:sql
 ```
 
 That keeps Postgres and the no-database fallback byte-identical. Editing
-`src/lib/data/seed.ts` and re-running it is the only supported way to change seed data.
+`src/lib/data/seed.ts` or `src/lib/data/string-seed.ts` and re-running it is the only
+supported way to change seed data.
+
+To deploy catalogue changes to production, apply migrations first and then run the
+idempotent API seeder with the production project URL and **service-role** key:
+
+```bash
+npm run migrate:dry
+npm run migrate
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<production-service-role-key> \
+npm run seed:db
+```
+
+Use the service-role key only in a trusted shell or CI secret store; never prefix it
+with `NEXT_PUBLIC_` or expose it to the browser. As a SQL-only alternative, regenerate
+`supabase/seed.sql` with `npm run seed:sql` and run it against the production direct
+connection with `psql "$DATABASE_URL" -f supabase/seed.sql`.
 
 ## Routes
 

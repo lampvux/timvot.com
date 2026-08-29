@@ -8,24 +8,39 @@ import type { PlayStyle, SkillLevel } from "@/lib/types";
 
 type StringChoice = {
   model: string;
+  brandSlug: string;
+  stringSlug: string;
   gauge: string;
   feel: "soft" | "medium" | "hard";
 };
 
-const STRINGS: Record<PlayStyle, StringChoice> = {
-  attack: { model: "Yonex BG80 Power", gauge: "0.68 mm", feel: "hard" },
-  "all-round": { model: "Yonex BG65", gauge: "0.70 mm", feel: "medium" },
-  speed: { model: "Yonex Exbolt 63", gauge: "0.63 mm", feel: "medium" },
-  defence: { model: "Yonex BG66 Ultimax", gauge: "0.65 mm", feel: "soft" },
-  control: { model: "Yonex Aerobite", gauge: "0.67 / 0.61 mm", feel: "medium" },
-};
+const choice = (model: string, brandSlug: string, stringSlug: string, gauge: string, feel: StringChoice["feel"]): StringChoice =>
+  ({ model, brandSlug, stringSlug, gauge, feel });
 
-const STRING_SLUGS: Record<PlayStyle, string> = {
-  attack: "bg80-power",
-  "all-round": "bg65",
-  speed: "exbolt-63",
-  defence: "bg66-ultimax",
-  control: "aerobite",
+// Skill changes more than tension: newer players get durable, forgiving
+// strings while advanced players get thinner or firmer performance options.
+const STRINGS: Record<SkillLevel, Record<PlayStyle, StringChoice>> = {
+  beginner: {
+    attack: choice("Yonex BG65 Titanium", "yonex", "bg65-titanium", "0.70 mm", "hard"),
+    "all-round": choice("Yonex BG65", "yonex", "bg65", "0.70 mm", "medium"),
+    speed: choice("Victor VBS-70", "victor", "vbs-70", "0.70 mm", "medium"),
+    defence: choice("Li-Ning No.7", "li-ning", "no-7", "0.70 mm", "medium"),
+    control: choice("Li-Ning No.7", "li-ning", "no-7", "0.70 mm", "medium"),
+  },
+  intermediate: {
+    attack: choice("Li-Ning No.1 Boost", "li-ning", "no-1-boost", "0.66 mm", "hard"),
+    "all-round": choice("Li-Ning No.5", "li-ning", "no-5", "0.69 mm", "medium"),
+    speed: choice("Victor VBS-66 Nano", "victor", "vbs-66-nano", "0.66 mm", "medium"),
+    defence: choice("Gosen RYZONIC 65", "gosen", "ryzonic-65", "0.65 mm", "medium"),
+    control: choice("Yonex BG80", "yonex", "bg80", "0.68 mm", "hard"),
+  },
+  advanced: {
+    attack: choice("Yonex BG80 Power", "yonex", "bg80-power", "0.68 mm", "hard"),
+    "all-round": choice("Gosen RYZONIC 65", "gosen", "ryzonic-65", "0.65 mm", "medium"),
+    speed: choice("Gosen G-TONE 58", "gosen", "g-tone-58", "0.58 mm", "medium"),
+    defence: choice("Yonex Exbolt 63", "yonex", "exbolt-63", "0.63 mm", "medium"),
+    control: choice("Yonex Aerobite Boost", "yonex", "aerobite-boost", "0.72 / 0.61 mm", "hard"),
+  },
 };
 
 const SKILLS: SkillLevel[] = ["beginner", "intermediate", "advanced"];
@@ -48,7 +63,7 @@ export function StringRecommender({
   const [style, setStyle] = useState(initialStyle);
 
   const recommendation = useMemo(() => {
-    const string = STRINGS[style];
+    const string = STRINGS[skill][style];
     const preferred: Record<SkillLevel, [number, number]> = {
       beginner: [20, 22],
       intermediate: [23, 25],
@@ -151,7 +166,7 @@ export function StringRecommender({
           </div>
           <p className="mt-4 text-body-sm text-secondary">{t(`reason.${style}`, { skill: skillLabel(skill).toLowerCase() })}</p>
           <p className="mt-3 text-[11.5px] leading-relaxed text-tertiary">{t("safety", { max: Math.max(...maxTension) })}</p>
-          <Link href={`/strings/yonex/${STRING_SLUGS[style]}`} className="mt-4 inline-flex min-h-11 items-center font-semibold no-underline hover:underline">
+          <Link href={`/strings/${recommendation.brandSlug}/${recommendation.stringSlug}`} className="mt-4 inline-flex min-h-11 items-center font-semibold no-underline hover:underline">
             {t("comparePrices")}
           </Link>
         </div>
