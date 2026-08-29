@@ -88,6 +88,24 @@ with `NEXT_PUBLIC_` or expose it to the browser. As a SQL-only alternative, rege
 `supabase/seed.sql` with `npm run seed:sql` and run it against the production direct
 connection with `psql "$DATABASE_URL" -f supabase/seed.sql`.
 
+### Crawling live string prices and stock
+
+The string crawler reads the public WooCommerce Store APIs used by FBShop, QV Badminton,
+and HVShop, matches listings to the curated string catalogue, and records numeric prices
+and stock state without inventing unmatched products:
+
+```bash
+npm run scrape:strings                                  # crawl all shops to JSON
+npm run scrape:strings -- --site=fbshop --verify=true  # also sample product pages in Chromium
+npm run scrape:strings:sync                             # update production offers/history
+```
+
+`--sync-db` requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. It
+upserts seller offers and one lowest-price history point per string/day. Browser
+verification is optional because it requires Playwright Chromium; install it with
+`npx playwright install chromium`. Use `--out=<path>`, `--sample=<n>`, or a comma-separated
+`--site=fbshop,qvbadminton` to control a run.
+
 ## Routes
 
 | Route                            | What it is                                              |
