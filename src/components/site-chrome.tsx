@@ -10,6 +10,7 @@ import { LanguageSwitcher } from "./language-switcher";
 
 const NAV: { href: string; key: string }[] = [
   { href: "/rackets", key: "rackets" },
+  { href: "/strings", key: "strings" },
   { href: "/compare", key: "compare" },
   { href: "/finder", key: "finder" },
   { href: "/deals", key: "deals" },

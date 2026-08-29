@@ -24,6 +24,7 @@ import { SpecSheet } from "@/components/spec-sheet";
 import { CompareToggle } from "@/components/compare-tray";
 import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
+import { StringRecommender } from "@/components/string-recommender";
 import {
   getHeadlineVariantPrice,
   getOffersForRacket,
@@ -444,6 +445,13 @@ export default async function RacketPage({
               {balanceReading}
             </p>
           </Card>
+
+          <StringRecommender
+            racketName={racket.name}
+            maxTension={racket.maxTensionLbs}
+            initialSkill={racket.skillLevel}
+            initialStyle={racket.playStyleTags[0] ?? "all-round"}
+          />
 
           <div className="mt-6 flex flex-wrap gap-3">
             <CompareToggle

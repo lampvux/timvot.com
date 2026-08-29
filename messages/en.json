@@ -6,6 +6,7 @@
   "nav": {
     "home": "Home",
     "rackets": "Rackets",
+    "strings": "Strings",
     "compare": "Compare",
     "finder": "Finder",
     "deals": "Deals",
@@ -123,6 +124,47 @@
     "noReviewsBody": "The spec profile is shown on its own until 5 verified reviews land.",
     "catalogueShot": "Catalogue shot",
     "gallery": "Photos of {name}"
+  },
+  "stringRecommender": {
+    "eyebrow": "String setup",
+    "title": "Match this racket to your game",
+    "intro": "Choose how you play and get a string and tension recommendation for the {racket}.",
+    "skillQuestion": "What is your skill level?",
+    "styleQuestion": "What do you want from your strings?",
+    "yourSetup": "Recommended setup",
+    "tension": "Suggested tension",
+    "feel": { "soft": "Soft feel", "medium": "Medium feel", "hard": "Hard feel" },
+    "reason": {
+      "attack": "A grippy, hard-feeling string helps a {skill} player transfer more bite and weight into steep shots.",
+      "all-round": "A durable, forgiving string gives a {skill} player a dependable mix of power, control and string life.",
+      "speed": "A thin, repulsive string helps a {skill} player get the shuttle away quickly in drives and fast exchanges.",
+      "defence": "A lively string with a softer response helps a {skill} player lift and counter with less effort.",
+      "control": "A textured hybrid gives a {skill} player extra hold for slices, tight net shots and placement."
+    },
+    "safety": "This suggestion stays within the racket's {max} lbs published limit. Ask your stringer to adjust for condition, climate and warranty.",
+    "comparePrices": "See specs and compare prices"
+  },
+  "strings": {
+    "eyebrow": "String catalogue · Vietnam",
+    "title": "Badminton strings",
+    "intro": "Compare feel, gauge and real seller prices. Each model has one verified profile, so listings stay comparable.",
+    "model": "String model",
+    "gauge": "Gauge",
+    "repulsion": "Repulsion",
+    "control": "Control",
+    "durability": "Durability",
+    "trend": "Price trend",
+    "price": "Best price",
+    "sellerCount": "{count, plural, =0 {no sellers} =1 {1 seller} other {# sellers}}",
+    "catalogued": "Catalogued string",
+    "performanceProfile": "Performance profile",
+    "priceHistory": "Price history",
+    "historyNote": "Lowest listed price over the last 60 days",
+    "chartLabel": "Price history for {name}",
+    "comparePrices": "Compare seller prices",
+    "inStock": "{count} in stock",
+    "feel": { "soft": "Soft feel", "medium": "Medium feel", "hard": "Hard feel" },
+    "style": { "attack": "Attack", "all-round": "All-round", "speed": "Speed", "defence": "Defence", "control": "Control" }
   },
   "compare": {
     "title": "Compare rackets",
