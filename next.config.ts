@@ -29,6 +29,14 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
 
   /**
+   * Prefetch one reusable static App Shell per route instead of resolving
+   * every visible catalogue/detail link independently. Runtime data such as
+   * params and searchParams streams after navigation behind each route's
+   * loading boundary.
+   */
+  partialPrefetching: true,
+
+  /**
    * Windows matched to how the data actually moves, which is when the scraper
    * runs — not when somebody loads a page.
    *
@@ -47,6 +55,9 @@ const nextConfig: NextConfig = {
 
   experimental: {
     optimizePackageImports: ["lucide-react"],
+    // Keep instant-navigation validation enabled if the framework default
+    // changes in a later Next.js release.
+    instantInsights: { validationLevel: "warning" },
     cpus: process.env.NEXT_BUILD_CPUS ? Number(process.env.NEXT_BUILD_CPUS) : undefined,
   },
   images: {
