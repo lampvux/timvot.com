@@ -25,11 +25,9 @@ import { CompareToggle } from "@/components/compare-tray";
 import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
 import {
-  getHeadlineVariantPrice,
-  getOffersForRacket,
   getRacket,
+  getRacketPageData,
   getRackets,
-  getReviewsForRacket,
 } from "@/lib/data/repository";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
 import { ReviewDate } from "@/components/review-date";
@@ -145,8 +143,9 @@ export default async function RacketPage({
   const { locale, brand, model } = await params;
   setRequestLocale(locale);
 
-  const racket = await getRacket(brand, model);
-  if (!racket) notFound();
+  const pageData = await getRacketPageData(brand, model);
+  if (!pageData) notFound();
+  const { racket, offers, reviews, price, similar } = pageData;
 
   const t = await getTranslations("racket");
   const tc = await getTranslations("common");
@@ -155,15 +154,6 @@ export default async function RacketPage({
   const tk = await getTranslations("stock");
   const tsel = await getTranslations("sellers");
   const tn = await getTranslations("nav");
-
-  // `getUser()` used to be in here, which made a spec sheet wait on a Supabase
-  // Auth round-trip. It lives in <WatchPriceSlot /> now, behind Suspense.
-  const [offers, reviews, price, allRackets] = await Promise.all([
-    getOffersForRacket(racket.id),
-    getReviewsForRacket(racket.id),
-    getHeadlineVariantPrice(racket),
-    getRackets(),
-  ]);
 
   const inStock = offers.filter((offer) => offer.qtyAvailable > 0);
   const lowestOffer = inStock[0];
@@ -285,19 +275,6 @@ export default async function RacketPage({
             delta: EVEN_BAND_MIN_MM - racket.balancePointMm,
           })
         : t("balanceReadingEven", { mm: racket.balancePointMm });
-
-  const similar = allRackets
-    .filter((other) => other.id !== racket.id)
-    .map((other) => ({
-      racket: other,
-      distance:
-        Math.abs(other.balancePointMm - racket.balancePointMm) +
-        Math.abs((other.lowestPrice ?? other.msrp) - (racket.lowestPrice ?? racket.msrp)) /
-          200_000,
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 3)
-    .map((entry) => entry.racket);
 
   const marketNote = price
     ? price.latest < price.median30

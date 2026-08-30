@@ -4,9 +4,15 @@ import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { courtScore } from "@/lib/court-score";
+import {
+  aggregate,
+  courtScore,
+  MIN_REVIEWS_FOR_PLAYER_SCORE,
+  toScore,
+} from "@/lib/court-score";
 import { balanceTypeOf, median } from "@/lib/format";
 import type {
+  AxisScores,
   Brand,
   CatalogFilters,
   Guide,
@@ -31,6 +37,8 @@ import {
   mapSeller,
   RACKET_SELECT,
   RACKET_SELECT_NO_THUMBS,
+  RACKET_CARD_SELECT,
+  RACKET_CARD_SELECT_NO_THUMBS,
   isMissingColumnError,
 } from "./mappers";
 
@@ -149,6 +157,29 @@ async function readRackets(supabase: SupabaseClient) {
     supabase
       .from("rackets")
       .select(RACKET_SELECT_NO_THUMBS)
+      .order("id")
+      .range(from, to),
+  );
+}
+
+/** Same schema-rollout guard as `readRackets`, without the gallery relation. */
+async function readRacketCardRows(supabase: SupabaseClient) {
+  const withThumbs = await selectAll((from, to) =>
+    supabase
+      .from("rackets")
+      .select(RACKET_CARD_SELECT)
+      .order("id")
+      .range(from, to),
+  );
+
+  if (!withThumbs.error || !isMissingColumnError(withThumbs.error.message)) {
+    return withThumbs;
+  }
+
+  return selectAll((from, to) =>
+    supabase
+      .from("rackets")
+      .select(RACKET_CARD_SELECT_NO_THUMBS)
       .order("id")
       .range(from, to),
   );
@@ -289,6 +320,160 @@ async function readSnapshot(): Promise<Snapshot> {
  *  `use cache` entries, so one render composes them once rather than per caller. */
 export const loadSnapshot = cache(readSnapshot);
 
+interface MarketSummaryRow {
+  racket_id: string;
+  lowest_price: number | string | null;
+  seller_count: number | string;
+  review_count: number | string;
+  review_weight: number | string;
+  power_weighted_sum: number | string;
+  speed_weighted_sum: number | string;
+  control_weighted_sum: number | string;
+  comfort_weighted_sum: number | string;
+}
+
+const round1 = (value: number): number => Math.round(value * 10) / 10;
+
+function playerFromSummary(row: MarketSummaryRow): AxisScores | null {
+  const reviewCount = Number(row.review_count);
+  const weight = Number(row.review_weight);
+  if (reviewCount < MIN_REVIEWS_FOR_PLAYER_SCORE || weight <= 0) return null;
+
+  const toTen = (sum: number | string): number =>
+    round1(((Number(sum) / weight - 1) / 4) * 10);
+
+  return {
+    power: toTen(row.power_weighted_sum),
+    speed: toTen(row.speed_weighted_sum),
+    control: toTen(row.control_weighted_sum),
+    comfort: toTen(row.comfort_weighted_sum),
+  };
+}
+
+/** Build the card/finder shape from one compact aggregate row. */
+function enrichFromSummary(
+  racket: Racket,
+  row: MarketSummaryRow | undefined,
+): RacketWithMarket {
+  const specHalf = courtScore(racket, []);
+  const player = row ? playerFromSummary(row) : null;
+
+  return {
+    ...racket,
+    balanceType: balanceTypeOf(racket.balancePointMm),
+    spec: specHalf.spec,
+    player,
+    reviewCount: Number(row?.review_count ?? 0),
+    courtScore: player
+      ? toScore(aggregate(specHalf.spec) * 0.5 + aggregate(player) * 0.5)
+      : null,
+    specScore: specHalf.specScore,
+    lowestPrice:
+      row?.lowest_price === null || row?.lowest_price === undefined
+        ? null
+        : Number(row.lowest_price),
+    sellerCount: Number(row?.seller_count ?? 0),
+    // Cards, filters, Finder and static-param ranking do not render charts.
+    history: [],
+  };
+}
+
+/** Slow-changing card fields, cached without any gallery relation. */
+async function readRacketCards(): Promise<Racket[] | null> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.brands, TAG.rackets);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+
+  try {
+    const rows = await readRacketCardRows(supabase);
+    return rows.error || !rows.data?.length ? null : rows.data.map(mapRacket);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One compact market row per racket, independently cached on the price
+ * window. Returning null is a rollout guard: code can deploy before the view
+ * migration and temporarily use the legacy snapshot without losing data.
+ */
+async function readMarketSummaries(): Promise<MarketSummaryRow[] | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.offers, TAG.reviews);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+
+  try {
+    const rows = await selectAll<MarketSummaryRow>((from, to) =>
+      supabase
+        .from("racket_market_summary")
+        .select("*")
+        .order("racket_id")
+        .range(from, to),
+    );
+    return rows.error ? null : (rows.data ?? []);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Purpose-built catalogue projection: card fields plus market summaries. It
+ * intentionally excludes galleries, sellers, review bodies and price history.
+ */
+async function readRacketCatalogue(): Promise<RacketWithMarket[] | null> {
+  const [rackets, marketRows] = await Promise.all([
+    readRacketCards(),
+    readMarketSummaries(),
+  ]);
+  if (!rackets || !marketRows) return null;
+
+  const summaries = new Map(
+    marketRows.map((row) => [row.racket_id, row] as const),
+  );
+  return rackets.map((racket) =>
+    enrichFromSummary(racket, summaries.get(racket.id)),
+  );
+}
+
+async function readBrandsOnly(): Promise<Brand[] | null> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.brands);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("brands").select("*").order("name");
+  return error ? null : (data ?? []).map(mapBrand);
+}
+
+async function readSellersOnly(): Promise<Seller[] | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.sellers);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("sellers").select("*");
+  return error ? null : (data ?? []).map(mapSeller);
+}
+
+async function readGuidesOnly(): Promise<Guide[] | null> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.guides);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("guides").select("*");
+  return error ? null : (data ?? []).map(mapGuide);
+}
+
 /* --------------------------------------------------------------- index */
 
 /**
@@ -407,14 +592,26 @@ const loadIndex = cache(async (): Promise<Index> => {
 /* ------------------------------------------------------------ enrichment */
 
 function enrich(index: Index, racket: Racket): RacketWithMarket {
-  const liveOffers = (index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS).filter(
-    (o) => o.qtyAvailable > 0,
-  );
-  const racketReviews = index.reviewsByRacket.get(racket.id) ?? EMPTY_REVIEWS;
   const history = racket.variants
     .flatMap((v) => index.historyByVariant.get(v.id) ?? EMPTY_POINTS)
     .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
-  const score = courtScore(racket, racketReviews as Review[]);
+  return enrichWithMarket(
+    racket,
+    index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS,
+    index.reviewsByRacket.get(racket.id) ?? EMPTY_REVIEWS,
+    history,
+  );
+}
+
+function enrichWithMarket(
+  racket: Racket,
+  offers: readonly Offer[],
+  reviews: readonly Review[],
+  history: PricePoint[],
+): RacketWithMarket {
+  const liveOffers = offers.filter((offer) => offer.qtyAvailable > 0);
+  const racketReviews = [...reviews];
+  const score = courtScore(racket, racketReviews);
 
   return {
     ...racket,
@@ -433,25 +630,154 @@ function enrich(index: Index, racket: Racket): RacketWithMarket {
 }
 
 export const getRackets = cache(async (): Promise<RacketWithMarket[]> => {
-  return (await loadIndex()).enriched;
+  return (await readRacketCatalogue()) ?? (await loadIndex()).enriched;
 });
 
 export const getBrands = cache(async (): Promise<Brand[]> => {
-  return (await loadSnapshot()).brands;
+  return (await readBrandsOnly()) ?? (await loadSnapshot()).brands;
 });
 
 export const getSellers = cache(async (): Promise<Seller[]> => {
-  return (await loadSnapshot()).sellers;
+  return (await readSellersOnly()) ?? (await loadSnapshot()).sellers;
 });
 
 export const getGuides = cache(async (): Promise<Guide[]> => {
-  return (await loadSnapshot()).guides;
+  return (await readGuidesOnly()) ?? (await loadSnapshot()).guides;
 });
+
+interface DirectRacketDetail {
+  racket: RacketWithMarket;
+  offers: OfferWithSeller[];
+  reviews: Review[];
+  history: PricePoint[];
+}
+
+type DirectRacketResult =
+  | { status: "ok"; data: DirectRacketDetail }
+  | { status: "not-found" }
+  | { status: "error" };
+
+/**
+ * A detail route needs one racket and rows keyed to that racket, not the whole
+ * marketplace. This read remains one cache entry because the page consumes
+ * the fields together and the market side sets the freshness requirement.
+ */
+async function readRacketDetail(
+  brandSlug: string,
+  racketSlug: string,
+): Promise<DirectRacketResult> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(
+    TAG.brands,
+    TAG.rackets,
+    TAG.sellers,
+    TAG.offers,
+    TAG.pricePoints,
+    TAG.reviews,
+  );
+
+  const supabase = createStaticClient();
+  if (!supabase) return { status: "error" };
+
+  try {
+    const brandResult = await supabase
+      .from("brands")
+      .select("id")
+      .eq("slug", brandSlug)
+      .maybeSingle();
+    if (brandResult.error) return { status: "error" };
+    if (!brandResult.data) return { status: "not-found" };
+
+    let racketResult = await supabase
+      .from("rackets")
+      .select(RACKET_SELECT)
+      .eq("brand_id", brandResult.data.id)
+      .eq("slug", racketSlug)
+      .maybeSingle();
+
+    if (
+      racketResult.error &&
+      isMissingColumnError(racketResult.error.message)
+    ) {
+      racketResult = await supabase
+        .from("rackets")
+        .select(RACKET_SELECT_NO_THUMBS)
+        .eq("brand_id", brandResult.data.id)
+        .eq("slug", racketSlug)
+        .maybeSingle();
+    }
+
+    if (racketResult.error) return { status: "error" };
+    if (!racketResult.data) return { status: "not-found" };
+
+    const racket = mapRacket(racketResult.data);
+    const variantIds = racket.variants.map((variant) => variant.id);
+    const [offerRows, reviewRows, historyRows] = await Promise.all([
+      supabase
+        .from("offers")
+        .select("*, seller:sellers!inner(*)")
+        .eq("racket_id", racket.id)
+        .eq("status", "live")
+        .order("price"),
+      supabase
+        .from("reviews")
+        .select("*")
+        .eq("racket_id", racket.id)
+        .eq("status", "published")
+        .order("created_at", { ascending: false }),
+      variantIds.length
+        ? supabase
+            .from("price_points")
+            .select("*")
+            .in("variant_id", variantIds)
+            .order("observed_on")
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (offerRows.error || reviewRows.error || historyRows.error)
+      return { status: "error" };
+
+    const variants = new Map(
+      racket.variants.map((variant) => [variant.id, variant]),
+    );
+    const offers = (offerRows.data ?? [])
+      .map((row) => {
+        const sellerRow = Array.isArray(row.seller) ? row.seller[0] : row.seller;
+        const variant = variants.get(row.variant_id);
+        if (!sellerRow || !variant) return null;
+        return { ...mapOffer(row), seller: mapSeller(sellerRow), variant };
+      })
+      .filter((offer): offer is OfferWithSeller => Boolean(offer));
+    const reviews = (reviewRows.data ?? []).map(mapReview);
+    const history = (historyRows.data ?? [])
+      .map(mapPricePoint)
+      .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+    return {
+      status: "ok",
+      data: {
+        racket: enrichWithMarket(racket, offers, reviews, history),
+        offers,
+        reviews,
+        history,
+      },
+    };
+  } catch {
+    return { status: "error" };
+  }
+}
 
 export async function getRacket(
   brandSlug: string,
   racketSlug: string,
 ): Promise<RacketWithMarket | null> {
+  const direct = await readRacketDetail(brandSlug, racketSlug);
+  if (direct.status === "ok") return direct.data.racket;
+  if (direct.status === "not-found") return null;
+
+  // Missing credentials or a migration still rolling out: preserve the
+  // existing all-or-nothing seed/live fallback rather than fail the route.
   const index = await loadIndex();
   return index.enrichedByPath.get(`${brandSlug}/${racketSlug}`) ?? null;
 }
@@ -460,10 +786,11 @@ export async function getRacketsBySlugs(
   slugs: string[],
 ): Promise<RacketWithMarket[]> {
   if (slugs.length === 0) return [];
-  const index = await loadIndex();
+  const rackets = await getRackets();
+  const bySlug = new Map(rackets.map((racket) => [racket.slug, racket]));
   // Preserve the order the user picked them in.
   return slugs
-    .map((slug) => index.enrichedBySlug.get(slug))
+    .map((slug) => bySlug.get(slug))
     .filter((r): r is RacketWithMarket => Boolean(r));
 }
 
@@ -534,8 +861,10 @@ export interface VariantPrice {
  * per variant, and sorting the whole price table 3.265 times was most of what
  * made the deals page expensive.
  */
-function variantPrice(index: Index, variantId: string): VariantPrice | null {
-  const points = index.historyByVariant.get(variantId);
+function variantPriceFromPoints(
+  variantId: string,
+  points: PricePoint[] | undefined,
+): VariantPrice | null {
   if (!points || points.length === 0) return null;
 
   const latest = points[points.length - 1].price;
@@ -549,6 +878,10 @@ function variantPrice(index: Index, variantId: string): VariantPrice | null {
     delta30: latest - lastThird[0].price,
     points,
   };
+}
+
+function variantPrice(index: Index, variantId: string): VariantPrice | null {
+  return variantPriceFromPoints(variantId, index.historyByVariant.get(variantId));
 }
 
 export async function getVariantPrice(
@@ -581,6 +914,103 @@ export async function getHeadlineVariantPrice(
 
   return variantPrice(index, headline.id);
 }
+
+function headlinePriceFromDetail(
+  detail: DirectRacketDetail,
+): VariantPrice | null {
+  const historyByVariant = new Map<string, PricePoint[]>();
+  for (const point of detail.history)
+    push(historyByVariant, point.variantId, point);
+
+  const liveOfferCount = new Map<string, number>();
+  for (const offer of detail.offers) {
+    liveOfferCount.set(
+      offer.variantId,
+      (liveOfferCount.get(offer.variantId) ?? 0) + 1,
+    );
+  }
+
+  const headline = detail.racket.variants
+    .filter((variant) => historyByVariant.has(variant.id))
+    .sort(
+      (a, b) =>
+        (liveOfferCount.get(b.id) ?? 0) -
+          (liveOfferCount.get(a.id) ?? 0) || a.weightGrams - b.weightGrams,
+    )[0];
+
+  return headline
+    ? variantPriceFromPoints(headline.id, historyByVariant.get(headline.id))
+    : null;
+}
+
+function similarRackets(
+  racket: RacketWithMarket,
+  candidates: RacketWithMarket[],
+): RacketWithMarket[] {
+  return candidates
+    .filter((other) => other.id !== racket.id)
+    .map((other) => ({
+      racket: other,
+      distance:
+        Math.abs(other.balancePointMm - racket.balancePointMm) +
+        Math.abs(
+          (other.lowestPrice ?? other.msrp) -
+            (racket.lowestPrice ?? racket.msrp),
+        ) /
+          200_000,
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 3)
+    .map((entry) => entry.racket);
+}
+
+export interface RacketPageData {
+  racket: RacketWithMarket;
+  offers: OfferWithSeller[];
+  reviews: Review[];
+  price: VariantPrice | null;
+  similar: RacketWithMarket[];
+}
+
+/** One bounded repository call for everything rendered by a detail route. */
+export const getRacketPageData = cache(
+  async (
+    brandSlug: string,
+    racketSlug: string,
+  ): Promise<RacketPageData | null> => {
+    const direct = await readRacketDetail(brandSlug, racketSlug);
+    if (direct.status === "not-found") return null;
+
+    if (direct.status === "ok") {
+      return {
+        racket: direct.data.racket,
+        offers: direct.data.offers,
+        reviews: direct.data.reviews,
+        price: headlinePriceFromDetail(direct.data),
+        similar: similarRackets(direct.data.racket, await getRackets()),
+      };
+    }
+
+    const index = await loadIndex();
+    const racket =
+      index.enrichedByPath.get(`${brandSlug}/${racketSlug}`) ?? null;
+    if (!racket) return null;
+
+    const [offers, reviews, price, candidates] = await Promise.all([
+      getOffersForRacket(racket.id),
+      getReviewsForRacket(racket.id),
+      getHeadlineVariantPrice(racket),
+      getRackets(),
+    ]);
+    return {
+      racket,
+      offers,
+      reviews,
+      price,
+      similar: similarRackets(racket, candidates),
+    };
+  },
+);
 
 /* -------------------------------------------------------------- deals */
 

@@ -56,6 +56,18 @@ export const RACKET_SELECT_NO_THUMBS = `${RACKET_COLUMNS},
   images:racket_images ( ${IMAGE_COLUMNS} )
 `;
 
+/**
+ * Catalogue cards and Finder rows never render the gallery. Keeping that
+ * one-to-many relation out of their query prevents every image record from
+ * crossing PostgREST just so the grid can use the denormalised hero URL.
+ */
+export const RACKET_CARD_SELECT = RACKET_COLUMNS.replace(
+  "hero_image_url,",
+  "hero_image_url, hero_thumb_url,",
+);
+
+export const RACKET_CARD_SELECT_NO_THUMBS = RACKET_COLUMNS;
+
 /** True for the PostgREST error that means "this column is not in the schema
  *  yet", which is the only error the fallback select can fix. */
 export function isMissingColumnError(message: string): boolean {
