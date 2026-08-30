@@ -43,25 +43,39 @@ import {
  * difference, and there is no third code path to keep in sync.
  */
 
-interface Snapshot {
+interface CatalogueSnapshot {
   brands: Brand[];
   rackets: Racket[];
+  guides: Guide[];
+}
+
+interface MarketSnapshot {
   sellers: Seller[];
   offers: Offer[];
   history: PricePoint[];
   reviews: Review[];
-  guides: Guide[];
+}
+
+interface Snapshot extends CatalogueSnapshot, MarketSnapshot {
   source: "supabase" | "seed";
 }
 
-const seedSnapshot = (): Snapshot => ({
+const seedCatalogueSnapshot = (): CatalogueSnapshot => ({
   brands: seed.brands,
   rackets: seed.rackets,
+  guides: seed.guides,
+});
+
+const seedMarketSnapshot = (): MarketSnapshot => ({
   sellers: seed.sellers,
   offers: seed.offers,
   history: seed.priceHistory,
   reviews: seed.reviews,
-  guides: seed.guides,
+});
+
+const seedSnapshot = (): Snapshot => ({
+  ...seedCatalogueSnapshot(),
+  ...seedMarketSnapshot(),
   source: "seed",
 });
 
@@ -141,7 +155,7 @@ async function readRackets(supabase: SupabaseClient) {
 }
 
 /**
- * The catalogue read, cached across requests rather than rebuilt for each one.
+ * Slow-changing product identity and editorial data.
  *
  * `use cache` is what makes a route holding this data prerenderable: without
  * it Next treats the Supabase call as runtime data and refuses to build a
@@ -150,8 +164,9 @@ async function readRackets(supabase: SupabaseClient) {
  * prerendered page served from the CDN does not invoke the function at all,
  * and Active CPU is the budget the free plan actually rations.
  *
- * The tags are per table so `scrape:sync` can invalidate what it just wrote
- * instead of waiting out a timer — see `app/api/revalidate/route.ts`.
+ * This deliberately does not share an entry with prices and stock. A price
+ * expiry or price-only invalidation must not force Postgres to resend names,
+ * specifications, images and guides that have not changed.
  *
  * Nothing in here may read `cookies()` or `headers()`: a cached scope has no
  * request to read them from. `createStaticClient()` is cookie-free by design,
@@ -161,88 +176,117 @@ async function readRackets(supabase: SupabaseClient) {
  * and bills for it; the in-memory default plus prerendering is the right shape
  * on this plan.
  */
-async function readSnapshot(): Promise<Snapshot> {
+async function readCatalogueSnapshot(): Promise<CatalogueSnapshot | null> {
   "use cache";
   cacheLife("catalogue");
-  cacheTag(
-    TAG.brands,
-    TAG.rackets,
-    TAG.sellers,
-    TAG.offers,
-    TAG.pricePoints,
-    TAG.reviews,
-    TAG.guides,
-  );
+  cacheTag(TAG.brands, TAG.rackets, TAG.guides);
 
   const supabase = createStaticClient();
-  if (!supabase) return seedSnapshot();
+  if (!supabase) return null;
 
   try {
-    const [brandRows, racketRows, sellerRows, offerRows, historyRows, reviewRows, guideRows] =
-      await Promise.all([
-        supabase.from("brands").select("*").order("name"),
-        readRackets(supabase),
-        supabase.from("sellers").select("*"),
-        selectAll((from, to) =>
-          supabase
-            .from("offers")
-            .select("*")
-            .eq("status", "live")
-            .order("id")
-            .range(from, to),
-        ),
-        // `observed_on` is what the chart wants and is not unique; `id` breaks
-        // the ties so the page boundaries are stable.
-        selectAll((from, to) =>
-          supabase
-            .from("price_points")
-            .select("*")
-            .order("observed_on")
-            .order("id")
-            .range(from, to),
-        ),
-        selectAll((from, to) =>
-          supabase
-            .from("reviews")
-            .select("*")
-            .eq("status", "published")
-            .order("id")
-            .range(from, to),
-        ),
-        supabase.from("guides").select("*"),
-      ]);
+    const [brandRows, racketRows, guideRows] = await Promise.all([
+      supabase.from("brands").select("*").order("name"),
+      readRackets(supabase),
+      supabase.from("guides").select("*"),
+    ]);
 
-    const failure = [
-      brandRows,
-      racketRows,
-      sellerRows,
-      offerRows,
-      historyRows,
-      reviewRows,
-      guideRows,
-    ].find((result) => result.error);
+    const failure = [brandRows, racketRows, guideRows].find(
+      (result) => result.error,
+    );
 
     // An unmigrated project is the common case on a first run. Fall back
     // rather than render an empty catalogue that looks like a bug.
-    if (failure?.error || !racketRows.data?.length) return seedSnapshot();
+    if (failure?.error || !racketRows.data?.length) return null;
 
     return {
       brands: (brandRows.data ?? []).map(mapBrand),
       rackets: (racketRows.data ?? []).map(mapRacket),
+      guides: (guideRows.data ?? []).map(mapGuide),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fast-changing offers, stock and price history use the shorter `prices`
+ * profile. Sellers and reviews sit with this side because both participate in
+ * the market-derived racket index and need to be internally consistent with
+ * its offers.
+ */
+async function readMarketSnapshot(): Promise<MarketSnapshot | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.sellers, TAG.offers, TAG.pricePoints, TAG.reviews);
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+
+  try {
+    const [sellerRows, offerRows, historyRows, reviewRows] = await Promise.all([
+      supabase.from("sellers").select("*"),
+      selectAll((from, to) =>
+        supabase
+          .from("offers")
+          .select("*")
+          .eq("status", "live")
+          .order("id")
+          .range(from, to),
+      ),
+      // `observed_on` is what the chart wants and is not unique; `id` breaks
+      // the ties so the page boundaries are stable.
+      selectAll((from, to) =>
+        supabase
+          .from("price_points")
+          .select("*")
+          .order("observed_on")
+          .order("id")
+          .range(from, to),
+      ),
+      selectAll((from, to) =>
+        supabase
+          .from("reviews")
+          .select("*")
+          .eq("status", "published")
+          .order("id")
+          .range(from, to),
+      ),
+    ]);
+
+    const failure = [sellerRows, offerRows, historyRows, reviewRows].find(
+      (result) => result.error,
+    );
+    if (failure?.error) return null;
+
+    return {
       sellers: (sellerRows.data ?? []).map(mapSeller),
       offers: (offerRows.data ?? []).map(mapOffer),
       history: (historyRows.data ?? []).map(mapPricePoint),
       reviews: (reviewRows.data ?? []).map(mapReview),
-      guides: (guideRows.data ?? []).map(mapGuide),
-      source: "supabase",
     };
   } catch {
-    return seedSnapshot();
+    return null;
   }
 }
 
-/** Deduped per request by React `cache` on top of the cross-request
- *  `use cache`, so one render hits the cache once rather than per caller. */
+/**
+ * Compose the two independently cached domains. Never mix seeded and live
+ * rows: their IDs are only guaranteed to agree inside one source, so a partial
+ * Supabase failure falls back to the complete seed snapshot.
+ */
+async function readSnapshot(): Promise<Snapshot> {
+  const [catalogue, market] = await Promise.all([
+    readCatalogueSnapshot(),
+    readMarketSnapshot(),
+  ]);
+
+  if (!catalogue || !market) return seedSnapshot();
+  return { ...catalogue, ...market, source: "supabase" };
+}
+
+/** Deduped per request by React `cache` on top of the two cross-request
+ *  `use cache` entries, so one render composes them once rather than per caller. */
 export const loadSnapshot = cache(readSnapshot);
 
 /* --------------------------------------------------------------- index */
