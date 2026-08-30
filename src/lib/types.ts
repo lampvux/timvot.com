@@ -212,6 +212,52 @@ export interface OfferWithSeller extends Offer {
   variant: RacketVariant;
 }
 
+export type StringFeel = "soft" | "medium" | "hard";
+
+export interface BadmintonString {
+  id: string;
+  slug: string;
+  brandSlug: string;
+  brandName: string;
+  name: string;
+  gaugeMm: number;
+  crossGaugeMm: number | null;
+  feel: StringFeel;
+  durability: number;
+  repulsion: number;
+  control: number;
+  playStyleTags: PlayStyle[];
+  skillLevels: SkillLevel[];
+  summary: { en: string; vi: string };
+}
+
+export interface StringOffer {
+  id: string;
+  stringId: string;
+  sellerId: string;
+  price: number;
+  currency: "VND";
+  qtyAvailable: number;
+  status: "live" | "paused" | "review";
+  updatedAt: string;
+}
+
+export interface StringOfferWithSeller extends StringOffer {
+  seller: Seller;
+}
+
+export interface StringPricePoint {
+  stringId: string;
+  observedOn: string;
+  price: number;
+}
+
+export interface StringWithMarket extends BadmintonString {
+  lowestPrice: number | null;
+  sellerCount: number;
+  history: StringPricePoint[];
+}
+
 export type SortKey = "score" | "price-asc" | "price-desc" | "new";
 
 export interface CatalogFilters {

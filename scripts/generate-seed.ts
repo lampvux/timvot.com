@@ -19,6 +19,7 @@ import {
   reviews,
   sellers,
 } from "../src/lib/data/seed";
+import { stringOffers, stringPriceHistory, strings } from "../src/lib/data/string-seed";
 
 const quote = (value: string | null | undefined): string =>
   value === null || value === undefined
@@ -233,6 +234,21 @@ const chunks: string[] = [
       quote(r.createdAt),
     ]),
   ),
+  insert(
+    "strings",
+    ["id", "slug", "brand_id", "name", "gauge_mm", "cross_gauge_mm", "feel", "durability", "repulsion", "control", "play_style_tags", "skill_levels", "summary_en", "summary_vi"],
+    strings.map((string) => [
+      quote(string.id), quote(string.slug), quote(brands.find((brand) => brand.slug === string.brandSlug)!.id), quote(string.name),
+      String(string.gaugeMm), string.crossGaugeMm === null ? "null" : String(string.crossGaugeMm), `${quote(string.feel)}::string_feel`,
+      String(string.durability), String(string.repulsion), String(string.control), `${array(string.playStyleTags)}::play_style[]`,
+      `${array(string.skillLevels)}::skill_level[]`, quote(string.summary.en), quote(string.summary.vi),
+    ]),
+  ),
+  insert(
+    "string_offers",
+    ["id", "string_id", "seller_id", "price", "currency", "qty_available", "status", "updated_at"],
+    stringOffers.map((offer) => [quote(offer.id), quote(offer.stringId), quote(offer.sellerId), String(offer.price), quote(offer.currency), String(offer.qtyAvailable), `${quote(offer.status)}::offer_status`, quote(offer.updatedAt)]),
+  ),
 ];
 
 // Price points carry a surrogate key, so they need their own conflict target.
@@ -247,11 +263,17 @@ chunks.push(
   `insert into price_points (variant_id, observed_on, price) values\n${pricePointRows}\non conflict (variant_id, observed_on) do nothing;\n`,
 );
 
+const stringPricePointRows = stringPriceHistory
+  .map((point) => `  (${quote(point.stringId)}, ${quote(point.observedOn)}, ${point.price})`)
+  .join(",\n");
+chunks.push(`insert into string_price_points (string_id, observed_on, price) values\n${stringPricePointRows}\non conflict (string_id, observed_on) do nothing;\n`);
+
 const target = resolve(import.meta.dirname, "../supabase/seed.sql");
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, chunks.filter(Boolean).join("\n"), "utf8");
 
 console.log(
   `Wrote ${target}: ${rackets.length} rackets, ${offers.length} offers, ` +
-    `${priceHistory.length} price points, ${reviews.length} reviews.`,
+    `${priceHistory.length} racket price points, ${strings.length} strings, ` +
+    `${stringOffers.length} string offers, ${stringPriceHistory.length} string price points, ${reviews.length} reviews.`,
 );

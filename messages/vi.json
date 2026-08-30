@@ -6,6 +6,7 @@
   "nav": {
     "home": "Trang chủ",
     "rackets": "Vợt",
+    "strings": "Cước",
     "compare": "So sánh",
     "finder": "Tìm vợt",
     "deals": "Giảm giá",
@@ -123,6 +124,47 @@
     "noReviewsBody": "Trang chỉ hiện hồ sơ thông số cho tới khi có 5 đánh giá đã xác minh.",
     "catalogueShot": "Ảnh hồ sơ",
     "gallery": "Ảnh của {name}"
+  },
+  "stringRecommender": {
+    "eyebrow": "Cấu hình cước",
+    "title": "Chọn cước hợp với lối đánh của bạn",
+    "intro": "Chọn cách bạn chơi để nhận gợi ý cước và mức căng phù hợp cho {racket}.",
+    "skillQuestion": "Trình độ của bạn?",
+    "styleQuestion": "Bạn muốn cước hỗ trợ điều gì?",
+    "yourSetup": "Cấu hình đề xuất",
+    "tension": "Mức căng đề xuất",
+    "feel": { "soft": "Cảm giác mềm", "medium": "Cảm giác vừa", "hard": "Cảm giác cứng" },
+    "reason": {
+      "attack": "Cước bám cầu, cảm giác cứng giúp người chơi {skill} truyền thêm lực vào những cú đập dốc.",
+      "all-round": "Cước bền và dễ chơi mang lại cho người chơi {skill} sự cân bằng giữa lực, kiểm soát và tuổi thọ.",
+      "speed": "Cước mỏng, trợ lực giúp người chơi {skill} đưa cầu đi nhanh trong các pha đôi công tốc độ.",
+      "defence": "Cước nảy với cảm giác mềm hơn giúp người chơi {skill} nâng cầu và phản tạt nhẹ nhàng hơn.",
+      "control": "Cước lai có bề mặt nhám giúp người chơi {skill} giữ cầu tốt hơn khi cắt, bỏ nhỏ và điều cầu."
+    },
+    "safety": "Đề xuất này không vượt quá giới hạn {max} lbs của vợt. Hãy nhờ thợ căng điều chỉnh theo tình trạng vợt, khí hậu và bảo hành.",
+    "comparePrices": "Xem thông số và so sánh giá"
+  },
+  "strings": {
+    "eyebrow": "Danh mục cước · Việt Nam",
+    "title": "Cước cầu lông",
+    "intro": "So sánh cảm giác, đường kính và giá thật từ người bán. Mỗi mẫu có một hồ sơ đã xác minh để mọi tin đăng luôn đồng nhất.",
+    "model": "Mẫu cước",
+    "gauge": "Đường kính",
+    "repulsion": "Trợ lực",
+    "control": "Kiểm soát",
+    "durability": "Độ bền",
+    "trend": "Xu hướng giá",
+    "price": "Giá tốt nhất",
+    "sellerCount": "{count, plural, =0 {chưa có người bán} =1 {1 người bán} other {# người bán}}",
+    "catalogued": "Cước đã lập hồ sơ",
+    "performanceProfile": "Hồ sơ hiệu năng",
+    "priceHistory": "Lịch sử giá",
+    "historyNote": "Giá niêm yết thấp nhất trong 60 ngày",
+    "chartLabel": "Lịch sử giá của {name}",
+    "comparePrices": "So sánh giá người bán",
+    "inStock": "còn {count}",
+    "feel": { "soft": "Cảm giác mềm", "medium": "Cảm giác vừa", "hard": "Cảm giác cứng" },
+    "style": { "attack": "Tấn công", "all-round": "Toàn diện", "speed": "Tốc độ", "defence": "Phòng thủ", "control": "Kiểm soát" }
   },
   "compare": {
     "title": "So sánh vợt",

@@ -55,6 +55,7 @@ export const brands: Brand[] = [
   { id: "b-yonex", slug: "yonex", name: "Yonex", country: "JP" },
   { id: "b-victor", slug: "victor", name: "Victor", country: "TW" },
   { id: "b-lining", slug: "li-ning", name: "Li-Ning", country: "CN" },
+  { id: "b-gosen", slug: "gosen", name: "Gosen", country: "JP" },
   { id: "b-mizuno", slug: "mizuno", name: "Mizuno", country: "JP" },
   { id: "b-kumpoo", slug: "kumpoo", name: "Kumpoo", country: "CN" },
   { id: "b-apacs", slug: "apacs", name: "Apacs", country: "MY" },
