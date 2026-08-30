@@ -6,6 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
 import { localeNames, routing, type Locale } from "@/i18n/routing";
 import { Icon, cx } from "@/components/ds/primitives";
+import { beginNavigation } from "@/components/navigation-progress";
 
 /**
  * The locale the visitor arrives in is detected from their browser. This
@@ -80,6 +81,7 @@ function LiveLanguageSwitcher({ compact }: { compact?: boolean }) {
       pending={pending}
       onSwitch={() =>
         startTransition(() => {
+          beginNavigation();
           router.replace(
             // @ts-expect-error — pathname is a known route at runtime
             { pathname, params },

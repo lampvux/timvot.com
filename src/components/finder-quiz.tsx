@@ -6,6 +6,7 @@ import { useRouter } from "@/i18n/navigation";
 import { Button, Eyebrow, Icon } from "@/components/ds/primitives";
 import { Radio } from "@/components/ds/forms";
 import { FINDER_KEYS } from "@/lib/finder";
+import { beginNavigation } from "@/components/navigation-progress";
 
 interface Question {
   key: (typeof FINDER_KEYS)[number];
@@ -82,6 +83,7 @@ export function FinderQuiz() {
   const advance = () => {
     if (!chosen) return;
     if (isLast) {
+      beginNavigation();
       startTransition(() => {
         router.push({ pathname: "/finder", query: answers });
       });

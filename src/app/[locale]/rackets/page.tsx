@@ -14,6 +14,7 @@ import {
 } from "@/components/filter-rail";
 import {
   applyFilters,
+  countFilteredRackets,
   facetCounts,
   getBrands,
   getRackets,
@@ -116,27 +117,27 @@ async function CatalogResults({
     const candidates: { label: string; count: number }[] = [
       ...filters.flexes.map((flex) => ({
         label: te(FLEX_MESSAGE_KEY[flex]),
-        count: applyFilters(allRackets, {
+        count: countFilteredRackets(allRackets, {
           ...filters,
           flexes: filters.flexes.filter((f) => f !== flex),
-        }).length,
+        }),
       })),
       ...filters.balanceTypes.map((balanceType) => ({
         label: te(BALANCE_MESSAGE_KEY[balanceType]),
-        count: applyFilters(allRackets, {
+        count: countFilteredRackets(allRackets, {
           ...filters,
           balanceTypes: filters.balanceTypes.filter((b) => b !== balanceType),
-        }).length,
+        }),
       })),
       ...(filters.priceMin !== null || filters.priceMax !== null
         ? [
             {
               label: t("sortPriceAsc"),
-              count: applyFilters(allRackets, {
+              count: countFilteredRackets(allRackets, {
                 ...filters,
                 priceMin: null,
                 priceMax: null,
-              }).length,
+              }),
             },
           ]
         : []),
@@ -158,7 +159,11 @@ async function CatalogResults({
 
       <div className="min-w-0 flex-1 px-4 pb-10 pt-6 lg:px-10">
         <div className="mb-3.5 flex flex-wrap items-center gap-3">
-          <h1 className="font-display text-h2 font-bold text-primary">
+          <h1
+            className="font-display text-h2 font-bold text-primary"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             <span className="font-mono text-[24px] font-bold tabular-nums">
               {results.length}
             </span>{" "}

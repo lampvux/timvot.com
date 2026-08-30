@@ -1,11 +1,17 @@
 "use client";
 
-import { Suspense, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  useState,
+  useTransition,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useTranslations } from "next-intl";
-import { usePathname } from "@/i18n/navigation";
-import { Link } from "@/i18n/navigation";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { Icon, IconButton, cx, type IconName } from "@/components/ds/primitives";
 import { Input } from "@/components/ds/forms";
+import { beginNavigation } from "@/components/navigation-progress";
 import { LanguageSwitcher } from "./language-switcher";
 
 const NAV: { href: string; key: string }[] = [
@@ -105,6 +111,81 @@ function LiveTabLinks() {
   return <TabLinks pathname={usePathname()} />;
 }
 
+interface SearchFormProps {
+  id: string;
+  className: string;
+  size: "sm" | "md";
+  autoFocus?: boolean;
+  onComplete?: () => void;
+}
+
+function SearchFormShell({
+  id,
+  className,
+  size,
+}: Omit<SearchFormProps, "onComplete">) {
+  const t = useTranslations("nav");
+  return (
+    <form className={className}>
+      <label className="sr-only" htmlFor={id}>
+        {t("search")}
+      </label>
+      <Input
+        id={id}
+        name="q"
+        size={size}
+        type="search"
+        disabled
+        iconLeft="Search"
+        placeholder={t("searchPlaceholder")}
+      />
+    </form>
+  );
+}
+
+/** `useRouter()` is URL data in next-intl's navigation wrapper. Keep it in a
+ *  leaf Suspense boundary so adding client-side search does not opt the shared
+ *  header — and therefore every route — out of its static shell. */
+function SearchForm({
+  id,
+  className,
+  size,
+  autoFocus,
+  onComplete,
+}: SearchFormProps) {
+  const t = useTranslations("nav");
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = String(new FormData(event.currentTarget).get("q") ?? "").trim();
+
+    onComplete?.();
+    beginNavigation();
+    startTransition(() => {
+      router.push({ pathname: "/rackets", query: query ? { q: query } : {} });
+    });
+  };
+
+  return (
+    <form onSubmit={submit} aria-busy={pending} className={className}>
+      <label className="sr-only" htmlFor={id}>
+        {t("search")}
+      </label>
+      <Input
+        id={id}
+        name="q"
+        size={size}
+        type="search"
+        autoFocus={autoFocus}
+        iconLeft="Search"
+        placeholder={t("searchPlaceholder")}
+      />
+    </form>
+  );
+}
+
 /** 60px top bar on desktop, 52px on mobile. The only element that pins on
  *  every surface. */
 export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
@@ -132,19 +213,21 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-1 lg:gap-3">
-          <form action="/rackets" className="hidden w-[300px] lg:block">
-            <label className="sr-only" htmlFor="site-search">
-              {t("search")}
-            </label>
-            <Input
+          <Suspense
+            fallback={
+              <SearchFormShell
+                id="site-search"
+                size="sm"
+                className="hidden w-[300px] lg:block"
+              />
+            }
+          >
+            <SearchForm
               id="site-search"
-              name="q"
               size="sm"
-              type="search"
-              iconLeft="Search"
-              placeholder={t("searchPlaceholder")}
+              className="hidden w-[300px] lg:block"
             />
-          </form>
+          </Suspense>
 
           <div className="lg:hidden">
             <IconButton
@@ -164,20 +247,23 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
       </div>
 
       {searchOpen && (
-        <form action="/rackets" className="border-t border-line px-4 py-2.5 lg:hidden">
-          <label className="sr-only" htmlFor="mobile-search">
-            {t("search")}
-          </label>
-          <Input
+        <Suspense
+          fallback={
+            <SearchFormShell
+              id="mobile-search"
+              size="md"
+              className="border-t border-line px-4 py-2.5 lg:hidden"
+            />
+          }
+        >
+          <SearchForm
             id="mobile-search"
-            name="q"
             size="md"
-            type="search"
             autoFocus
-            iconLeft="Search"
-            placeholder={t("searchPlaceholder")}
+            onComplete={() => setSearchOpen(false)}
+            className="border-t border-line px-4 py-2.5 lg:hidden"
           />
-        </form>
+        </Suspense>
       )}
     </header>
   );

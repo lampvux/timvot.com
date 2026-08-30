@@ -44,8 +44,13 @@ export async function Pagination({
     >
       {prev ? (
         <Link
-          href={{ pathname: "/rackets", query: pageQuery(filters, prev) }}
-          scroll={false}
+          // Pagination changes the contents of the grid. Land at its heading
+          // rather than leaving the visitor at the old page's bottom.
+          href={{
+            pathname: "/rackets",
+            query: pageQuery(filters, prev),
+            hash: "racket-grid-top",
+          }}
           rel="prev"
           className={cx(STEP, "border-line-strong bg-card text-primary hover:bg-sunken")}
         >
@@ -70,8 +75,11 @@ export async function Pagination({
 
       {next ? (
         <Link
-          href={{ pathname: "/rackets", query: pageQuery(filters, next) }}
-          scroll={false}
+          href={{
+            pathname: "/rackets",
+            query: pageQuery(filters, next),
+            hash: "racket-grid-top",
+          }}
           rel="next"
           className={cx(STEP, "border-line-strong bg-card text-primary hover:bg-sunken")}
         >
