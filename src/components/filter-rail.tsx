@@ -17,6 +17,7 @@ import type {
 } from "@/lib/types";
 import { balancePercent } from "@/lib/format";
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
+import { beginNavigation } from "@/components/navigation-progress";
 
 export interface FacetCounts {
   brands: Record<string, number>;
@@ -49,6 +50,7 @@ function useFilterBody({ filters, facets, brands }: FilterProps) {
   const [pending, startTransition] = useTransition();
 
   const push = (next: CatalogFilters) => {
+    beginNavigation();
     startTransition(() => {
       router.replace({ pathname: "/rackets", query: filtersToQuery(next) }, { scroll: false });
     });
@@ -306,6 +308,7 @@ export function ActiveFilterPills({
 
   const push = (next: CatalogFilters) =>
     startTransition(() => {
+      beginNavigation();
       router.replace({ pathname: "/rackets", query: filtersToQuery(next) }, { scroll: false });
     });
 
@@ -419,6 +422,7 @@ export function SortSelect({ filters }: { filters: CatalogFilters }) {
           value={filters.sort}
           onChange={(event) =>
             startTransition(() => {
+              beginNavigation();
               router.replace(
                 {
                   pathname: "/rackets",

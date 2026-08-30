@@ -565,44 +565,81 @@ export async function getDeals(): Promise<Deal[]> {
 
 /* ------------------------------------------------------------ filtering */
 
+const searchTextByRacket = new WeakMap<RacketWithMarket, string>();
+
+function searchText(racket: RacketWithMarket): string {
+  const cached = searchTextByRacket.get(racket);
+  if (cached) return cached;
+
+  const value = `${racket.brandName} ${racket.name}`.toLowerCase();
+  searchTextByRacket.set(racket, value);
+  return value;
+}
+
+function matchesFilters(
+  racket: RacketWithMarket,
+  filters: CatalogFilters,
+  query: string,
+): boolean {
+  if (filters.brands.length && !filters.brands.includes(racket.brandSlug))
+    return false;
+
+  if (
+    filters.weightClasses.length &&
+    !racket.variants.some((variant) =>
+      filters.weightClasses.includes(variant.weightClass),
+    )
+  )
+    return false;
+
+  if (
+    filters.balanceTypes.length &&
+    !filters.balanceTypes.includes(racket.balanceType)
+  )
+    return false;
+
+  if (filters.flexes.length && !filters.flexes.includes(racket.shaftFlex))
+    return false;
+
+  const price = racket.lowestPrice ?? racket.msrp;
+  if (filters.priceMin !== null && price < filters.priceMin) return false;
+  if (filters.priceMax !== null && price > filters.priceMax) return false;
+
+  return !query || searchText(racket).includes(query);
+}
+
 export function applyFilters(
   rackets: RacketWithMarket[],
   filters: CatalogFilters,
 ): RacketWithMarket[] {
+  return sortRackets(filterRackets(rackets, filters), filters.sort);
+}
+
+/**
+ * Apply catalogue predicates without ordering the result.
+ *
+ * Facet counts and empty-state suggestions only need membership. They used to
+ * call `applyFilters`, which sorted the same catalogue four or more times per
+ * request before immediately throwing that order away. Keeping filtering and
+ * sorting separate makes one final sort the only `O(n log n)` step.
+ */
+export function filterRackets(
+  rackets: RacketWithMarket[],
+  filters: CatalogFilters,
+): RacketWithMarket[] {
   const query = filters.query.trim().toLowerCase();
+  return rackets.filter((racket) => matchesFilters(racket, filters, query));
+}
 
-  const filtered = rackets.filter((racket) => {
-    if (filters.brands.length && !filters.brands.includes(racket.brandSlug))
-      return false;
-
-    if (
-      filters.weightClasses.length &&
-      !racket.variants.some((v) => filters.weightClasses.includes(v.weightClass))
-    )
-      return false;
-
-    if (
-      filters.balanceTypes.length &&
-      !filters.balanceTypes.includes(racket.balanceType)
-    )
-      return false;
-
-    if (filters.flexes.length && !filters.flexes.includes(racket.shaftFlex))
-      return false;
-
-    const price = racket.lowestPrice ?? racket.msrp;
-    if (filters.priceMin !== null && price < filters.priceMin) return false;
-    if (filters.priceMax !== null && price > filters.priceMax) return false;
-
-    if (query) {
-      const haystack = `${racket.brandName} ${racket.name}`.toLowerCase();
-      if (!haystack.includes(query)) return false;
-    }
-
-    return true;
-  });
-
-  return sortRackets(filtered, filters.sort);
+export function countFilteredRackets(
+  rackets: RacketWithMarket[],
+  filters: CatalogFilters,
+): number {
+  const query = filters.query.trim().toLowerCase();
+  let count = 0;
+  for (const racket of rackets)
+    if (matchesFilters(racket, filters, query)) count++;
+  return count;
 }
 
 export function sortRackets(
@@ -641,7 +678,7 @@ export function facetCounts(
 ) {
   type ArrayFacet = "brands" | "weightClasses" | "balanceTypes" | "flexes";
   const without = (key: ArrayFacet) =>
-    applyFilters(rackets, { ...filters, [key]: [] });
+    filterRackets(rackets, { ...filters, [key]: [] });
 
   const count = <T,>(list: RacketWithMarket[], read: (r: RacketWithMarket) => T[]) => {
     const map = new Map<T, number>();
