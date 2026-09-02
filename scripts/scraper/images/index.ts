@@ -42,6 +42,10 @@ import {
   type ImageStore,
 } from "./storage";
 import { makeThumbnail } from "./thumbnail";
+import {
+  collapseEquivalentRacketTargets,
+  type RacketTarget,
+} from "./targets";
 import { BrowserSession } from "./browser";
 import type { NormalizedItem } from "../normalizer";
 
@@ -142,14 +146,6 @@ function parseArgs(): CliOptions {
 
 /* ------------------------------------------------------------ racket list */
 
-interface RacketTarget {
-  id: string;
-  slug: string;
-  name: string;
-  brandSlug: string;
-  brandName: string;
-}
-
 /**
  * Read the rackets from Postgres.
  *
@@ -186,13 +182,14 @@ async function racketsFromDb(supabase: SupabaseClient): Promise<RacketTarget[]> 
         name: row.name,
         brandSlug: brand?.slug ?? row.brand_id.replace(/^b-/, ""),
         brandName: brand?.name ?? "",
+        equivalentIds: [row.id],
       });
     }
 
     if (data.length < pageSize) break;
   }
 
-  return targets;
+  return collapseEquivalentRacketTargets(targets);
 }
 
 function racketsFromFile(file: string): RacketTarget[] {
@@ -213,10 +210,11 @@ function racketsFromFile(file: string): RacketTarget[] {
       name: item.racketName,
       brandSlug: item.brandSlug,
       brandName: item.brandName,
+      equivalentIds: [id],
     });
   }
 
-  return [...byId.values()];
+  return collapseEquivalentRacketTargets([...byId.values()]);
 }
 
 /** Racket ids that already carry gallery rows, so a re-run can skip them. */
@@ -573,7 +571,10 @@ export async function crawlImages() {
   const outcomes: RacketOutcome[] = [];
 
   for (const racket of inScope) {
-    if (!options.refresh && alreadyStored.has(racket.id)) {
+    if (
+      !options.refresh &&
+      racket.equivalentIds.some((racketId) => alreadyStored.has(racketId))
+    ) {
       outcomes.push({
         racketId: racket.id,
         racketSlug: racket.slug,
@@ -713,6 +714,7 @@ export async function crawlImages() {
     storage_bucket: string;
     storage_path: string;
     public_url: string;
+    thumb_path: string | null;
     thumb_url: string | null;
     position: number;
     is_hero: boolean;
@@ -890,6 +892,7 @@ export async function crawlImages() {
           storage_bucket: object.bucket,
           storage_path: object.path,
           public_url: object.publicUrl,
+          thumb_path: object.thumbPath,
           thumb_url: object.thumbUrl,
           position: stored,
           is_hero: isHero,
@@ -961,7 +964,7 @@ export async function crawlImages() {
 
       const { data: existing, error: readError } = await supabase
         .from("racket_images")
-        .select("id, racket_id, checksum, storage_bucket, storage_path")
+        .select("id, racket_id, checksum, storage_bucket, storage_path, thumb_path")
         .in("racket_id", ids);
 
       if (readError) {
@@ -990,7 +993,13 @@ export async function crawlImages() {
 
       const byBucket = new Map<string, string[]>();
       for (const row of stale) {
-        byBucket.set(row.storage_bucket, [...(byBucket.get(row.storage_bucket) ?? []), row.storage_path]);
+        const paths = [row.storage_path, row.thumb_path].filter(
+          (path): path is string => Boolean(path),
+        );
+        byBucket.set(row.storage_bucket, [
+          ...(byBucket.get(row.storage_bucket) ?? []),
+          ...paths,
+        ]);
       }
       for (const [bucket, paths] of byBucket) {
         const { error } = await supabase.storage.from(bucket).remove(paths);
@@ -1045,15 +1054,21 @@ export async function crawlImages() {
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from("racket_images")
-          .select("racket_id, storage_bucket, storage_path")
+          .select("racket_id, storage_bucket, storage_path, thumb_path")
           .order("racket_id")
           .range(from, from + 999);
         if (error || !data || data.length === 0) break;
 
-        for (const row of data as { racket_id: string; storage_bucket: string; storage_path: string }[]) {
+        for (const row of data as {
+          racket_id: string;
+          storage_bucket: string;
+          storage_path: string;
+          thumb_path: string | null;
+        }[]) {
           if (covered.has(row.racket_id)) continue;
           const list = orphans.get(row.racket_id) ?? [];
           list.push({ bucket: row.storage_bucket, path: row.storage_path });
+          if (row.thumb_path) list.push({ bucket: row.storage_bucket, path: row.thumb_path });
           orphans.set(row.racket_id, list);
         }
         if (data.length < 1000) break;
