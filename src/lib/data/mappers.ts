@@ -146,6 +146,76 @@ export function mapRacket(row: Row): Racket {
   };
 }
 
+/** The route already carries the brand, so tolerate the older slug shape that
+ * repeated it (`yonex/yonex-nanoflare-800-pro`). */
+function modelSlugOf(racket: Racket): string {
+  const prefix = `${racket.brandSlug}-`;
+  return racket.slug.startsWith(prefix) ? racket.slug.slice(prefix.length) : racket.slug;
+}
+
+/**
+ * A small set of seeded rackets also exists under retailer-generated,
+ * brand-prefixed ids. Gallery crawls landed on those retailer rows while the
+ * editorial detail pages resolve the seeded rows. Merge only the photography
+ * for equivalent brand/model identities so either URL renders every distinct
+ * stored image while offers, reviews, and specifications keep their own row.
+ */
+export function mergeEquivalentRacketGalleries(rackets: Racket[]): Racket[] {
+  const groups = new Map<string, Racket[]>();
+
+  for (const racket of rackets) {
+    const key = `${racket.brandSlug}/${modelSlugOf(racket)}`;
+    const group = groups.get(key) ?? [];
+    group.push(racket);
+    groups.set(key, group);
+  }
+
+  const mergedById = new Map<string, Racket>();
+
+  for (const group of groups.values()) {
+    if (group.length < 2 || !group.some((racket) => racket.images?.length)) continue;
+
+    const canonical =
+      group.find((racket) => racket.slug === modelSlugOf(racket)) ?? group[0];
+    const orderedOwners = [canonical, ...group.filter((racket) => racket !== canonical)];
+    const imagesByChecksum = new Map<string, RacketImage>();
+
+    for (const owner of orderedOwners) {
+      for (const image of owner.images ?? []) {
+        const key = image.checksum || image.publicUrl || image.id;
+        const current = imagesByChecksum.get(key);
+        if (!current || (!current.thumbUrl && image.thumbUrl)) {
+          imagesByChecksum.set(key, image);
+        }
+      }
+    }
+
+    const images = [...imagesByChecksum.values()].sort(
+      (a, b) => a.position - b.position || a.storagePath.localeCompare(b.storagePath),
+    );
+    const hero =
+      (canonical.images ?? []).find((image) => image.isHero) ??
+      images.find((image) => image.isHero) ??
+      images[0] ??
+      null;
+    const normalizedImages = images.map((image) => ({
+      ...image,
+      isHero: hero ? image.checksum === hero.checksum : false,
+    }));
+
+    for (const racket of group) {
+      mergedById.set(racket.id, {
+        ...racket,
+        heroImageUrl: hero?.publicUrl ?? racket.heroImageUrl,
+        heroThumbUrl: hero?.thumbUrl ?? racket.heroThumbUrl,
+        images: normalizedImages,
+      });
+    }
+  }
+
+  return rackets.map((racket) => mergedById.get(racket.id) ?? racket);
+}
+
 export function mapSeller(row: Row): Seller {
   return {
     id: row.id,

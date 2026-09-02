@@ -22,16 +22,28 @@ export function RacketGallery({
   images = [],
 }: RacketGalleryProps) {
   // Collect all unique non-null image entries
-  const galleryList: { url: string; colourway?: string | null; isHero?: boolean }[] = [];
+  const galleryList: {
+    url: string;
+    thumbnailUrl?: string | null;
+    colourway?: string | null;
+    isHero?: boolean;
+  }[] = [];
 
   if (heroImageUrl) {
-    galleryList.push({ url: heroImageUrl, isHero: true });
+    const hero = images.find((image) => image.publicUrl === heroImageUrl);
+    galleryList.push({
+      url: heroImageUrl,
+      thumbnailUrl: hero?.thumbUrl,
+      colourway: hero?.colourway,
+      isHero: true,
+    });
   }
 
   for (const img of images) {
     if (img.publicUrl && !galleryList.some((g) => g.url === img.publicUrl)) {
       galleryList.push({
         url: img.publicUrl,
+        thumbnailUrl: img.thumbUrl,
         colourway: img.colourway,
         isHero: img.isHero,
       });
@@ -40,6 +52,7 @@ export function RacketGallery({
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [failedUrls, setFailedUrls] = useState<Record<string, boolean>>({});
+  const [failedThumbnailUrls, setFailedThumbnailUrls] = useState<Record<string, boolean>>({});
   const [isZoomed, setIsZoomed] = useState(false);
 
   const activeItem = galleryList[selectedIndex];
@@ -132,6 +145,7 @@ export function RacketGallery({
             alt={`${racketName} - ${brandName} photography`}
             fill
             priority
+            unoptimized
             sizes="(max-width: 1024px) 100vw, 550px"
             className="object-contain p-4 transition-transform duration-300 group-hover:scale-[1.02]"
             onError={() => handleImageError(activeUrl)}
@@ -210,6 +224,10 @@ export function RacketGallery({
             const isSelected = idx === selectedIndex;
             const isFailed = Boolean(failedUrls[item.url]);
             if (isFailed) return null;
+            const hasThumbnail = Boolean(
+              item.thumbnailUrl && !failedThumbnailUrls[item.thumbnailUrl],
+            );
+            const thumbnailSrc = hasThumbnail ? item.thumbnailUrl! : item.url;
 
             return (
               <button
@@ -226,12 +244,22 @@ export function RacketGallery({
                 )}
               >
                 <Image
-                  src={item.url}
+                  src={thumbnailSrc}
                   alt={`${racketName} thumbnail ${idx + 1}`}
                   fill
+                  unoptimized
                   sizes="56px"
                   className="object-contain p-1"
-                  onError={() => handleImageError(item.url)}
+                  onError={() => {
+                    if (hasThumbnail && item.thumbnailUrl) {
+                      setFailedThumbnailUrls((previous) => ({
+                        ...previous,
+                        [item.thumbnailUrl!]: true,
+                      }));
+                    } else {
+                      handleImageError(item.url);
+                    }
+                  }}
                 />
               </button>
             );
@@ -268,6 +296,7 @@ export function RacketGallery({
                 src={activeUrl}
                 alt={`${racketName} zoomed view`}
                 fill
+                unoptimized
                 sizes="(max-width: 1200px) 95vw, 760px"
                 className="object-contain"
                 onError={() => handleImageError(activeUrl)}

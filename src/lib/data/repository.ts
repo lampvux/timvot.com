@@ -27,6 +27,7 @@ import {
   mapOffer,
   mapPricePoint,
   mapRacket,
+  mergeEquivalentRacketGalleries,
   mapReview,
   mapSeller,
   RACKET_SELECT,
@@ -228,7 +229,7 @@ async function readSnapshot(): Promise<Snapshot> {
 
     return {
       brands: (brandRows.data ?? []).map(mapBrand),
-      rackets: (racketRows.data ?? []).map(mapRacket),
+      rackets: mergeEquivalentRacketGalleries((racketRows.data ?? []).map(mapRacket)),
       sellers: (sellerRows.data ?? []).map(mapSeller),
       offers: (offerRows.data ?? []).map(mapOffer),
       history: (historyRows.data ?? []).map(mapPricePoint),
