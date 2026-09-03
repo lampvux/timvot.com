@@ -18,6 +18,15 @@ const nextConfig: NextConfig = {
   typedRoutes: false,
 
   /**
+   * A cached catalogue fill can briefly exceed Next's 60 second default when
+   * four static workers share a two-core GitHub runner. The data is bounded
+   * and cached, so restarting the same page three times only adds load. Give a
+   * healthy fill time to finish while the workflow's page budget keeps the
+   * total build within the runner's memory ceiling.
+   */
+  staticPageGenerationTimeout: 180,
+
+  /**
    * Cache Components. This is what lets a route ship a prerendered static
    * shell while the per-visitor parts stream, and on Vercel Hobby that is the
    * whole game: a CDN hit does not invoke the function, and Active CPU (4

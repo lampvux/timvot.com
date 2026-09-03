@@ -22,7 +22,7 @@ on:
       prerendered_rackets:
         description: "Racket detail pages to prerender, per locale. Hobby's own builder caps out near 30; a runner handles far more."
         required: false
-        default: "200"
+        default: "35"
         type: string
       tag:
         description: "Release tag. Blank generates v<YYYY.MM.DD>-<short-sha>."
@@ -43,8 +43,9 @@ concurrency:
 env:
   VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
   # Pinned. `vercel@latest` changing under a release is not a surprise worth having.
-  VERCEL_CLI_VERSION: "59.3.0"
+  VERCEL_CLI_VERSION: "59.11.2"
 
 jobs:
   deploy:
@@ -59,18 +60,14 @@ jobs:
         run: |
           missing=0
           for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
-            case "$name" in
-              VERCEL_TOKEN) value='${{ secrets.VERCEL_TOKEN }}' ;;
-              VERCEL_ORG_ID) value='${{ vars.VERCEL_ORG_ID }}' ;;
-              VERCEL_PROJECT_ID) value='${{ vars.VERCEL_PROJECT_ID }}' ;;
-            esac
+            value="${!name}"
             if [ -z "$value" ]; then echo "::error::$name is not set"; missing=1; fi
           done
           # Fail here rather than three steps later inside a Vercel CLI error.
           [ "$missing" -eq 0 ] || exit 1
 
       - name: Checkout the requested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.commit }}
           # Full history: the ancestry check below and the tag both need it.
@@ -94,7 +91,7 @@ jobs:
           echo "Deploying $sha"
           git log -1 --pretty='  %s%n  by %an on %ad' --date=short
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           # Matches the runtime Vercel uses, so a build-time failure here is a
           # real failure and not a version difference.
@@ -115,18 +112,21 @@ jobs:
           # causing a single worker to attempt processing all pages and run out of V8 heap near ~70 pages.
           #
           # We set NEXT_BUILD_CPUS=4 (read by `next.config.ts`) to force Next.js to use 4 static workers.
-          # With 4 workers and ~55 pages per worker ceiling, this runner can process:
-          # (55 * 4 - 75) / 2 = 72 rackets (~219 pages).
+          # The build currently has ~149 pages before racket detail params: 72
+          # string detail pages plus static pages and dynamic-route shells. The
+          # old estimate reserved only 75, so 72 rackets produced 293 pages —
+          # ~73 per worker — and page generation repeatedly timed out.
           workers=4
           pages_per_worker_limit=55
-          budget=$(( (pages_per_worker_limit * workers - 75) / 2 ))
+          non_racket_pages=150
+          budget=$(( (pages_per_worker_limit * workers - non_racket_pages) / 2 ))
           rackets="$asked"
           if [ "$rackets" -gt "$budget" ]; then
             rackets="$budget"
             echo "::warning::${asked} rackets needs more than this runner's ${workers} workers can build. Using ${rackets}, the most that fits safely. Nothing is lost from the catalogue — unlisted paths still serve an App Shell and upgrade in the background."
           fi
 
-          pages=$(( rackets * 2 + 75 ))
+          pages=$(( rackets * 2 + non_racket_pages ))
           echo "cores             : $cores"
           echo "static workers    : $workers (via NEXT_BUILD_CPUS)"
           echo "requested rackets : $asked"
@@ -142,12 +142,12 @@ jobs:
       - name: Install the Vercel CLI
         # Pinned via VERCEL_CLI_VERSION above, so a CLI release cannot change what
         # this workflow does between two runs of the same commit.
-        run: npm install -g "vercel@${VERCEL_CLI_VERSION}"
+        run: npm install -g --allow-scripts=esbuild "vercel@${VERCEL_CLI_VERSION}"
 
       - name: Pull production environment from Vercel
         # Brings down the project settings and the production env vars, so the
         # build here matches the one Vercel would have run itself.
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production
 
       - name: Build with production settings
         env:
@@ -156,13 +156,13 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=8192"
           NEXT_BUILD_CPUS: ${{ env.NEXT_BUILD_CPUS }}
           PRERENDERED_RACKETS: ${{ env.PRERENDERED_RACKETS }}
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod
 
       - name: Deploy the build output
         if: ${{ !inputs.dry_run }}
         id: deploy
         run: |
-          url="$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})"
+          url="$(vercel deploy --prebuilt --prod)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed: $url"
 
@@ -189,7 +189,7 @@ jobs:
             --notes "Production deploy of \`${SHORT_SHA}\`.
 
           - Deployment: ${{ steps.deploy.outputs.url }}
-          - Prerendered rackets: ${{ inputs.prerendered_rackets }}
+          - Prerendered rackets: ${PRERENDERED_RACKETS}
           - Built on GitHub Actions and deployed with \`vercel deploy --prebuilt\`.
           - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -204,7 +204,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Commit | \`${SHA:-unknown}\` |"
-            echo "| Prerendered rackets | ${{ inputs.prerendered_rackets }} |"
+            echo "| Prerendered rackets | ${PRERENDERED_RACKETS:-unknown} |"
             echo "| Deployment | ${{ steps.deploy.outputs.url || '— (dry run)' }} |"
             echo "| Tag | ${{ inputs.tag || '(auto)' }} |"
           } >> "$GITHUB_STEP_SUMMARY"

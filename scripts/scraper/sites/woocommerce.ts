@@ -31,6 +31,8 @@ export interface WooSiteConfig {
   categoryUrl: string;
   /** Items the API actually returns per request (some sites cap below per_page). */
   pageSize: number;
+  /** Walk the public category HTML when this site's Store API is blocked. */
+  htmlFallback?: boolean;
 }
 
 export const WOO_SITES: Record<"fbshop" | "qvbadminton" | "hvshop", WooSiteConfig> = {
@@ -55,6 +57,9 @@ export const WOO_SITES: Record<"fbshop" | "qvbadminton" | "hvshop", WooSiteConfi
     categoryId: 36,
     categoryUrl: "https://hvshop.vn/vot-cau-long/",
     pageSize: 100,
+    // HV Shop returns 403 to the Store API from GitHub-hosted runners while
+    // continuing to serve the public category pages those runners need.
+    htmlFallback: true,
   },
 };
 
@@ -100,13 +105,17 @@ interface ListingCard {
   url: string;
 }
 
-/**
- * Parse one rendered category page. fbshop runs a bespoke theme; qvbadminton and
- * hvshop run Flatsome. Exported so the verification pass can reuse it.
- */
-export function parseWooListingHtml(html: string): ListingCard[] {
+export interface WooCatalogueCard extends ListingCard {
+  externalId?: string;
+  imageUrl?: string;
+  inStock: boolean;
+  categorySlugs: string[];
+}
+
+/** Parse every product card, including "liên hệ" cards with no numeric price. */
+export function parseWooCatalogueHtml(html: string): WooCatalogueCard[] {
   const $ = cheerio.load(html);
-  const cards: ListingCard[] = [];
+  const cards: WooCatalogueCard[] = [];
 
   $(".pcate-item .prd-card, .product-small.col, li.product").each((_, el) => {
     const $el = $(el);
@@ -123,8 +132,6 @@ export function parseWooListingHtml(html: string): ListingCard[] {
       "";
     if (!title || !href) return;
 
-    // Take the sale price when the theme prints both; `ins` is the live price
-    // in WooCommerce markup and `del` is the struck-through original.
     const currentText =
       $el.find(".price-current").first().text() ||
       $el.find("ins .woocommerce-Price-amount").first().text() ||
@@ -132,21 +139,187 @@ export function parseWooListingHtml(html: string): ListingCard[] {
     const regularText =
       $el.find(".price-regular").first().text() ||
       $el.find("del .woocommerce-Price-amount").first().text();
-
     const price = parseVndPrice(currentText);
-    const msrp = parseVndPrice(regularText);
-    if (price <= 0) return;
+    const regular = parseVndPrice(regularText);
 
-    cards.push({ title, price, msrp: msrp > price ? msrp : price, url: href });
+    const classNames = ($el.attr("class") || "").split(/\s+/);
+    const postClass = classNames.find((name) => /^post-\d+$/.test(name));
+    const externalId =
+      $el.find("[data-prod_id]").first().attr("data-prod_id") || postClass?.slice("post-".length);
+    const $image = $el.find(".box-image img, img.wp-post-image, img").first();
+    const imageUrl =
+      $image.attr("data-lazy-src") || $image.attr("data-src") || $image.attr("src") || undefined;
+
+    cards.push({
+      title,
+      price,
+      msrp: regular > price ? regular : price,
+      url: href,
+      externalId,
+      imageUrl: imageUrl?.startsWith("data:") ? undefined : imageUrl,
+      inStock: !classNames.includes("outofstock"),
+      categorySlugs: classNames
+        .filter((name) => name.startsWith("product_cat-"))
+        .map((name) => name.slice("product_cat-".length)),
+    });
   });
 
   return cards;
+}
+
+/**
+ * Parse one rendered category page. fbshop runs a bespoke theme; qvbadminton and
+ * hvshop run Flatsome. Exported so the verification pass can reuse it.
+ */
+export function parseWooListingHtml(html: string): ListingCard[] {
+  return parseWooCatalogueHtml(html)
+    .filter((card) => card.price > 0)
+    .map(({ title, price, msrp, url }) => ({ title, price, msrp, url }));
 }
 
 /** Highest page number the rendered pager links to. */
 function lastHtmlPage(html: string): number {
   const numbers = [...html.matchAll(/\/page\/(\d+)\//g)].map((m) => Number(m[1]));
   return numbers.length ? Math.max(...numbers) : 1;
+}
+
+/**
+ * Enumerate a WooCommerce catalogue from its public rendered category pages.
+ * This is intentionally opt-in per shop: API-backed sites keep their faster,
+ * richer path, while HV Shop can still run from GitHub-hosted IP ranges where
+ * WordPress rejects Store API requests with HTTP 403.
+ */
+async function scrapeRenderedCatalogue(
+  config: WooSiteConfig,
+  options: ScraperOptions,
+  startTime: number,
+  apiStatus: number,
+): Promise<ScraperResult> {
+  const verbose = Boolean(options.verbose);
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const first = await fetchWithRetry(config.categoryUrl, {
+    headers: HTML_HEADERS,
+    timeoutMs,
+    verbose,
+  });
+
+  if (!first.ok) {
+    return {
+      source: config.source,
+      success: false,
+      itemsCount: 0,
+      products: [],
+      error:
+        `Store API returned HTTP ${apiStatus}; rendered catalogue fallback ` +
+        `also returned HTTP ${first.status} on page 1`,
+      durationMs: Date.now() - startTime,
+      pagesFetched: 1,
+    };
+  }
+
+  const advertisedPages = lastHtmlPage(first.body);
+  const lastPage = Math.min(advertisedPages, options.maxPages ?? Infinity);
+  const pages = Array.from({ length: Math.max(0, lastPage - 1) }, (_, index) => index + 2);
+  const pageBodies = new Map<number, string>([[1, first.body]]);
+  const failedPages: { page: number; status: number }[] = [];
+
+  if (verbose) {
+    console.warn(
+      `   [${config.source}] Store API returned HTTP ${apiStatus}; ` +
+        `falling back to ${lastPage}/${advertisedPages} rendered catalogue pages.`,
+    );
+  }
+
+  await pool(pages, options.concurrency ?? 4, options.delayMs ?? 150, async (page) => {
+    const response = await fetchWithRetry(`${config.categoryUrl}page/${page}/`, {
+      headers: HTML_HEADERS,
+      timeoutMs,
+      verbose,
+    });
+    if (!response.ok) {
+      failedPages.push({ page, status: response.status });
+      return;
+    }
+    pageBodies.set(page, response.body);
+    if (verbose && page % 10 === 0) {
+      console.log(`   [${config.source}] rendered page ${page}/${lastPage}`);
+    }
+  });
+
+  // A partial result must not be marked successful: the DB sync uses success
+  // as permission to retire unseen offers from a seller.
+  if (failedPages.length > 0) {
+    failedPages.sort((a, b) => a.page - b.page);
+    const sample = failedPages
+      .slice(0, 5)
+      .map(({ page, status }) => `${page} (HTTP ${status})`)
+      .join(", ");
+    return {
+      source: config.source,
+      success: false,
+      itemsCount: 0,
+      products: [],
+      error:
+        `Store API returned HTTP ${apiStatus}; rendered catalogue fallback failed on ` +
+        `${failedPages.length} page(s): ${sample}`,
+      durationMs: Date.now() - startTime,
+      pagesFetched: pageBodies.size,
+    };
+  }
+
+  const seen = new Map<string, WooCatalogueCard & { sourcePage: number }>();
+  for (const [page, body] of [...pageBodies.entries()].sort((a, b) => a[0] - b[0])) {
+    for (const card of parseWooCatalogueHtml(body)) {
+      const key = card.externalId || normaliseUrl(card.url);
+      if (!seen.has(key)) seen.set(key, { ...card, sourcePage: page });
+    }
+  }
+
+  const scrapedAt = new Date().toISOString();
+  const products: ScrapedProduct[] = [];
+  let skippedNonRacket = 0;
+  let priceless = 0;
+
+  for (const card of seen.values()) {
+    if (!isRacketListing(card.title, card.categorySlugs)) {
+      skippedNonRacket++;
+      continue;
+    }
+    if (card.price <= 0) {
+      priceless++;
+      continue;
+    }
+    products.push({
+      source: config.source,
+      externalId: card.externalId,
+      rawTitle: card.title,
+      price: card.price,
+      msrp: card.msrp,
+      inStock: card.inStock,
+      qtyAvailable: card.inStock ? undefined : 0,
+      url: card.url,
+      imageUrl: card.imageUrl,
+      categorySlugs: card.categorySlugs,
+      sourcePage: card.sourcePage,
+      scrapedAt,
+    });
+  }
+
+  return {
+    source: config.source,
+    success: true,
+    itemsCount: products.length,
+    products,
+    durationMs: Date.now() - startTime,
+    pagesFetched: pageBodies.size,
+    skippedNonRacket,
+    notes: [
+      `Store API returned HTTP ${apiStatus}; used the rendered catalogue fallback.`,
+      ...(priceless > 0
+        ? [`${priceless} listings publish no price ("liên hệ") and were excluded from offers.`]
+        : []),
+    ],
+  };
 }
 
 /**
@@ -243,6 +416,9 @@ export async function scrapeWooCommerce(
     const first = await fetchWithRetry(apiUrl(1), { headers: JSON_HEADERS, timeoutMs, verbose });
 
     if (!first.ok) {
+      if (config.htmlFallback) {
+        return await scrapeRenderedCatalogue(config, options, startTime, first.status);
+      }
       return {
         source: config.source,
         success: false,

@@ -21,14 +21,14 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           # @supabase/realtime-js requires Node 22+ for the native WebSocket
           # implementation created by @supabase/supabase-js during sync.
-          node-version: 22
+          node-version: 24
           cache: 'npm'
 
       - name: Install Dependencies
@@ -50,7 +50,7 @@ jobs:
           npx tsx scripts/backup.ts
 
       - name: Upload Daily Backup Snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: daily-db-backup-${{ github.run_number }}
           path: backups/*.json
