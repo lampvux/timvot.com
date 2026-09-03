@@ -138,8 +138,12 @@ export function mapRacket(row: Row): Racket {
     currency: "VND",
     playStyleTags: row.play_style_tags ?? [],
     skillLevel: row.skill_level,
-    heroImageUrl: row.hero_image_url ?? heroFromGallery,
-    heroThumbUrl: row.hero_thumb_url ?? thumbFromGallery,
+    // The joined gallery is the ownership record. The denormalised racket
+    // columns make card reads cheap, but can lag a recrawl or repair; allowing
+    // a stale pointer to override the joined row is how a correctly-owned
+    // gallery can still render another model's hero.
+    heroImageUrl: heroFromGallery ?? row.hero_image_url,
+    heroThumbUrl: thumbFromGallery ?? row.hero_thumb_url,
     images,
     summary: { en: row.summary_en ?? "", vi: row.summary_vi ?? "" },
     variants: (row.variants ?? []).map(mapVariant),

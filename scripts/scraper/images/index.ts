@@ -46,8 +46,15 @@ import {
   collapseEquivalentRacketTargets,
   type RacketTarget,
 } from "./targets";
+import {
+  resolvePageOwnership,
+  type ImageJob,
+  type ImageJobOption,
+} from "./ownership";
 import { BrowserSession } from "./browser";
 import type { NormalizedItem } from "../normalizer";
+import { revalidateCatalogue } from "../revalidate";
+import { TAG } from "../../../src/lib/data/tags";
 
 /**
  * Identify the crawler honestly. A manufacturer looking at their logs should be
@@ -532,42 +539,7 @@ export async function crawlImages() {
   console.log();
 
   // --- Match ---------------------------------------------------------------
-  interface Job {
-    racket: RacketTarget;
-    provider: ProviderConfig;
-    /**
-     * Every page that belongs to this racket, canonical one first. Usually one;
-     * on Victor a frame sold in seven colours has seven pages, each carrying
-     * that colour's photography, and the racket's gallery is all of them.
-     *
-     * Candidates from an API catalogue already carry their gallery, so for
-     * those providers this is only a record of where the images came from.
-     */
-    pages: MatchCandidate[];
-    tier: MatchTier;
-    /** The alias that matched, when the catalogue name itself did not. */
-    matchedAs?: string;
-    candidatesConsidered: number;
-    /**
-     * The other providers that also matched this racket, in declaration order.
-     *
-     * Provider order encodes which site is expected to have the better
-     * photography, and for a brand's own flagship storefront that is nearly
-     * always right. Nearly: yonex.com carries a one-shot placeholder page for
-     * the ASTROX 88 D/S family — frames it does not really sell in the US —
-     * while yonex.co.uk, declared second, publishes six shots of each. Taking
-     * the first provider that matches and asking no further question means the
-     * placeholder wins and the racket loses five photographs.
-     *
-     * So order still decides who is asked first, and a gallery that clears
-     * `--min-gallery` still ends it there. It is only a suspiciously thin
-     * result that costs a look at the next site, and then the richer gallery
-     * is the one kept.
-     */
-    alternatives: Omit<Job, "alternatives">[];
-  }
-
-  const jobs: Job[] = [];
+  const proposedJobs: ImageJob[] = [];
   const outcomes: RacketOutcome[] = [];
 
   for (const racket of inScope) {
@@ -587,7 +559,7 @@ export async function crawlImages() {
       continue;
     }
 
-    const matches: Omit<Job, "alternatives">[] = [];
+    const matches: ImageJobOption[] = [];
     // A racket is now compared against every provider that covers its brand, so
     // "yonex.co.uk does not sell it either" is only worth reporting when no site
     // had it at all. Held back until the providers are exhausted.
@@ -658,9 +630,45 @@ export async function crawlImages() {
     // The first provider that matched still leads; the rest are only consulted
     // if its gallery comes back thin. See `Job.alternatives`.
     const [primary, ...rest] = matches;
-    if (primary) jobs.push({ ...primary, alternatives: rest });
+    if (primary) proposedJobs.push({ ...primary, alternatives: rest });
     // One row per racket that nothing could be found for, not one per site.
     else if (misses.length > 0) outcomes.push(misses[0]);
+  }
+
+  // Matching one racket at a time is not enough to establish ownership: the
+  // short "Astrox 22" and exact "Astrox 22 RX" records both accept the RX
+  // page because `RX` is code-like. Resolve every page's competing claims as a
+  // set before downloading anything. This is also what makes the database's
+  // `(source_page_url, checksum)` uniqueness guard satisfiable.
+  const ownership = resolvePageOwnership(proposedJobs);
+  const jobs = ownership.jobs;
+  const matchedIds = new Set(jobs.map((job) => job.racket.id));
+  const rejectedByRacket = new Map(
+    ownership.rejected.map((claim) => [claim.racketId, claim]),
+  );
+  for (const claim of rejectedByRacket.values()) {
+    if (matchedIds.has(claim.racketId)) continue;
+    const proposed = proposedJobs.find((job) => job.racket.id === claim.racketId);
+    if (!proposed) continue;
+    outcomes.push({
+      racketId: proposed.racket.id,
+      racketSlug: proposed.racket.slug,
+      racketName: proposed.racket.name,
+      brandSlug: proposed.racket.brandSlug,
+      provider: proposed.provider.id,
+      status: "ambiguous",
+      pageUrl: claim.pageUrl,
+      matchTier: proposed.tier,
+      matchedAs: proposed.matchedAs,
+      detail: `source page belongs more exactly to ${claim.winnerRacketSlug}`,
+    });
+  }
+
+  if (ownership.rejected.length > 0) {
+    console.log(
+      `🧭 Rejected ${ownership.rejected.length} duplicate source-page claim(s); ` +
+        "each manufacturer product page now has one database owner.",
+    );
   }
 
   const matched = jobs.length;
@@ -736,7 +744,7 @@ export async function crawlImages() {
 
   /** One provider's answer for one racket: what it published, and what we got. */
   interface Attempt {
-    job: Omit<Job, "alternatives">;
+    job: ImageJobOption;
     allowedPages: MatchCandidate[];
     images: (GalleryImage & { pageUrl: string })[];
     files: CrawledImage[];
@@ -744,7 +752,7 @@ export async function crawlImages() {
   }
 
   /** Read one provider's pages for one racket and download what they carry. */
-  const attemptProvider = async (job: Omit<Job, "alternatives">): Promise<Attempt> => {
+  const attemptProvider = async (job: ImageJobOption): Promise<Attempt> => {
     const robots = await robotsFor(job.provider.origin, USER_AGENT);
     const delayMs = Math.max(options.delayMs, job.provider.politenessMs ?? 0, robots.crawlDelayMs);
 
@@ -1190,6 +1198,11 @@ export async function crawlImages() {
 
   if (options.dryRun) {
     console.log("\nℹ️  Dry run: nothing was uploaded and no rows were written.");
+  } else if (supabase && rows.length > 0 && !process.exitCode) {
+    // Catalogue data is cached and prerendered. Publishing the rows without
+    // evicting this tag leaves listing/detail pages showing the previous
+    // ownership until the six-hour safety-net revalidation runs.
+    await revalidateCatalogue([TAG.rackets]);
   }
 }
 

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeEquivalentRacketGalleries } from "../../../src/lib/data/mappers";
+import {
+  mapRacket,
+  mergeEquivalentRacketGalleries,
+} from "../../../src/lib/data/mappers";
 import type { Racket, RacketImage } from "../../../src/lib/types";
 
 function racket(id: string, slug: string, images: RacketImage[] = []): Racket {
@@ -70,4 +73,55 @@ test("does not share galleries between different model identities", () => {
   ]);
 
   assert.deepEqual(merged[0].images, []);
+});
+
+test("a joined gallery hero overrides a stale denormalised racket pointer", () => {
+  const mapped = mapRacket({
+    id: "r-nanoflare-800-pro",
+    slug: "nanoflare-800-pro",
+    name: "Nanoflare 800 Pro",
+    release_year: 2023,
+    balance_point_mm: 288,
+    shaft_flex: "stiff",
+    shaft_diameter_mm: 6.6,
+    frame_shape: "aero-box",
+    frame_material: ["Graphite"],
+    max_tension_min_lbs: 20,
+    max_tension_max_lbs: 28,
+    length_mm: 675,
+    string_pattern: "22×21",
+    msrp: 2_590_000,
+    play_style_tags: ["speed"],
+    skill_level: "advanced",
+    hero_image_url: "https://storage.test/wrong-racket.webp",
+    hero_thumb_url: "https://storage.test/wrong-racket-thumb.webp",
+    summary_en: "",
+    summary_vi: "",
+    brand: { slug: "yonex", name: "Yonex" },
+    variants: [],
+    images: [
+      {
+        id: image.id,
+        racket_id: image.racketId,
+        provider: image.provider,
+        source_url: image.sourceUrl,
+        source_page_url: image.sourcePageUrl,
+        storage_bucket: image.storageBucket,
+        storage_path: image.storagePath,
+        public_url: image.publicUrl,
+        thumb_url: image.thumbUrl,
+        position: image.position,
+        is_hero: image.isHero,
+        content_type: image.contentType,
+        bytes: image.bytes,
+        width: image.width,
+        height: image.height,
+        checksum: image.checksum,
+        colourway: image.colourway,
+      },
+    ],
+  });
+
+  assert.equal(mapped.heroImageUrl, image.publicUrl);
+  assert.equal(mapped.heroThumbUrl, image.thumbUrl);
 });

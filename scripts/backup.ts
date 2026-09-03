@@ -10,6 +10,7 @@ import {
   reviews,
   sellers,
 } from "../src/lib/data/seed";
+import { loadEnv } from "./scraper/env";
 
 export interface DatabaseBackup {
   metadata: {
@@ -22,6 +23,7 @@ export interface DatabaseBackup {
     brands: any[];
     rackets: any[];
     racket_variants: any[];
+    racket_images: any[];
     sellers: any[];
     offers: any[];
     price_points: any[];
@@ -31,6 +33,7 @@ export interface DatabaseBackup {
 }
 
 export async function backupDatabase() {
+  loadEnv();
   console.log("=================================================");
   console.log("📦 Shuttlecraft Database Backup Utility");
   console.log("=================================================\n");
@@ -51,18 +54,32 @@ export async function backupDatabase() {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     const fetchTable = async (table: string) => {
-      const { data, error } = await supabase.from(table).select("*");
-      if (error) {
-        console.warn(`⚠️ Warning: Failed to export table '${table}': ${error.message}`);
-        return [];
+      const rows: any[] = [];
+      const pageSize = 1000;
+      const orderColumn = table === "guides" ? "slug" : "id";
+
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await supabase
+          .from(table)
+          .select("*")
+          .order(orderColumn)
+          .range(from, from + pageSize - 1);
+        if (error) {
+          console.warn(`⚠️ Warning: Failed to export table '${table}': ${error.message}`);
+          return rows;
+        }
+        rows.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
       }
-      return data || [];
+
+      return rows;
     };
 
-    const [b, r, rv, s, o, pp, g, rev] = await Promise.all([
+    const [b, r, rv, ri, s, o, pp, g, rev] = await Promise.all([
       fetchTable("brands"),
       fetchTable("rackets"),
       fetchTable("racket_variants"),
+      fetchTable("racket_images"),
       fetchTable("sellers"),
       fetchTable("offers"),
       fetchTable("price_points"),
@@ -79,6 +96,7 @@ export async function backupDatabase() {
           brands: b.length,
           rackets: r.length,
           racket_variants: rv.length,
+          racket_images: ri.length,
           sellers: s.length,
           offers: o.length,
           price_points: pp.length,
@@ -90,6 +108,7 @@ export async function backupDatabase() {
         brands: b,
         rackets: r,
         racket_variants: rv,
+        racket_images: ri,
         sellers: s,
         offers: o,
         price_points: pp,
@@ -108,6 +127,7 @@ export async function backupDatabase() {
           brands: brands.length,
           rackets: rackets.length,
           racket_variants: rackets.flatMap((r) => r.variants).length,
+          racket_images: 0,
           sellers: sellers.length,
           offers: offers.length,
           price_points: priceHistory.length,
@@ -119,6 +139,7 @@ export async function backupDatabase() {
         brands,
         rackets,
         racket_variants: rackets.flatMap((r) => r.variants),
+        racket_images: [],
         sellers,
         offers,
         price_points: priceHistory,
