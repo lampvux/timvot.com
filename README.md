@@ -530,6 +530,14 @@ keyed `(racket_id, checksum)` — manufacturers reuse one photograph across a mo
 colourways and across regional sites, and URL comparison does not catch that because the
 query string differs.
 
+Run `npm run images:audit` after a gallery crawl to reconcile every database slug,
+Storage path, public URL, hero pointer, and stored original/thumbnail. Use
+`npm run images:audit -- --database-only` for the fast relational-only check. A
+manufacturer product page is resolved globally to its most exact catalogue name before
+downloads begin, and the database rejects both multi-racket page ownership and paths that
+do not match the owning brand/model slug. Unreferenced objects are warnings in the audit;
+they are not deleted automatically.
+
 **A brand can have more than one provider.** Mizuno has three: `mizuno-asia`, the Wix
 badminton site covering the whole Asian line including frames long out of production, and
 the Shopify storefronts `mizuno` (Malaysia) and `mizuno-vn` (Vietnam), which list what

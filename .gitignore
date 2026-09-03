@@ -45,3 +45,6 @@ next-env.d.ts
 
 # generated from a live scrape by `npm run scrape:sql` (2 MB, changes wholesale each run)
 /supabase/scraped-catalogue.sql
+
+# point-in-time database snapshots are local recovery artifacts
+/backups/backup-*.json
