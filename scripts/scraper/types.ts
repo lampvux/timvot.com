@@ -40,6 +40,12 @@ export interface ScraperOptions {
   concurrency?: number;
   /** Minimum gap between dispatches, in ms. */
   delayMs?: number;
+  /**
+   * Abort the requests this site still has in flight. The orchestrator gives
+   * each shop its own signal, so a shop that stops answering is abandoned on
+   * its own rather than holding up the shops queued behind it.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ScraperResult {
@@ -57,4 +63,11 @@ export interface ScraperResult {
   skippedNonRacket?: number;
   /** Non-fatal observations worth printing next to a successful result. */
   notes?: string[];
+  /**
+   * Set when the orchestrator's per-site watchdog gave up on this shop rather
+   * than the shop itself reporting an error. Reported separately because the
+   * distinction is what says whether to raise `--site-timeout` or fix a
+   * selector.
+   */
+  timedOut?: boolean;
 }

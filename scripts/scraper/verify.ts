@@ -216,6 +216,178 @@ function pickSample<T>(items: T[], count: number): T[] {
   return Array.from({ length: count }, (_, i) => items[Math.floor(i * step)]);
 }
 
+/**
+ * One site's verification pass.
+ *
+ * Lifted out of the loop so the loop can guard it: a browser context that
+ * fails to open for one shop used to reject out of `verifyScrape` and cost
+ * the verification report for every shop, including the ones already checked.
+ */
+async function verifyOneSite(
+  browser: Browser,
+  result: ScraperResult,
+  options: { sampleSize: number; verbose: boolean },
+): Promise<SiteVerification> {
+  const { sampleSize, verbose } = options;
+  const categoryUrl = CATEGORY_URLS[result.source];
+  const verification: SiteVerification = {
+    source: result.source,
+    categoryUrl,
+    advertisedLastPage: null,
+    cardsOnFirstPage: null,
+    expectedApprox: result.reportedTotal ?? null,
+    scrapedCount: result.itemsCount,
+    pagesFetched: result.pagesFetched ?? 0,
+    coverageOk: false,
+    sampleChecks: [],
+    samplePassRate: 0,
+    issues: [],
+  };
+
+  if (verbose) console.log(`\n🔍 Verifying [${result.source}] in a real browser…`);
+
+  // --- 1. Read the site's own listing with a browser -------------------
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    viewport: { width: 1366, height: 900 },
+    locale: "vi-VN",
+  });
+  const page = await context.newPage();
+  await page.route("**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,mp4}", (r) => r.abort());
+
+  try {
+    const response = await page.goto(categoryUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 45000,
+    });
+    if (!response || response.status() >= 400) {
+      verification.issues.push(
+        `Category page did not load (HTTP ${response?.status() ?? "no response"}).`,
+      );
+    } else {
+      // Let lazy-loaded grids settle.
+      await page.evaluate(() => window.scrollBy(0, 2000));
+      await page.waitForTimeout(1500);
+
+      verification.cardsOnFirstPage = await page
+        .locator(CARD_SELECTORS[result.source])
+        .count();
+      verification.advertisedLastPage = await readLastPage(page, result.source);
+
+      if (verification.cardsOnFirstPage === 0) {
+        // A source that already reported itself blocked is explained; do not
+        // also accuse its selector, which was never reached.
+        verification.issues.push(
+          result.success
+            ? `Browser sees 0 product cards on the category page using selector ` +
+              `"${CARD_SELECTORS[result.source]}" — the selector or the page is wrong.`
+            : `Browser also sees 0 product cards, consistent with the scraper's ` +
+              `reported failure: ${result.error ?? "source unavailable"}`,
+        );
+      }
+    }
+  } catch (err) {
+    verification.issues.push(
+      `Category page check failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+    );
+  } finally {
+    await context.close();
+  }
+
+  // --- 2. Coverage ------------------------------------------------------
+  const cards = verification.cardsOnFirstPage;
+  const lastPage = verification.advertisedLastPage;
+
+  // shopvnb renders a sliding 10-page window rather than the full pager, so
+  // the highest number on page 1 is a floor, not the catalogue size. Only
+  // treat the pager as a total for sites that print the real last page.
+  const pagerIsWindowed = result.source === "vnb";
+
+  if (verification.expectedApprox == null && cards && lastPage && !pagerIsWindowed) {
+    // No API total to compare against, so estimate from the rendered pager.
+    verification.expectedApprox = cards * lastPage;
+  }
+
+  if (result.itemsCount === 0) {
+    verification.issues.push(
+      result.success
+        ? "Scraper returned 0 products."
+        : `Source unavailable, 0 products recorded: ${result.error ?? "no reason given"}`,
+    );
+  } else if (verification.expectedApprox) {
+    const ratio = result.itemsCount / verification.expectedApprox;
+    // Rackets are filtered out of a mixed category, and the last page is
+    // rarely full, so anything from 70% up is consistent coverage.
+    verification.coverageOk = ratio >= 0.7;
+    if (!verification.coverageOk) {
+      verification.issues.push(
+        `Coverage ${(ratio * 100).toFixed(0)}% — scraped ${result.itemsCount} of an ` +
+          `expected ~${verification.expectedApprox}.`,
+      );
+    }
+  } else {
+    verification.coverageOk = result.itemsCount > 0;
+  }
+
+  // Only compare page counts when there is no item count to compare, and
+  // only for sources that paginate the same listing the browser sees. The
+  // API-backed sources read 100 products per request against a rendered
+  // pager of 15–20, so "11 of 53 pages" is a unit mismatch, not a gap —
+  // the item coverage above is the question that actually matters.
+  const paginatesLikeTheBrowser = result.source === "vnb";
+  if (
+    verification.expectedApprox == null &&
+    paginatesLikeTheBrowser &&
+    !pagerIsWindowed &&
+    lastPage &&
+    verification.pagesFetched &&
+    verification.pagesFetched < lastPage * 0.9
+  ) {
+    verification.issues.push(
+      `Only ${verification.pagesFetched} of ~${lastPage} listing pages were fetched.`,
+    );
+  }
+
+  // --- 3. Sample real product pages ------------------------------------
+  const sample = pickSample(result.products, sampleSize);
+  for (const product of sample) {
+    const check = await checkProductPage(browser, product);
+    verification.sampleChecks.push(check);
+    if (verbose) {
+      const mark = check.loaded && check.titleMatches && check.priceMatches ? "✓" : "✗";
+      console.log(
+        `   ${mark} ${check.url}\n` +
+          `      loaded=${check.loaded}(${check.httpStatus}) title=${check.titleMatches} ` +
+          `price=${check.priceMatches} (${formatVnd(check.scrapedPrice)}₫)` +
+          (check.note ? `\n      note: ${check.note}` : ""),
+      );
+    }
+  }
+
+  const passed = verification.sampleChecks.filter(
+    (c) => c.loaded && c.titleMatches && c.priceMatches,
+  ).length;
+  verification.samplePassRate = verification.sampleChecks.length
+    ? passed / verification.sampleChecks.length
+    : 0;
+
+  const dead = verification.sampleChecks.filter((c) => !c.loaded);
+  if (dead.length > 0) {
+    verification.issues.push(
+      `${dead.length}/${verification.sampleChecks.length} sampled product URLs did not load.`,
+    );
+  }
+  const priceMismatch = verification.sampleChecks.filter((c) => c.loaded && !c.priceMatches);
+  if (priceMismatch.length > 0) {
+    verification.issues.push(
+      `${priceMismatch.length}/${verification.sampleChecks.length} sampled pages did not show the scraped price.`,
+    );
+  }
+
+  return verification;
+}
+
 export async function verifyScrape(
   results: ScraperResult[],
   options: { sampleSize?: number; verbose?: boolean } = {},
@@ -228,163 +400,29 @@ export async function verifyScrape(
 
   try {
     for (const result of results) {
-      const categoryUrl = CATEGORY_URLS[result.source];
-      const verification: SiteVerification = {
-        source: result.source,
-        categoryUrl,
-        advertisedLastPage: null,
-        cardsOnFirstPage: null,
-        expectedApprox: result.reportedTotal ?? null,
-        scrapedCount: result.itemsCount,
-        pagesFetched: result.pagesFetched ?? 0,
-        coverageOk: false,
-        sampleChecks: [],
-        samplePassRate: 0,
-        issues: [],
-      };
-
-      if (verbose) console.log(`\n🔍 Verifying [${result.source}] in a real browser…`);
-
-      // --- 1. Read the site's own listing with a browser -------------------
-      const context = await browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        viewport: { width: 1366, height: 900 },
-        locale: "vi-VN",
-      });
-      const page = await context.newPage();
-      await page.route("**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,mp4}", (r) => r.abort());
-
       try {
-        const response = await page.goto(categoryUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 45000,
-        });
-        if (!response || response.status() >= 400) {
-          verification.issues.push(
-            `Category page did not load (HTTP ${response?.status() ?? "no response"}).`,
-          );
-        } else {
-          // Let lazy-loaded grids settle.
-          await page.evaluate(() => window.scrollBy(0, 2000));
-          await page.waitForTimeout(1500);
-
-          verification.cardsOnFirstPage = await page
-            .locator(CARD_SELECTORS[result.source])
-            .count();
-          verification.advertisedLastPage = await readLastPage(page, result.source);
-
-          if (verification.cardsOnFirstPage === 0) {
-            // A source that already reported itself blocked is explained; do not
-            // also accuse its selector, which was never reached.
-            verification.issues.push(
-              result.success
-                ? `Browser sees 0 product cards on the category page using selector ` +
-                  `"${CARD_SELECTORS[result.source]}" — the selector or the page is wrong.`
-                : `Browser also sees 0 product cards, consistent with the scraper's ` +
-                  `reported failure: ${result.error ?? "source unavailable"}`,
-            );
-          }
-        }
+        verifications.push(await verifyOneSite(browser, result, { sampleSize, verbose }));
       } catch (err) {
-        verification.issues.push(
-          `Category page check failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
-        );
-      } finally {
-        await context.close();
+        // A shop whose verification could not run is reported as unverified,
+        // not as a verdict on the scrape — and never at the expense of the
+        // shops queued behind it.
+        verifications.push({
+          source: result.source,
+          categoryUrl: CATEGORY_URLS[result.source],
+          advertisedLastPage: null,
+          cardsOnFirstPage: null,
+          expectedApprox: result.reportedTotal ?? null,
+          scrapedCount: result.itemsCount,
+          pagesFetched: result.pagesFetched ?? 0,
+          coverageOk: false,
+          sampleChecks: [],
+          samplePassRate: 0,
+          issues: [
+            `Verification could not run for this source: ` +
+              `${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+          ],
+        });
       }
-
-      // --- 2. Coverage ------------------------------------------------------
-      const cards = verification.cardsOnFirstPage;
-      const lastPage = verification.advertisedLastPage;
-
-      // shopvnb renders a sliding 10-page window rather than the full pager, so
-      // the highest number on page 1 is a floor, not the catalogue size. Only
-      // treat the pager as a total for sites that print the real last page.
-      const pagerIsWindowed = result.source === "vnb";
-
-      if (verification.expectedApprox == null && cards && lastPage && !pagerIsWindowed) {
-        // No API total to compare against, so estimate from the rendered pager.
-        verification.expectedApprox = cards * lastPage;
-      }
-
-      if (result.itemsCount === 0) {
-        verification.issues.push(
-          result.success
-            ? "Scraper returned 0 products."
-            : `Source unavailable, 0 products recorded: ${result.error ?? "no reason given"}`,
-        );
-      } else if (verification.expectedApprox) {
-        const ratio = result.itemsCount / verification.expectedApprox;
-        // Rackets are filtered out of a mixed category, and the last page is
-        // rarely full, so anything from 70% up is consistent coverage.
-        verification.coverageOk = ratio >= 0.7;
-        if (!verification.coverageOk) {
-          verification.issues.push(
-            `Coverage ${(ratio * 100).toFixed(0)}% — scraped ${result.itemsCount} of an ` +
-              `expected ~${verification.expectedApprox}.`,
-          );
-        }
-      } else {
-        verification.coverageOk = result.itemsCount > 0;
-      }
-
-      // Only compare page counts when there is no item count to compare, and
-      // only for sources that paginate the same listing the browser sees. The
-      // API-backed sources read 100 products per request against a rendered
-      // pager of 15–20, so "11 of 53 pages" is a unit mismatch, not a gap —
-      // the item coverage above is the question that actually matters.
-      const paginatesLikeTheBrowser = result.source === "vnb";
-      if (
-        verification.expectedApprox == null &&
-        paginatesLikeTheBrowser &&
-        !pagerIsWindowed &&
-        lastPage &&
-        verification.pagesFetched &&
-        verification.pagesFetched < lastPage * 0.9
-      ) {
-        verification.issues.push(
-          `Only ${verification.pagesFetched} of ~${lastPage} listing pages were fetched.`,
-        );
-      }
-
-      // --- 3. Sample real product pages ------------------------------------
-      const sample = pickSample(result.products, sampleSize);
-      for (const product of sample) {
-        const check = await checkProductPage(browser, product);
-        verification.sampleChecks.push(check);
-        if (verbose) {
-          const mark = check.loaded && check.titleMatches && check.priceMatches ? "✓" : "✗";
-          console.log(
-            `   ${mark} ${check.url}\n` +
-              `      loaded=${check.loaded}(${check.httpStatus}) title=${check.titleMatches} ` +
-              `price=${check.priceMatches} (${formatVnd(check.scrapedPrice)}₫)` +
-              (check.note ? `\n      note: ${check.note}` : ""),
-          );
-        }
-      }
-
-      const passed = verification.sampleChecks.filter(
-        (c) => c.loaded && c.titleMatches && c.priceMatches,
-      ).length;
-      verification.samplePassRate = verification.sampleChecks.length
-        ? passed / verification.sampleChecks.length
-        : 0;
-
-      const dead = verification.sampleChecks.filter((c) => !c.loaded);
-      if (dead.length > 0) {
-        verification.issues.push(
-          `${dead.length}/${verification.sampleChecks.length} sampled product URLs did not load.`,
-        );
-      }
-      const priceMismatch = verification.sampleChecks.filter((c) => c.loaded && !c.priceMatches);
-      if (priceMismatch.length > 0) {
-        verification.issues.push(
-          `${priceMismatch.length}/${verification.sampleChecks.length} sampled pages did not show the scraped price.`,
-        );
-      }
-
-      verifications.push(verification);
     }
   } finally {
     await browser.close();

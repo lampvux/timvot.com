@@ -201,6 +201,7 @@ async function scrapeRenderedCatalogue(
     headers: HTML_HEADERS,
     timeoutMs,
     verbose,
+    signal: options.signal,
   });
 
   if (!first.ok) {
@@ -235,6 +236,7 @@ async function scrapeRenderedCatalogue(
       headers: HTML_HEADERS,
       timeoutMs,
       verbose,
+      signal: options.signal,
     });
     if (!response.ok) {
       failedPages.push({ page, status: response.status });
@@ -353,6 +355,7 @@ async function buildHtmlPriceMap(
     headers: HTML_HEADERS,
     timeoutMs,
     verbose,
+    signal: options.signal,
   });
   if (!first.ok) return map;
 
@@ -377,6 +380,7 @@ async function buildHtmlPriceMap(
         headers: HTML_HEADERS,
         timeoutMs,
         verbose,
+        signal: options.signal,
       });
       lastRead = page;
       if (!res.ok) return;
@@ -413,7 +417,12 @@ export async function scrapeWooCommerce(
 
   try {
     // --- Phase 1: enumerate and classify via the Store API -------------------
-    const first = await fetchWithRetry(apiUrl(1), { headers: JSON_HEADERS, timeoutMs, verbose });
+    const first = await fetchWithRetry(apiUrl(1), {
+      headers: JSON_HEADERS,
+      timeoutMs,
+      verbose,
+      signal: options.signal,
+    });
 
     if (!first.ok) {
       if (config.htmlFallback) {
@@ -501,7 +510,12 @@ export async function scrapeWooCommerce(
 
     if (remaining.length > 0) {
       await pool(remaining, concurrency, delayMs, async (page) => {
-        const res = await fetchWithRetry(apiUrl(page), { headers: JSON_HEADERS, timeoutMs, verbose });
+        const res = await fetchWithRetry(apiUrl(page), {
+          headers: JSON_HEADERS,
+          timeoutMs,
+          verbose,
+          signal: options.signal,
+        });
         pagesFetched++;
         if (!res.ok) {
           if (verbose) console.warn(`   [${config.source}] API page ${page}: HTTP ${res.status}`);

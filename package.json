@@ -25,6 +25,7 @@
     "scrape:sync": "tsx scripts/scraper/index.ts --sync-db",
     "scrape:refresh": "tsx scripts/scraper/index.ts --no-verify --sync-db",
     "scrape:sql": "tsx scripts/scraper/generate-sql.ts",
+    "test:scraper": "tsx --test scripts/scraper/*.test.ts scripts/scraper/sites/*.test.ts",
     "scrape:strings": "tsx scripts/string-scraper/index.ts",
     "scrape:strings:sync": "tsx scripts/string-scraper/index.ts --sync-db",
     "test:string-scraper": "tsx --test scripts/string-scraper/*.test.ts",

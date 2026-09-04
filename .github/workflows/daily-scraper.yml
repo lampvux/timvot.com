@@ -1,5 +1,21 @@
 name: Shuttlecraft Daily Scraper & Backup Sync
 
+# One shop, one step: nothing in this job may take the rest of it down with it.
+#
+# The nightly refresh walks four independent storefronts and then runs four
+# independent follow-ups (image crawl, ownership audit, backup, upload). Any of
+# those can fail on its own for reasons that say nothing about the others — a
+# shop behind a new WAF rule, a manufacturer gallery that moved, a Chromium that
+# would not start. Every step below therefore reports its own outcome and lets
+# the next one run, and a final step reads all of them and decides the verdict
+# for the job. A shop that fails is a line in the report; the shops that
+# answered are still scraped, synced, audited and backed up.
+#
+# `continue-on-error` on a step means "your failure is not my successor's
+# problem", not "your failure does not matter": `steps.<id>.outcome` keeps the
+# real result and the Report Step Outcomes step at the bottom fails the job on
+# it. Nothing here is swallowed.
+
 on:
   schedule:
     # Run daily at 01:00 UTC (08:00 AM ICT - Vietnam Time)
@@ -14,10 +30,26 @@ on:
         description: 'Sync scraped data to Supabase database'
         type: boolean
         default: true
+      fail_on_site_error:
+        description: 'Fail the run when any single shop fails (default: skip that shop and carry on)'
+        type: boolean
+        default: false
+
+# Two overlapping refreshes would race each other's stale-offer sweep: the
+# second run pauses offers the first has not written yet.
+concurrency:
+  group: daily-scraper
+  cancel-in-progress: false
 
 jobs:
   scrape-and-sync:
     runs-on: ubuntu-latest
+    # Every step below carries its own cap, and they sum to less than this one
+    # on purpose: a job that hits its own timeout is cancelled outright, and
+    # cancellation is the one thing that stops Report Step Outcomes from
+    # running — the report would be lost exactly when it was most wanted. Keep
+    # this above the sum of the step caps when adding a step.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout Repository
@@ -34,39 +66,163 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      # Playwright's browsers are not part of `npm ci`. Without them the
+      # scrape's verification pass could never run — it reported a Chromium
+      # that would not start, every night, on every run.
+      - name: Install Chromium for Scrape Verification
+        id: chromium
+        continue-on-error: true
+        timeout-minutes: 10
+        run: npx playwright install --with-deps chromium
+
+      - name: Test Scraper Failure Isolation
+        id: test_scraper
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npm run test:scraper
+
       - name: Test Manufacturer Image Crawler
+        id: test_images
+        continue-on-error: true
+        timeout-minutes: 5
         run: npm run test:image-scraper
 
+      # A shop that fails is skipped and named in the run summary; the scraper
+      # exits non-zero only when *every* shop failed, or when the database
+      # write itself did.
       - name: Run Multi-Site Scraper & Sync DB
+        id: scrape
+        continue-on-error: true
+        # 80 minutes for four shops, each capped at 18 (SITE_TIMEOUT below), so
+        # even four simultaneously misbehaving shops are each abandoned and
+        # reported rather than the last one never being reached. hvshop is the
+        # slow one: minutes, where the other three are seconds.
+        timeout-minutes: 80
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Read as environment values rather than interpolated into the script,
+          # so a dispatch input cannot become shell.
+          SITE: ${{ inputs.site }}
+          SYNC_DB: ${{ inputs.sync_db }}
+          FAIL_ON_SITE_ERROR: ${{ inputs.fail_on_site_error }}
+          # Seconds per shop. Sized against this step's own cap above, not
+          # against the scraper's 30-minute local default.
+          SITE_TIMEOUT: '1080'
         run: |
-          SITE_FLAG="${{ github.event.inputs.site || 'all' }}"
-          npx tsx scripts/scraper/index.ts --site=$SITE_FLAG --sync-db --verbose
+          FLAGS=(--site="${SITE:-all}" --site-timeout="$SITE_TIMEOUT" --verbose)
+          # Empty on a scheduled run, which is the syncing case.
+          if [ "$SYNC_DB" != "false" ]; then FLAGS+=(--sync-db); fi
+          if [ "$FAIL_ON_SITE_ERROR" = "true" ]; then FLAGS+=(--fail-on-site-error); fi
+          # %q, so an input carrying shell metacharacters is shown as the single
+          # argument it actually is rather than as something that ran.
+          printf 'scraping with:'; printf ' %q' "${FLAGS[@]}"; printf '\n'
+          npx tsx scripts/scraper/index.ts "${FLAGS[@]}"
 
+      # The three steps below read the catalogue rather than the scrape's
+      # output, so they are worth running even when the walk went badly.
       - name: Crawl ProKennex Images & Sync DB
+        id: images
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 45
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run scrape:images -- --provider=pro-kennex --verbose
 
       - name: Audit Racket Image Ownership
+        id: audit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 20
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run images:audit -- --database-only
 
       - name: Generate Post-Sync Backup
+        id: backup
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 30
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          npx tsx scripts/backup.ts
+        run: npx tsx scripts/backup.ts
 
       - name: Upload Daily Backup Snapshot
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: daily-db-backup-${{ github.run_number }}
           path: backups/*.json
+          # A backup step that failed has already been reported; a missing
+          # artifact must not also fail the upload.
+          if-no-files-found: warn
           retention-days: 30
+
+      # The verdict. Every step above kept its real result in `outcome`; this is
+      # where they are collected, printed together, and turned into one exit
+      # code for the job.
+      - name: Report Step Outcomes
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        env:
+          CHROMIUM: ${{ steps.chromium.outcome }}
+          TEST_SCRAPER: ${{ steps.test_scraper.outcome }}
+          TEST_IMAGES: ${{ steps.test_images.outcome }}
+          SCRAPE: ${{ steps.scrape.outcome }}
+          IMAGES: ${{ steps.images.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+          BACKUP: ${{ steps.backup.outcome }}
+        run: |
+          set -uo pipefail
+
+          {
+            echo "### Pipeline steps"
+            echo
+            echo "| Step | Outcome |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failures=0
+          record() {
+            local label="$1" outcome="${2:-skipped}" fatal="$3"
+            case "$outcome" in
+              success) icon="✅" ;;
+              failure) icon="❌" ;;
+              *)       icon="⏭️" ;;
+            esac
+            echo "| $label | $icon $outcome |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$outcome" = "failure" ]; then
+              if [ "$fatal" = "fatal" ]; then
+                echo "::error title=Step failed: $label::See this step's log."
+                failures=$((failures + 1))
+              else
+                echo "::warning title=Step degraded: $label::See this step's log; the run continued without it."
+              fi
+            fi
+          }
+
+          # Chromium is the one step whose failure is not the job's: without it
+          # the scrape loses its verification pass, which is a second opinion on
+          # a scrape that is already written to the database.
+          record "Install Chromium"        "$CHROMIUM"     degraded
+          record "Scraper tests"           "$TEST_SCRAPER" fatal
+          record "Image crawler tests"     "$TEST_IMAGES"  fatal
+          record "Multi-site scrape & sync" "$SCRAPE"      fatal
+          record "ProKennex image crawl"   "$IMAGES"       fatal
+          record "Image ownership audit"   "$AUDIT"        fatal
+          record "Post-sync backup"        "$BACKUP"       fatal
+
+          if [ "$failures" -gt 0 ]; then
+            {
+              echo
+              echo "**$failures step(s) failed.** Every other step ran; see the table above."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ $failures step(s) failed — failing the job after running everything else."
+            exit 1
+          fi
+
+          echo "✅ Every step completed."

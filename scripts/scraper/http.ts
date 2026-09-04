@@ -35,6 +35,13 @@ export interface FetchOptions {
   method?: "GET" | "POST";
   /** Serialised request body, sent as-is when `method` is POST. */
   body?: string;
+  /**
+   * Caller's abort signal, combined with the per-request timeout below. The
+   * scraper orchestrator uses it to abandon a shop that has stopped answering;
+   * once it fires, no further attempt is made, because the caller has already
+   * stopped waiting for an answer.
+   */
+  signal?: AbortSignal;
 }
 
 export interface FetchResponse {
@@ -42,6 +49,27 @@ export interface FetchResponse {
   status: number;
   body: string;
   headers: Headers;
+}
+
+/**
+ * The per-request timeout and the caller's own signal are two independent
+ * reasons to stop, and `fetch` takes one signal. `AbortSignal.any` is the
+ * union of them; with no caller signal there is nothing to combine and the
+ * timeout controller is passed through untouched.
+ */
+function combineSignals(timeout: AbortSignal, caller?: AbortSignal): AbortSignal {
+  return caller ? AbortSignal.any([timeout, caller]) : timeout;
+}
+
+/**
+ * An abort raised by the caller reads as "the run gave up on this host", not
+ * as "the request timed out" — the two are indistinguishable in a bare
+ * `AbortError`, and the site report prints whichever reason it is handed.
+ */
+function abortError(signal: AbortSignal): Error {
+  const reason = signal.reason;
+  if (reason instanceof Error) return reason;
+  return new Error(reason ? String(reason) : "Request aborted by the caller");
 }
 
 /**
@@ -60,12 +88,18 @@ export async function fetchWithRetry(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Checked before the backoff as well as before the request: retrying a
+    // host the caller has given up on is the one thing that would keep an
+    // abandoned site running long after the run moved on.
+    options.signal?.throwIfAborted();
+
     if (attempt > 0) {
       const backoff = Math.min(1000 * 2 ** (attempt - 1), 8000);
       if (options.verbose) {
         console.log(`      retry ${attempt}/${retries} after ${backoff}ms — ${url}`);
       }
       await sleep(backoff);
+      options.signal?.throwIfAborted();
     }
 
     const controller = new AbortController();
@@ -74,7 +108,7 @@ export async function fetchWithRetry(
     try {
       const res = await fetch(url, {
         headers,
-        signal: controller.signal,
+        signal: combineSignals(controller.signal, options.signal),
         redirect: "follow",
         method: options.method ?? "GET",
         ...(options.body === undefined ? {} : { body: options.body }),
@@ -100,6 +134,8 @@ export async function fetchWithRetry(
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err;
+      // The caller aborted, so this is not a transient fault to retry past.
+      if (options.signal?.aborted) throw abortError(options.signal);
       if (attempt === retries) {
         throw lastError;
       }
@@ -134,13 +170,18 @@ export async function fetchBinary(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    options.signal?.throwIfAborted();
     if (attempt > 0) await sleep(Math.min(1000 * 2 ** (attempt - 1), 8000));
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const res = await fetch(url, { headers, signal: controller.signal, redirect: "follow" });
+      const res = await fetch(url, {
+        headers,
+        signal: combineSignals(controller.signal, options.signal),
+        redirect: "follow",
+      });
       clearTimeout(timeoutId);
 
       const contentType = res.headers.get("content-type")?.split(";")[0].trim() ?? "";
@@ -162,6 +203,7 @@ export async function fetchBinary(
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err;
+      if (options.signal?.aborted) throw abortError(options.signal);
       if (attempt === retries) throw lastError;
     }
   }
@@ -181,17 +223,30 @@ export async function pool<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
+  // The first error any worker throws. Recorded rather than thrown straight
+  // out of the runner so the other runners can stop dispatching: without it,
+  // `Promise.all` rejects while the remaining runners keep walking a site
+  // whose result the caller has already given up on. Held on an object so the
+  // runners and the code after `Promise.all` see the same value.
+  const state: { failure?: { error: unknown } } = {};
 
   async function run(): Promise<void> {
-    while (true) {
+    while (!state.failure) {
       const index = cursor++;
       if (index >= items.length) return;
       if (delayMs > 0) await sleep(delayMs);
-      results[index] = await worker(items[index], index);
+      if (state.failure) return;
+      try {
+        results[index] = await worker(items[index], index);
+      } catch (error) {
+        state.failure ??= { error };
+        return;
+      }
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+  if (state.failure) throw state.failure.error;
   return results;
 }
 
