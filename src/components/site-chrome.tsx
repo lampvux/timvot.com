@@ -194,7 +194,7 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
 
   return (
     <header className="sticky top-0 z-[100] border-b border-line bg-card">
-      <div className="flex h-[52px] items-center gap-2 px-4 lg:h-[60px] lg:gap-8 lg:px-10">
+      <div className="flex h-[52px] items-center gap-2 px-4 lg:h-[60px] lg:gap-4 lg:px-4 xl:gap-8 xl:px-10">
         <Link
           href="/"
           className="display flex h-11 shrink-0 items-center text-[17px] text-brand no-underline lg:h-auto lg:text-[19px]"
@@ -205,7 +205,7 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
 
         <nav
           aria-label={t("rackets")}
-          className="hidden items-center gap-6 lg:flex"
+          className="hidden items-center gap-3 lg:flex xl:gap-6"
         >
           <Suspense fallback={<NavLinks pathname={null} />}>
             <LiveNavLinks />
@@ -218,14 +218,14 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
               <SearchFormShell
                 id="site-search"
                 size="sm"
-                className="hidden w-[300px] lg:block"
+                className="hidden w-[200px] lg:block xl:w-[300px]"
               />
             }
           >
             <SearchForm
               id="site-search"
               size="sm"
-              className="hidden w-[300px] lg:block"
+              className="hidden w-[200px] lg:block xl:w-[300px]"
             />
           </Suspense>
 

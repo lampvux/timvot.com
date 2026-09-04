@@ -34,6 +34,7 @@ import {
 } from "@/lib/data/repository";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
 import { ReviewDate } from "@/components/review-date";
+import { RacketCard } from "@/components/racket-card";
 import {
   BALANCE_MESSAGE_KEY,
   CONDITION_MESSAGE_KEY,
@@ -315,55 +316,46 @@ export default async function RacketPage({
     : null;
 
   return (
-    <div className="page-shell pb-[152px] pt-4 lg:pb-12 lg:pt-5">
-      {/* Breadcrumb */}
+    <div className="page-shell max-w-[1160px] pb-[152px] pt-4 lg:pb-12 lg:pt-5">
       <nav
         aria-label="Breadcrumb"
-        className="mb-5 flex flex-wrap items-center gap-2 text-[12.5px] text-tertiary lg:mb-6"
+        className="mb-5 flex flex-wrap items-center gap-2 text-[12.5px] text-tertiary"
       >
         <Link href="/rackets" className="no-underline hover:underline">
           {tn("rackets")}
         </Link>
-        <span>/</span>
+        <span aria-hidden>/</span>
         <Link
           href={{ pathname: "/rackets", query: { brand: racket.brandSlug } }}
           className="no-underline hover:underline"
         >
           {racket.brandName}
         </Link>
-        <span>/</span>
+        <span aria-hidden>/</span>
         <span className="text-secondary">{racket.name}</span>
       </nav>
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_460px] lg:gap-14">
-        {/* ------------------------------------------------ identity + score */}
+      <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1.36fr)_minmax(320px,0.94fr)]">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <Eyebrow>
-              {racket.brandName} · {racket.releaseYear}
-            </Eyebrow>
-            <Badge tone="brand" icon="BadgeCheck">
-              {t("cataloguedVariant")}
-            </Badge>
+            <Eyebrow>{racket.brandName}</Eyebrow>
+            <span className="font-mono text-[11px] tabular-nums text-tertiary">
+              {racket.releaseYear}
+            </span>
           </div>
 
-          <h1 className="display mt-2.5 text-[34px] leading-[1.0] text-primary lg:text-display-2">
+          <h1 className="display mt-2 text-[34px] leading-[1.02] text-primary lg:text-[42px]">
             {racket.name}
           </h1>
 
-          <div className="mt-4 flex flex-wrap gap-1.5">
+          <div className="mt-3 flex flex-wrap gap-1.5">
             <Tag mono>{weightClasses.join(" · ")}</Tag>
             <Tag mono>{gripSizes.join(" · ")}</Tag>
             <Tag>{te(BALANCE_MESSAGE_KEY[racket.balanceType])}</Tag>
             <Tag>{te(FLEX_MESSAGE_KEY[racket.shaftFlex])}</Tag>
           </div>
 
-          <p className="mt-4 max-w-[62ch] text-body text-secondary">
-            {racket.summary[locale]}
-          </p>
-
-          {/* Racket Image Gallery */}
-          <div className="mt-6">
+          <div className="mt-5">
             <RacketGallery
               racketName={racket.name}
               brandName={racket.brandName}
@@ -372,88 +364,63 @@ export default async function RacketPage({
             />
           </div>
 
-          {/* Court Score */}
-          <Card padding="lg" className="mt-7">
-            <div className="grid gap-6 sm:grid-cols-[152px_1fr] sm:gap-7">
-              <div className="sm:border-r sm:border-line sm:pr-7">
+          <p className="mt-5 max-w-[68ch] text-body text-secondary">
+            {racket.summary[locale]}
+          </p>
+
+          <Card padding="md" className="mt-6">
+            <div className="mb-4 flex flex-wrap items-start gap-3">
+              <div>
                 <Eyebrow as="h2">{t("courtScore")}</Eyebrow>
-                <div className="mt-2 flex items-baseline gap-1">
+                <div className="mt-1.5 flex items-baseline gap-1">
                   <span
                     className={
-                      "font-display text-[52px] font-extrabold leading-none tabular-nums " +
+                      "font-display text-[30px] font-extrabold leading-none tabular-nums " +
                       (racket.courtScore === null
                         ? "text-[var(--text-disabled)]"
                         : "text-primary")
                     }
-                    style={{
-                      fontVariationSettings: '"wdth" 104',
-                      letterSpacing: "-0.028em",
-                    }}
                   >
                     {racket.courtScore ?? "—"}
                   </span>
-                  <span className="font-mono text-[13px] text-tertiary">/100</span>
+                  <span className="font-mono text-[12px] text-tertiary">/100</span>
                 </div>
-                <div className="mt-2.5 font-mono text-[11px] leading-relaxed text-tertiary">
-                  {racket.player ? t("scoreSplit") : t("specHalfOnly")}
-                </div>
-                <Link
-                  href="/methodology"
-                  className="mt-2 inline-block text-[12.5px] font-semibold no-underline"
-                >
-                  {tn("methodology")}
-                </Link>
               </div>
-
-              <div>
-                <ScoreBars axes={shownAxes} />
-                <p className="mt-3 text-caption text-tertiary">
-                  {racket.player
-                    ? t("playerHalfNote", { count: racket.reviewCount })
-                    : t("specOnlyNote", { count: racket.reviewCount })}
-                </p>
-              </div>
+              <Link
+                href="/methodology"
+                className="ml-auto inline-flex min-h-11 items-center text-[12.5px] font-semibold no-underline lg:min-h-7"
+              >
+                {tn("methodology")}
+              </Link>
             </div>
+            <ScoreBars axes={shownAxes} compact />
+            <p className="mt-3 text-caption text-tertiary">
+              {racket.player
+                ? t("playerHalfNote", { count: racket.reviewCount })
+                : t("specOnlyNote", { count: racket.reviewCount })}
+            </p>
           </Card>
 
-          {/* The signature element */}
-          <Card padding="lg" className="mt-6">
-            <div className="flex items-baseline gap-3">
+          <Card padding="md" className="mt-5">
+            <div className="flex flex-wrap items-baseline gap-2">
               <Eyebrow as="h2">{t("balance")}</Eyebrow>
               <span className="font-mono text-[11px] text-[var(--text-disabled)]">
                 {t("balanceScale")}
               </span>
             </div>
-
             <BalanceRuler
-              className="mt-5"
-              markers={[
-                {
-                  mm: racket.balancePointMm,
-                  emphasis: true,
-                },
-              ]}
+              className="mt-4"
+              markers={[{ mm: racket.balancePointMm, emphasis: true }]}
             />
-
-            <div className="mt-1.5 flex justify-between">
-              <span className="eyebrow">{t("headLight")}</span>
-              <span className="eyebrow">{t("even")}</span>
-              <span className="eyebrow">{t("headHeavy")}</span>
+            <div className="mt-1 flex justify-between gap-3">
+              <span className="text-[11px] text-tertiary">{t("headLight")}</span>
+              <span className="text-[11px] text-tertiary">{t("even")}</span>
+              <span className="text-right text-[11px] text-tertiary">{t("headHeavy")}</span>
             </div>
-
-            <p className="mt-3.5 max-w-[62ch] text-body-sm text-secondary">
-              {balanceReading}
-            </p>
+            <p className="mt-3 text-body-sm text-secondary">{balanceReading}</p>
           </Card>
 
-          <StringRecommender
-            racketName={racket.name}
-            maxTension={racket.maxTensionLbs}
-            initialSkill={racket.skillLevel}
-            initialStyle={racket.playStyleTags[0] ?? "all-round"}
-          />
-
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-5 flex flex-wrap gap-3">
             <CompareToggle
               size="lg"
               item={{
@@ -462,262 +429,211 @@ export default async function RacketPage({
                 brand: racket.brandName,
               }}
             />
-            {headlineVariant && (
-              <WatchPriceSlot variantId={headlineVariant.id} />
-            )}
+            {headlineVariant && <WatchPriceSlot variantId={headlineVariant.id} />}
           </div>
         </div>
 
-        {/* ------------------------------------------------ key specs */}
-        <div className="min-w-0">
+        <aside className="min-w-0 space-y-5" aria-label={t("keySpecs")}>
           <SpecSheet keySpecs={keySpecs} extraSpecs={extraSpecs} />
-        </div>
-      </div>
 
-      {/* ------------------------------------------------------- where to buy */}
-      <section id="offers" className="mt-12 scroll-mt-20" aria-labelledby="offers-heading">
-        <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
-          <Eyebrow as="h2">
-            <span id="offers-heading">{t("whereToBuy")}</span>
-          </Eyebrow>
-          {lowestOffer && (
-            <span className="font-mono text-[12px] tabular-nums text-tertiary">
-              {t("offersMeta", {
-                sellers: new Set(inStock.map((o) => o.sellerId)).size,
-                price: formatDong(lowestOffer.price),
-              })}
-            </span>
-          )}
-          <span className="ml-auto hidden text-[12.5px] text-tertiary lg:inline">
-            {t("offersNote")}
-          </span>
-        </div>
-
-        {inStock.length === 0 ? (
-          <EmptyState title={t("noOffersTitle")} body={t("noOffersBody")} />
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-line bg-card">
-            <table className="w-full min-w-[720px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-line bg-sunken">
-                  {[
-                    ts("seller"),
-                    ts("condition"),
-                    ts("variant"),
-                    ts("stock"),
-                    ts("price"),
-                    "",
-                  ].map((label, index) => (
-                    <th
-                      key={index}
-                      scope="col"
-                      className="eyebrow !text-[var(--text-secondary)] px-4 py-2.5"
-                    >
-                      {label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {inStock.map((offer, index) => {
-                  const best = index === 0;
-                  return (
-                    <tr
-                      key={offer.id}
-                      className={
-                        "border-b border-line last:border-0 " +
-                        (best
-                          ? "bg-brand-soft shadow-[inset_2px_0_0_var(--green-700)]"
-                          : "")
-                      }
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          <Link
-                            href={`/sellers/${offer.seller.slug}`}
-                            className="text-[14px] font-semibold text-primary no-underline hover:text-brand"
-                          >
-                            {offer.seller.name}
-                          </Link>
-                          <TrustBadge
-                            state={TIER_STATE[offer.seller.tier]}
-                            label={tsel(
-                              offer.seller.tier === "authorised"
-                                ? "tierAuthorised"
-                                : offer.seller.tier === "verified"
-                                  ? "tierVerified"
-                                  : "tierNew",
-                            )}
-                            title={tsel(
-                              offer.seller.tier === "authorised"
-                                ? "tierAuthorisedNote"
-                                : offer.seller.tier === "verified"
-                                  ? "tierVerifiedNote"
-                                  : "tierNewNote",
-                            )}
-                          />
-                          {offer.promoted && (
-                            <Badge tone="neutral">{te("promoted")}</Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {offer.condition === "new" ? (
-                          <span className="text-body-sm text-ink-700">
-                            {te("conditionNew")}
-                          </span>
-                        ) : (
-                          <Badge tone="used">
-                            {te(CONDITION_MESSAGE_KEY[offer.condition])}
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[13px] tabular-nums text-primary">
-                        {offer.variant.weightClass} {offer.variant.gripSize}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StockLabel
-                          qty={offer.qtyAvailable}
-                          labels={{
-                            inStock: (count) => tk("inStock", { count }),
-                            inStockMany: tk("inStockMany"),
-                            left: (count) => tk("left", { count }),
-                            outOfStock: tk("outOfStock"),
-                          }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="price text-[17px] text-primary">
-                          {formatDong(offer.price)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/sellers/${offer.seller.slug}`}
-                          className={
-                            "inline-flex h-11 items-center justify-center rounded-md border px-3.5 lg:h-[38px] " +
-                            "text-[13.5px] font-semibold no-underline transition-colors duration-[90ms] " +
-                            (best
-                              ? "border-transparent bg-[var(--action-primary-bg)] text-[var(--text-on-brand)] hover:bg-[var(--action-primary-bg-hover)]"
-                              : "border-line-strong bg-card text-primary hover:bg-sunken")
-                          }
-                        >
-                          {tc("view")}
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ------------------------------------------- price history + reviews */}
-      <div className="mt-12 grid gap-8 lg:grid-cols-[1.4fr_1fr] lg:gap-10">
-        {price && (
-          <section aria-labelledby="history">
-            <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
-              <Eyebrow as="h2">
-                <span id="history">{t("priceHistory")}</span>
-              </Eyebrow>
-              <span className="font-mono text-[12px] tabular-nums text-tertiary">
-                {t("priceHistoryMeta", {
-                  days: 90,
-                  count: offers.length,
-                  variant: variantCode,
-                })}
-              </span>
-            </div>
-
-            <Card padding="md">
-              <div className="mb-3 flex flex-wrap items-baseline gap-4">
-                <span className="price text-price-hero font-bold text-primary">
-                  {formatDong(price.latest)}
-                </span>
-                <PriceDelta amount={price.delta90} period="90d" size="md" />
-                <span className="ml-auto font-mono text-[11px] tabular-nums text-tertiary">
-                  {t("median", { price: formatDong(price.median30) })}
-                </span>
+          <section id="offers" className="scroll-mt-24" aria-labelledby="offers-heading">
+            <Card padding="none" className="overflow-hidden">
+              <div className="border-b border-line px-4 py-3.5">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <h2 id="offers-heading" className="font-display text-[17px] font-bold text-primary">
+                    {t("whereToBuy")}
+                  </h2>
+                  {lowestOffer && (
+                    <span className="font-mono text-[11px] tabular-nums text-tertiary">
+                      {t("offersMeta", {
+                        sellers: new Set(inStock.map((offer) => offer.sellerId)).size,
+                        price: formatDong(lowestOffer.price),
+                      })}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-tertiary">
+                  {t("offersNote")}
+                </p>
               </div>
 
-              <PriceHistory
-                data={price.points.map((point) => point.price)}
-                variant="full"
-                median={price.median30}
-                animate
-              />
-
-              {marketNote && (
-                <div className="mt-3 flex items-start gap-2.5 border-t border-line pt-3 text-[13px] text-secondary">
-                  <Icon name="Info" size="sm" className="mt-0.5" />
-                  {marketNote}
+              {inStock.length === 0 ? (
+                <div className="px-4 py-6">
+                  <p className="text-[14px] font-semibold text-primary">{t("noOffersTitle")}</p>
+                  <p className="mt-1 text-body-sm text-secondary">{t("noOffersBody")}</p>
+                </div>
+              ) : (
+                <div>
+                  {inStock.map((offer, index) => {
+                    const best = index === 0;
+                    return (
+                      <div
+                        key={offer.id}
+                        className={
+                          "grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-line px-4 py-3.5 last:border-0 " +
+                          (best ? "bg-brand-soft" : "")
+                        }
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Link
+                              href={`/sellers/${offer.seller.slug}`}
+                              className="text-[14px] font-semibold text-primary no-underline hover:text-brand"
+                            >
+                              {offer.seller.name}
+                            </Link>
+                            <TrustBadge
+                              state={TIER_STATE[offer.seller.tier]}
+                              label={tsel(
+                                offer.seller.tier === "authorised"
+                                  ? "tierAuthorised"
+                                  : offer.seller.tier === "verified"
+                                    ? "tierVerified"
+                                    : "tierNew",
+                              )}
+                              title={tsel(
+                                offer.seller.tier === "authorised"
+                                  ? "tierAuthorisedNote"
+                                  : offer.seller.tier === "verified"
+                                    ? "tierVerifiedNote"
+                                    : "tierNewNote",
+                              )}
+                            />
+                            {offer.promoted && <Badge tone="neutral">{te("promoted")}</Badge>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-tertiary">
+                            <span>
+                              {offer.condition === "new"
+                                ? te("conditionNew")
+                                : te(CONDITION_MESSAGE_KEY[offer.condition])}
+                            </span>
+                            <span aria-hidden>·</span>
+                            <span className="font-mono tabular-nums text-secondary">
+                              {offer.variant.weightClass} {offer.variant.gripSize}
+                            </span>
+                            <span aria-hidden>·</span>
+                            <StockLabel
+                              qty={offer.qtyAvailable}
+                              labels={{
+                                inStock: (count) => tk("inStock", { count }),
+                                inStockMany: tk("inStockMany"),
+                                left: (count) => tk("left", { count }),
+                                outOfStock: tk("outOfStock"),
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end justify-between gap-2">
+                          <span className="price whitespace-nowrap text-[17px] text-primary">
+                            {formatDong(offer.price)}
+                          </span>
+                          <Link
+                            href={`/sellers/${offer.seller.slug}`}
+                            className={ButtonLinkStyle({
+                              variant: best ? "primary" : "secondary",
+                              size: "sm",
+                            })}
+                          >
+                            {tc("view")}
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </Card>
           </section>
-        )}
 
-        <section aria-labelledby="reviews">
-          <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
-            <Eyebrow as="h2">
-              <span id="reviews">{t("reviews")}</span>
-            </Eyebrow>
-            <span className="font-mono text-[12px] tabular-nums text-tertiary">
-              {t("reviewsVerified", { count: racket.reviewCount })}
-            </span>
-          </div>
-
-          {reviews.length === 0 ? (
-            <EmptyState title={t("noReviewsTitle")} body={t("noReviewsBody")} />
-          ) : (
-            <div className="flex flex-col gap-3">
-              {reviews.slice(0, 3).map((review) => (
-                <ReviewCard key={review.id} review={review} locale={locale} />
-              ))}
-              {reviews.length > 3 && (
-                <span className="text-body-sm font-semibold text-brand">
-                  {t("readAllReviews", { count: reviews.length })}
-                </span>
-              )}
-              {reviews.length < MIN_REVIEWS_FOR_PLAYER_SCORE && (
-                <p className="text-caption text-tertiary">
-                  {t("specOnlyNote", { count: reviews.length })}
-                </p>
-              )}
-            </div>
+          {price && (
+            <section aria-labelledby="history">
+              <Card padding="md">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <h2 id="history" className="font-display text-[17px] font-bold text-primary">
+                    {t("priceHistory")}
+                  </h2>
+                  <span className="ml-auto font-mono text-[11px] tabular-nums text-tertiary">
+                    {t("priceHistoryMeta", {
+                      days: 90,
+                      count: offers.length,
+                      variant: variantCode,
+                    })}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-baseline gap-3">
+                  <span className="price text-[25px] font-bold text-primary">
+                    {formatDong(price.latest)}
+                  </span>
+                  <PriceDelta amount={price.delta90} period="90d" />
+                </div>
+                <div className="mt-3">
+                  <PriceHistory
+                    data={price.points.map((point) => point.price)}
+                    variant="full"
+                    median={price.median30}
+                    height={112}
+                    animate
+                  />
+                </div>
+                {marketNote && (
+                  <div className="mt-3 flex items-start gap-2 border-t border-line pt-3 text-[12px] text-secondary">
+                    <Icon name="Info" size="sm" className="mt-0.5" />
+                    {marketNote}
+                  </div>
+                )}
+              </Card>
+            </section>
           )}
-        </section>
+        </aside>
       </div>
 
-      {/* ---------------------------------------------------------- similar */}
-      <section className="mt-12" aria-labelledby="similar">
-        <Eyebrow as="h2">
-          <span id="similar">{t("similar")}</span>
-        </Eyebrow>
-        <div className="mt-3.5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mt-10" aria-labelledby="similar">
+        <h2 id="similar" className="font-display text-h3 font-bold text-primary">
+          {t("similar")}
+        </h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {similar.map((other) => (
-            <Link
-              key={other.id}
-              href={`/rackets/${other.brandSlug}/${other.slug}`}
-              className="flex items-center gap-3.5 rounded-md border border-line bg-card px-4 py-3 no-underline
-                transition-colors duration-[90ms] hover:border-line-strong"
-            >
-              <span className="aspect-square w-14 shrink-0 rounded-md bg-sunken" />
-              <span className="min-w-0">
-                <span className="block truncate text-[14px] font-semibold text-primary">
-                  {other.name}
-                </span>
-                <span className="block font-mono text-[11px] tabular-nums text-tertiary">
-                  {other.balancePointMm} mm ·{" "}
-                  {other.courtScore === null ? "—" : `${other.courtScore}/100`} ·{" "}
-                  {formatDong(other.lowestPrice ?? other.msrp)}
-                </span>
-              </span>
-            </Link>
+            <RacketCard key={other.id} racket={other} compact />
           ))}
         </div>
+      </section>
+
+      <StringRecommender
+        racketName={racket.name}
+        maxTension={racket.maxTensionLbs}
+        initialSkill={racket.skillLevel}
+        initialStyle={racket.playStyleTags[0] ?? "all-round"}
+      />
+
+      <section className="mt-10" aria-labelledby="reviews">
+        <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
+          <Eyebrow as="h2">
+            <span id="reviews">{t("reviews")}</span>
+          </Eyebrow>
+          <span className="font-mono text-[12px] tabular-nums text-tertiary">
+            {t("reviewsVerified", { count: racket.reviewCount })}
+          </span>
+        </div>
+
+        {reviews.length === 0 ? (
+          <EmptyState title={t("noReviewsTitle")} body={t("noReviewsBody")} />
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-3">
+            {reviews.slice(0, 3).map((review) => (
+              <ReviewCard key={review.id} review={review} locale={locale} />
+            ))}
+          </div>
+        )}
+        {reviews.length > 3 && (
+          <p className="mt-3 text-body-sm font-semibold text-brand">
+            {t("readAllReviews", { count: reviews.length })}
+          </p>
+        )}
+        {reviews.length < MIN_REVIEWS_FOR_PLAYER_SCORE && (
+          <p className="mt-2 text-caption text-tertiary">
+            {t("specOnlyNote", { count: reviews.length })}
+          </p>
+        )}
       </section>
 
       {lowestOffer && (
