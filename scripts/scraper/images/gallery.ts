@@ -314,6 +314,43 @@ export function parseWooProductJson(body: string, pageUrl: string): GalleryImage
   return dedupe(images);
 }
 
+/**
+ * Read the standard WooCommerce product gallery from rendered HTML.
+ *
+ * This path matters on CI networks where a WordPress firewall rejects
+ * `/wp-json/` while continuing to serve the public category and product pages.
+ * It is deliberately scoped to WooCommerce's gallery wrapper, so technology
+ * icons, related products and footer logos can never become racket photos.
+ */
+export const woocommerceHtmlGallery: GalleryExtractor = (html, pageUrl) => {
+  const $ = cheerio.load(html);
+  const images: GalleryImage[] = [];
+
+  $(".woocommerce-product-gallery__image").each((_, el) => {
+    const $slide = $(el);
+    const $image = $slide.find("img").first();
+    const candidates = [
+      $image.attr("data-large_image"),
+      $slide.find("a[href]").first().attr("href"),
+      $image.attr("data-src"),
+      $image.attr("src"),
+    ];
+
+    for (const candidate of candidates) {
+      const url = absolute(candidate ?? "", pageUrl);
+      if (!isPlausible(url)) continue;
+      images.push({
+        url,
+        position: images.length,
+        caption: $image.attr("data-caption") || $image.attr("alt") || undefined,
+      });
+      break;
+    }
+  });
+
+  return dedupe(images);
+};
+
 /* ------------------------------------------------------- schema.org / OG */
 
 /**

@@ -227,8 +227,23 @@ export function compare(modelTokens: string[], candidateSlug: string, brandToken
  * about which product this is.
  */
 function filterFurniture(candidateTokens: string[], brandTokens: string[]): string[] {
-  const brand = new Set(brandTokens);
-  return candidateTokens.filter((token) => !brand.has(token) && !FURNITURE.has(token));
+  let remaining = candidateTokens.filter((token) => !FURNITURE.has(token));
+  const brand = brandTokens.filter((token) => !FURNITURE.has(token));
+  if (brand.length === 0 || remaining.length < brand.length) return remaining;
+
+  // A brand is template furniture only when its complete name appears as one
+  // run at an edge. Removing individual brand words everywhere breaks brands
+  // whose name overlaps a model: with brand "Pro Kennex", "Power Pro 704"
+  // used to lose its model's `pro` token and could never match its own page.
+  const startsWithBrand = brand.every((token, index) => remaining[index] === token);
+  if (startsWithBrand) remaining = remaining.slice(brand.length);
+
+  const suffixStart = remaining.length - brand.length;
+  const endsWithBrand =
+    suffixStart >= 0 && brand.every((token, index) => remaining[suffixStart + index] === token);
+  if (endsWithBrand) remaining = remaining.slice(0, suffixStart);
+
+  return remaining;
 }
 
 function compareTokens(

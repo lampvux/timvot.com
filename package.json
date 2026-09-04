@@ -32,6 +32,7 @@
     "migrate:dry": "tsx scripts/migrate.ts --dry-run",
     "scrape:images": "tsx scripts/scraper/images/index.ts",
     "scrape:images:dry": "tsx scripts/scraper/images/index.ts --dry-run --from-file",
+    "test:image-scraper": "tsx --test scripts/scraper/images/*.test.ts",
     "images:audit": "tsx scripts/scraper/images/audit.ts",
     "images:thumbs": "tsx scripts/scraper/images/backfill-thumbnails.ts"
   },
