@@ -1,9 +1,9 @@
 /**
- * Building each provider's candidate URL list from its sitemap.
+ * Building each provider's candidate URL list from its declared catalogue.
  *
- * One request per sitemap per run, cached on disk between runs. The alternative
- * — hitting the site's search once per racket — is both forbidden by these
- * sites' robots.txt and roughly six hundred requests where this is two.
+ * Results are cached on disk between runs. The alternative — hitting the site's
+ * search once per racket — is both forbidden by these sites' robots.txt and
+ * roughly six hundred requests where a catalogue walk is a bounded operation.
  *
  * Index sitemaps are followed one level, which is enough for both providers and
  * is where it stops on purpose: a sitemap that points at sitemaps that point at
@@ -15,7 +15,15 @@ import { gunzipSync } from "node:zlib";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { cleanText, fetchWithRetry, fetchBinary, HTML_HEADERS, JSON_HEADERS, sleep } from "../http";
+import {
+  cleanText,
+  fetchWithRetry,
+  fetchBinary,
+  HTML_HEADERS,
+  JSON_HEADERS,
+  pool,
+  sleep,
+} from "../http";
 import { isAllowed, robotsFor, type RobotsPolicy } from "../robots";
 import { slugOfUrl, type MatchCandidate } from "./match";
 import { slugify } from "../normalizer";
@@ -193,6 +201,150 @@ async function discoverWooCommerceApi(
   }
 
   return { candidates: [...byUrl.values()], urlsSeen: seen };
+}
+
+interface WooCategoryTreePage {
+  categoryUrls: string[];
+  paginationUrls: string[];
+  products: { url: string; title: string }[];
+}
+
+function canonicalUrl(raw: string, pageUrl: string): string | null {
+  try {
+    const url = new URL(raw, pageUrl);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse one rendered WooCommerce category page.
+ *
+ * Only category and product *cards* are read. APACS also renders a complete
+ * category sidebar on every leaf and related-product cards on detail pages;
+ * broad anchor selectors would turn either one into a crawl loop or attribute
+ * another racket's page to the current model.
+ */
+export function parseWooCategoryTreePage(
+  html: string,
+  pageUrl: string,
+  rootUrl: string,
+): WooCategoryTreePage {
+  const $ = cheerio.load(html);
+  const root = new URL(rootUrl);
+  const categoryUrls = new Set<string>();
+  const paginationUrls = new Set<string>();
+  const products = new Map<string, string>();
+
+  const belowRoot = (raw: string): string | null => {
+    const absolute = canonicalUrl(raw, pageUrl);
+    if (!absolute) return null;
+    const url = new URL(absolute);
+    if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname)) return null;
+    return absolute;
+  };
+
+  $("li.product-category.product > a[href], li.product-category > a[href]").each((_, element) => {
+    const url = belowRoot($(element).attr("href") ?? "");
+    if (url) categoryUrls.add(url);
+  });
+
+  $("nav.woocommerce-pagination a[href]").each((_, element) => {
+    const url = belowRoot($(element).attr("href") ?? "");
+    if (url) paginationUrls.add(url);
+  });
+
+  $("li.product.type-product").each((_, element) => {
+    const card = $(element);
+    const link = card
+      .find(
+        'h2 a[href*="/product/"], h3 a[href*="/product/"], ' +
+          'h4 a[href*="/product/"], .product-item-info a[href*="/product/"]',
+      )
+      .first();
+    const rawUrl = link.attr("href") ?? card.find('a[href*="/product/"]').first().attr("href");
+    if (!rawUrl) return;
+
+    const absolute = canonicalUrl(rawUrl, pageUrl);
+    if (!absolute) return;
+    const url = new URL(absolute);
+    if (url.origin !== root.origin || !/^\/product\/[^/]+\/?$/i.test(url.pathname)) return;
+
+    const title = cleanText(
+      link.text() ||
+        card.find(".woocommerce-loop-product__title, h2, h3, h4").first().text() ||
+        url.pathname.split("/").filter(Boolean).pop() ||
+        "",
+    );
+    if (title && !products.has(absolute)) products.set(absolute, title);
+  });
+
+  return {
+    categoryUrls: [...categoryUrls],
+    paginationUrls: [...paginationUrls],
+    products: [...products].map(([url, title]) => ({ url, title })),
+  };
+}
+
+/** Walk a multi-level WooCommerce category tree until every product card is found. */
+async function discoverWooCategoryTree(
+  provider: ProviderConfig,
+  source: Extract<CatalogueSource, { kind: "woocommerce-category-tree" }>,
+  options: DiscoverOptions,
+  robots: RobotsPolicy,
+): Promise<{ candidates: MatchCandidate[]; urlsSeen: number }> {
+  const headers = { ...HTML_HEADERS, "User-Agent": options.userAgent };
+  const delayMs = Math.max(options.delayMs, provider.politenessMs ?? 0, robots.crawlDelayMs);
+  const rootUrl = canonicalUrl(source.url, source.url);
+  if (!rootUrl) throw new Error(`invalid category root ${source.url}`);
+
+  const queued = new Set<string>([rootUrl]);
+  const visited = new Set<string>();
+  const byUrl = new Map<string, MatchCandidate>();
+  const concurrency = Math.max(1, Math.min(source.concurrency ?? 2, 4));
+
+  while (queued.size > 0) {
+    const wave = [...queued].filter((url) => !visited.has(url));
+    queued.clear();
+    if (wave.length === 0) break;
+    if (visited.size + wave.length > source.maxPages) {
+      throw new Error(`category walk exceeded ${source.maxPages} pages`);
+    }
+
+    const pages = await pool(wave, concurrency, delayMs, async (url) => {
+      if (!isAllowed(robots, url)) return { url, parsed: null };
+      const res = await fetchWithRetry(url, { headers, timeoutMs: options.timeoutMs });
+      if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+      return { url, parsed: parseWooCategoryTreePage(res.body, url, rootUrl) };
+    });
+
+    for (const { url, parsed } of pages) {
+      visited.add(url);
+      if (!parsed) continue;
+
+      for (const next of [...parsed.categoryUrls, ...parsed.paginationUrls]) {
+        if (!visited.has(next)) queued.add(next);
+      }
+      for (const product of parsed.products) {
+        if (byUrl.has(product.url)) continue;
+        byUrl.set(product.url, {
+          url: product.url,
+          slug: slugOfUrl(product.url),
+          title: cleanTitle(product.title, product.url, provider),
+        });
+      }
+    }
+
+    if (options.verbose) {
+      console.log(
+        `   [${provider.id}] category tree: ${visited.size} pages, ${byUrl.size} products`,
+      );
+    }
+  }
+
+  return { candidates: [...byUrl.values()], urlsSeen: byUrl.size };
 }
 
 /**
@@ -758,6 +910,8 @@ function runSource(
       return discoverSitemap(provider, source, options, robots);
     case "woocommerce-store":
       return discoverWooCommerce(provider, source, options, robots);
+    case "woocommerce-category-tree":
+      return discoverWooCategoryTree(provider, source, options, robots);
     case "shopify-collection":
       return discoverShopify(provider, source, options);
     case "category-pagination":

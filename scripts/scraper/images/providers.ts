@@ -14,9 +14,10 @@
  * URL, first source winning, so a product the storefront API named keeps that
  * name when a sitemap later rediscovers the same URL with nothing but a slug.
  *
- *   woocommerce-store    apacs        name + full gallery from the Store API
- *                        pro-kennex   same, with rendered-HTML fallback for CI
- *                        kumpoo-vn
+ *   woocommerce-category-tree
+ *                        apacs        recursive tier/family HTML catalogue
+ *   woocommerce-store    apacs        hidden-but-live products omitted from cards
+ *                        kumpoo-vn    name + full gallery from the Store API
  *   shopify-collection   mizuno       name + full gallery from products.json
  *                        mizuno-vn
  *                        yonex-uk
@@ -159,6 +160,7 @@ import {
   magentoGallery,
   nextDataGallery,
   shopifyGallery,
+  wooCommerceGallery,
   metaVnGallery,
   structuredDataGallery,
   woocommerceHtmlGallery,
@@ -245,6 +247,23 @@ export type CatalogueSource =
        * are the ones whose copy and photography have gone stale.
        */
       inStockOnly?: boolean;
+    }
+  | {
+      /**
+       * Recursively walk a WooCommerce category tree rendered as HTML.
+       *
+       * Some catalogues do not put products on the configured root page. The
+       * root contains tiers, the tiers contain product families, and only the
+       * family pages contain product cards. This source follows those category
+       * cards until it reaches every product page, including listing pagination.
+       */
+      kind: "woocommerce-category-tree";
+      /** Root category URL. Descendant category links must remain below it. */
+      url: string;
+      /** Safety stop for a cyclic or unexpectedly broad taxonomy. */
+      maxPages: number;
+      /** Maximum category pages fetched at once from this origin. */
+      concurrency?: number;
     }
   | {
       kind: "shopify-collection";
@@ -432,7 +451,7 @@ export const EXTRACTORS: Record<ProviderPlatform, GalleryExtractor[]> = {
   magento: [magentoGallery, structuredDataGallery],
   "next-data": [nextDataGallery, structuredDataGallery],
   shopify: [shopifyGallery, structuredDataGallery],
-  woocommerce: [woocommerceHtmlGallery, structuredDataGallery],
+  woocommerce: [wooCommerceGallery, woocommerceHtmlGallery, structuredDataGallery],
   "structured-data": [structuredDataGallery],
   // Never reached: a browser provider's gallery comes from `BrowserSession`,
   // not from parsing served HTML. Declared so the record stays total.
@@ -676,10 +695,23 @@ export const PROVIDERS: ProviderConfig[] = [
     origin: "https://apacssports.com",
     brandSlugs: ["apacs"],
     platform: "woocommerce",
-    // 453 rackets, 5 requests, every gallery attached — and the shop files them
-    // under a category that means exactly what we want, so no classifier is
-    // needed to keep the overgrips and shoes out.
-    catalogue: { kind: "woocommerce-store", categorySlugs: ["badminton-rackets"], pageSize: 100 },
+    // The root page contains nine playing-level categories, each of those
+    // contains racket-family categories, and only the family pages contain
+    // product cards. Follow the rendered taxonomy rather than assuming the
+    // parent category behaves like a flat Store API collection.
+    catalogue: [
+      {
+        kind: "woocommerce-category-tree",
+        url: "https://apacssports.com/product-category/badminton/badminton-rackets/",
+        maxPages: 300,
+        concurrency: 3,
+      },
+      // Twelve older products still have live detail pages and remain assigned
+      // to the racket taxonomy, but APACS hides them from the rendered cards.
+      // The Store API closes that gap. HTML is first so visible products still
+      // fetch their own full detail-page galleries; first source wins by URL.
+      { kind: "woocommerce-store", categorySlugs: ["badminton-rackets"], pageSize: 100 },
+    ],
     politenessMs: 300,
   },
   {

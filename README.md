@@ -415,7 +415,8 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 
 | Source | Used by | What it gives |
 | ------ | ------- | ------------- |
-| `woocommerce-store` | apacs, pro-kennex, kumpoo-vn | Name + full gallery from the shop's Store API. ProKennex falls back to its two public HTML catalogue pages when CI cannot reach WordPress JSON. |
+| `woocommerce-category-tree` | apacs | Recursively follows level → family → product cards and then reads each matched detail-page gallery. |
+| `woocommerce-store` | apacs, kumpoo-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
 | `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn | Name + full gallery from `products.json`. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
 | `category-pagination` | yonex, gosen-vn, meta-vn | The rendered "all racquets" listing, walked `?p=1…N`. The only way in when a site has no API and no sitemap. |
@@ -426,6 +427,14 @@ Search is never used: yonex.com disallows `/catalogsearch/` and victorsport.com 
 `/search`. `scripts/scraper/robots.ts` reads and caches each origin's robots.txt, honours
 `Crawl-delay`, and the crawler identifies itself as `ShuttlecraftImageBot/1.0` rather than
 pretending to be Chrome the way the retailer scrapers do.
+
+**Apacs is a category tree, not a flat listing.** The racket root contains nine playing
+levels, each level contains racket families, and the family pages contain the product
+cards. The recursive HTML source walks all three levels and listing pagination. Its Store
+API is merged second because 12 older products retain live detail pages and racket-category
+assignments but are no longer rendered as cards; together the two sources return all 453
+product pages. On detail pages the crawler reads only WooCommerce's own gallery wrappers
+and their `data-large_image` originals, excluding related-product thumbnails and swatches.
 
 **The category listing beats the sitemap, where there is one.** Yonex's sitemap was the
 original source here and it was the wrong one: it lists root-level marketing pages

@@ -3,12 +3,13 @@
  *
  * Every extractor here reads *structured* data the page already carries for its
  * own front end — Magento's gallery init block, Victor's `__NEXT_DATA__`,
- * Shopify's product JSON, schema.org markup. None of them scrape `<img>` tags,
- * and that is the whole point: a product page is 60–80 images, of which six are
- * the product and the rest are the nav logo, four technology diagrams, ten
- * "you may also like" thumbnails and a payment-provider strip. Harvesting every
- * `<img>` would fill the bucket with other rackets' photographs filed under
- * this racket's id, which is worse than having no gallery at all.
+ * Shopify's product JSON, schema.org markup, or a platform-owned gallery
+ * container. None of them harvest arbitrary `<img>` tags, and that is the whole
+ * point: a product page is 60–80 images, of which six are the product and the
+ * rest are the nav logo, four technology diagrams, ten "you may also like"
+ * thumbnails and a payment-provider strip. Harvesting every `<img>` would fill
+ * the bucket with other rackets' photographs filed under this racket's id,
+ * which is worse than having no gallery at all.
  *
  * The last resort, `structuredData`, is still structured: schema.org `Product`
  * or OpenGraph, both of which name the product's own images explicitly.
@@ -346,6 +347,45 @@ export const woocommerceHtmlGallery: GalleryExtractor = (html, pageUrl) => {
       });
       break;
     }
+    });
+      return dedupe(images);
+};
+/**
+ * Read the full-resolution files declared by a WooCommerce product gallery.
+ *
+ * APACS' schema.org Product block names only the hero, while the gallery's own
+ * `data-large_image` attributes name every original upload. The selector is
+ * deliberately limited to WooCommerce's product-gallery wrappers: related
+ * products, colour swatches, specification art and the page chrome also contain
+ * `<img>` tags, but none of them belong to this collection.
+ */
+export const wooCommerceGallery: GalleryExtractor = (html, pageUrl) => {
+  const $ = cheerio.load(html);
+  const images: GalleryImage[] = [];
+
+  $(
+    ".woocommerce-product-gallery__image img, " +
+      ".woocommerce-product-gallery .wvg-gallery-image img, " +
+      ".woo-variation-gallery-wrapper .wvg-gallery-image img",
+  ).each((_, element) => {
+    const image = $(element);
+    const raw =
+      image.attr("data-large_image") ?? image.attr("data-src") ?? image.attr("src") ?? "";
+    // The theme ships an Underscore template containing `{{data.full_src}}` on
+    // every page. Cheerio normally leaves script contents inert, but refusing
+    // template tokens here makes that boundary explicit.
+    if (!raw || /\{[{#]/.test(raw)) return;
+
+    const url = absolute(raw, pageUrl);
+    if (!isPlausible(url)) return;
+
+    const caption =
+      image.attr("data-caption") || image.attr("title") || image.attr("alt") || undefined;
+    images.push({
+      url,
+      position: images.length,
+      caption: caption ? decodeEntities(caption) : undefined,
+    });
   });
 
   return dedupe(images);
