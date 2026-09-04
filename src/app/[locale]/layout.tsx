@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { routing } from "@/i18n/routing";
 import { fontVariables } from "@/app/fonts";
 import { AccountSlot } from "@/components/auth-slot";
@@ -59,6 +60,11 @@ export default async function LocaleLayout({
       <body className="min-h-dvh">
         <Suspense fallback={null}>
           <NavigationProgress />
+        </Suspense>
+        {/* Reads the URL through client hooks, so it stays behind a boundary
+            rather than blocking the static shell of every route. */}
+        <Suspense fallback={null}>
+          <SpeedInsights />
         </Suspense>
         <NextIntlClientProvider>
           <CompareProvider>

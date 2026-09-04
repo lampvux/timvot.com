@@ -37,6 +37,43 @@ export function formatTension([min, max]: [number, number]): string {
   return `${min} – ${max} lbs`;
 }
 
+/**
+ * Tension is stored in pounds everywhere (`maxTensionLbs`, `tensionLbs`)
+ * because that is the unit manufacturers publish. Vietnamese stringers work
+ * in kilograms, so the unit shown is a display decision made here and nowhere
+ * else — never a second stored value.
+ */
+const KG_PER_LB = 0.45359237;
+
+export function tensionUnit(locale: string): "kg" | "lbs" {
+  return locale === "vi" ? "kg" : "lbs";
+}
+
+/** The number alone, so a range can carry one unit at the end. */
+function tensionAmount(lbs: number, locale: string): string {
+  if (tensionUnit(locale) === "lbs") return `${lbs}`;
+  // One decimal: a stringing machine's dial reads to 0.1 kg, and rounding
+  // 20 lbs to a whole 9 kg would move the recommendation by over a pound.
+  return (Math.round(lbs * KG_PER_LB * 10) / 10).toLocaleString(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+/** A single tension with its unit — "24 lbs" in en, "10,9 kg" in vi. */
+export function formatTensionValue(lbs: number, locale: string): string {
+  return `${tensionAmount(lbs, locale)} ${tensionUnit(locale)}`;
+}
+
+/** A tension range with one unit — "20 – 22 lbs" in en, "9,1 – 10,0 kg" in vi. */
+export function formatTensionRange(
+  [min, max]: [number, number],
+  locale: string,
+): string {
+  if (min === max) return formatTensionValue(min, locale);
+  return `${tensionAmount(min, locale)} – ${tensionAmount(max, locale)} ${tensionUnit(locale)}`;
+}
+
 export function balanceTypeOf(mm: number): BalanceType {
   if (mm < EVEN_BAND_MIN_MM) return "head-light";
   if (mm > EVEN_BAND_MAX_MM) return "head-heavy";

@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Check, CircleGauge, Sparkles } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
+import { formatTensionRange, formatTensionValue } from "@/lib/format";
 import type { PlayStyle, SkillLevel } from "@/lib/types";
 
 type StringChoice = {
@@ -57,6 +58,7 @@ export function StringRecommender({
   initialSkill: SkillLevel;
   initialStyle: PlayStyle;
 }) {
+  const locale = useLocale();
   const t = useTranslations("stringRecommender");
   const te = useTranslations("enums");
   const [skill, setSkill] = useState(initialSkill);
@@ -72,8 +74,10 @@ export function StringRecommender({
     const racketCeiling = Math.max(...maxTension);
     const low = Math.min(preferred[skill][0], racketCeiling);
     const high = Math.min(preferred[skill][1], racketCeiling);
-    return { ...string, tension: low === high ? `${high}` : `${low}–${high}` };
-  }, [maxTension, skill, style]);
+    // Clamping stays in pounds — that is the unit the racket publishes. Only
+    // the display unit follows the locale.
+    return { ...string, tension: formatTensionRange([low, high], locale) };
+  }, [locale, maxTension, skill, style]);
 
   const skillLabel = (value: SkillLevel) =>
     te(
@@ -161,11 +165,11 @@ export function StringRecommender({
             <CircleGauge aria-hidden className="text-green-700" size={22} strokeWidth={1.75} />
             <div>
               <p className="text-[12px] font-medium text-secondary">{t("tension")}</p>
-              <p className="font-mono text-[18px] font-semibold tabular-nums text-primary">{recommendation.tension} lbs</p>
+              <p className="font-mono text-[18px] font-semibold tabular-nums text-primary">{recommendation.tension}</p>
             </div>
           </div>
           <p className="mt-4 text-body-sm text-secondary">{t(`reason.${style}`, { skill: skillLabel(skill).toLowerCase() })}</p>
-          <p className="mt-3 text-[11.5px] leading-relaxed text-tertiary">{t("safety", { max: Math.max(...maxTension) })}</p>
+          <p className="mt-3 text-[11.5px] leading-relaxed text-tertiary">{t("safety", { max: formatTensionValue(Math.max(...maxTension), locale) })}</p>
           <Link href={`/strings/${recommendation.brandSlug}/${recommendation.stringSlug}`} className="mt-4 inline-flex min-h-11 items-center font-semibold no-underline hover:underline">
             {t("comparePrices")}
           </Link>

@@ -143,7 +143,7 @@
       "defence": "Cước nảy với cảm giác mềm hơn giúp người chơi {skill} nâng cầu và phản tạt nhẹ nhàng hơn.",
       "control": "Cước lai có bề mặt nhám giúp người chơi {skill} giữ cầu tốt hơn khi cắt, bỏ nhỏ và điều cầu."
     },
-    "safety": "Đề xuất này không vượt quá giới hạn {max} lbs của vợt. Hãy nhờ thợ căng điều chỉnh theo tình trạng vợt, khí hậu và bảo hành.",
+    "safety": "Đề xuất này không vượt quá giới hạn {max} của vợt. Hãy nhờ thợ căng điều chỉnh theo tình trạng vợt, khí hậu và bảo hành.",
     "comparePrices": "Xem thông số và so sánh giá"
   },
   "strings": {
