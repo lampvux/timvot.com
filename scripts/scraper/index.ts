@@ -11,6 +11,15 @@ import { normalizeScrapedProduct, slugify, type NormalizedItem } from "./normali
 import { canonicalName } from "./colourway";
 import { verifyScrape, printVerificationReport, type SiteVerification } from "./verify";
 import { revalidateCatalogue } from "./revalidate";
+import { describeBudget, walkSites } from "./guard";
+import {
+  annotateSkippedSites,
+  renderConsoleSummary,
+  renderRunSummary,
+  runVerdict,
+  siteStatus,
+  writeStepSummary,
+} from "./report";
 import type { ScraperResult, ScrapedProduct, ScraperSource, ScraperOptions } from "./types";
 
 const ALL_SOURCES: ScraperSource[] = ["vnb", "qvbadminton", "fbshop", "hvshop", "shopee"];
@@ -42,6 +51,10 @@ interface CliOptions {
   retireStale: boolean;
   /** Retire even when the sweep would pause most of a seller's catalogue. */
   forceRetire: boolean;
+  /** Per-shop budget in ms. `Infinity` waits for as long as a shop takes. */
+  siteTimeoutMs: number;
+  /** Go red the moment any one shop fails, the way the run used to. */
+  failOnSiteError: boolean;
 }
 
 function parseArgs(): CliOptions {
@@ -87,6 +100,17 @@ function parseArgs(): CliOptions {
     // everything is "missing", and sweeping would pause the whole catalogue.
     retireStale: !flags.pages && flags["no-retire"] !== true,
     forceRetire: flags["force-retire"] === true,
+    // A shop that stops answering mid-walk blocks every shop queued behind it
+    // for as long as its own retries last, which on a bad night is longer than
+    // the whole run. 30 minutes is several times the slowest healthy walk.
+    // `--site-timeout=0` waits indefinitely.
+    siteTimeoutMs: (() => {
+      if (flags["site-timeout"] === undefined) return 30 * 60 * 1000;
+      const seconds = parseInt(String(flags["site-timeout"]), 10);
+      if (!Number.isFinite(seconds) || seconds <= 0) return Infinity;
+      return seconds * 1000;
+    })(),
+    failOnSiteError: flags["fail-on-site-error"] === true,
   };
 }
 
@@ -259,34 +283,34 @@ export async function runScrapers() {
         : ""),
   );
   console.log(`Output      : ${options.outFile ?? "none"}`);
+  console.log(
+    `Per shop    : ${
+      Number.isFinite(options.siteTimeoutMs)
+        ? `${describeBudget(options.siteTimeoutMs)} budget, then skipped`
+        : "no time limit"
+    }` +
+      (options.failOnSiteError
+        ? " (one failure fails the run)"
+        : " (a failure skips that shop only)"),
+  );
   console.log("=================================================\n");
 
-  const results: ScraperResult[] = [];
-
-  for (const source of options.sites) {
-    console.log(`🔄 [${source.toUpperCase()}] scraping…`);
-    const result = await runSite(source, {
-      maxPages: options.maxPages,
-      verbose: options.verbose,
-      concurrency: options.concurrency,
-      delayMs: options.delayMs,
-    });
-    results.push(result);
-
-    const seconds = (result.durationMs / 1000).toFixed(1);
-    if (result.success) {
-      console.log(
-        `✅ [${source.toUpperCase()}] ${result.itemsCount} rackets from ` +
-          `${result.pagesFetched ?? "?"} pages in ${seconds}s` +
-          (result.reportedTotal ? ` (site reports ${result.reportedTotal} in category)` : "") +
-          (result.skippedNonRacket ? `, ${result.skippedNonRacket} accessories skipped` : ""),
-      );
-      for (const note of result.notes ?? []) console.log(`   ℹ️  ${note}`);
-    } else {
-      console.log(`❌ [${source.toUpperCase()}] failed after ${seconds}s`);
-      if (result.error) console.log(`   ${result.error}`);
-    }
-  }
+  const results = await walkSites(
+    options.sites,
+    (source, signal) =>
+      runSite(source, {
+        maxPages: options.maxPages,
+        verbose: options.verbose,
+        concurrency: options.concurrency,
+        delayMs: options.delayMs,
+        signal,
+      }),
+    {
+      timeoutMs: options.siteTimeoutMs,
+      onStart: (source) => console.log(`🔄 [${source.toUpperCase()}] scraping…`),
+      onResult: printSiteResult,
+    },
+  );
 
   const allProducts = dedupe(results.flatMap((r) => r.products));
   const normalized: NormalizedItem[] = allProducts.map(normalizeScrapedProduct);
@@ -304,12 +328,7 @@ export async function runScrapers() {
   console.log("\n-------------------------------------------------");
   console.log("📊 Scrape summary");
   console.log("-------------------------------------------------");
-  for (const result of results) {
-    console.log(
-      `  ${result.source.padEnd(12)} ${String(result.itemsCount).padStart(5)} products` +
-        (result.success ? "" : "   (FAILED — see error above)"),
-    );
-  }
+  console.log(renderConsoleSummary(results));
   console.log(`  ${"TOTAL".padEnd(12)} ${String(allProducts.length).padStart(5)} offers`);
   console.log(`  ${"".padEnd(12)} ${String(uniqueVariants.size).padStart(5)} variants (weight × grip × colour)`);
   console.log(`  ${"".padEnd(12)} ${String(uniqueRackets.size).padStart(5)} distinct racket models`);
@@ -418,32 +437,82 @@ export async function runScrapers() {
         `   The scrape itself is unaffected and is saved. Re-run verification on its own with:\n` +
           `     npm run scrape -- --verify-only${options.outFile ? `=${options.outFile}` : ""}`,
       );
-      process.exitCode = 1;
+      // Deliberately not an exit code. Verification is a second opinion on a
+      // scrape that is already written, and a Chromium that would not start is
+      // no reason to skip the sync, the audit and the backup that follow.
     }
   }
 
   // --- Optional DB sync ----------------------------------------------------
   if (options.syncDb) {
-    await syncToSupabase(normalized, results, options);
-    // Only when the sync itself reported clean. `syncToSupabase` sets
-    // `process.exitCode` on a failed write, and revalidating after a partial
+    const synced = await syncToSupabase(normalized, results, options);
+    // Only when the sync itself reported clean: revalidating after a partial
     // write would publish a half-updated catalogue rather than hold the last
-    // good one until the next run.
-    if (!process.exitCode) await revalidateCatalogue();
+    // good one until the next run. A skipped shop is not a partial write —
+    // the shops that did answer wrote everything they had.
+    if (synced) {
+      await revalidateCatalogue();
+    } else {
+      process.exitCode = 1;
+    }
   } else if (!options.dryRun) {
     console.log("ℹ️  Not syncing to the database. Re-run with --sync-db to write offers.");
   }
 
-  const failed = results.filter((r) => !r.success);
-  if (failed.length > 0) {
+  // --- The report, and the one verdict that reaches the exit code ----------
+  const skipped = results.filter((r) => siteStatus(r) === "skipped");
+  if (skipped.length > 0) {
     console.log(
-      `\n⚠️  ${failed.length} source(s) failed: ${failed.map((f) => f.source).join(", ")}`,
+      `\n⏭️  ${skipped.length} of ${results.length} shop(s) skipped: ` +
+        `${skipped.map((r) => r.source).join(", ")}. Their offers keep the prices they ` +
+        `last published; nothing was retired for them.`,
     );
-    // The run is unattended more often than not, and a scheduled task that
-    // reports success while a shop has stopped answering is worse than no
-    // scheduled task. A failed source is a failed run.
+  }
+
+  annotateSkippedSites(results);
+  writeStepSummary(
+    renderRunSummary(results, {
+      offers: allProducts.length,
+      variants: uniqueVariants.size,
+      rackets: uniqueRackets.size,
+      colourwaysFilled,
+    }),
+  );
+
+  const verdict = runVerdict(results, { strict: options.failOnSiteError });
+  if (verdict.failed) {
+    console.error(`\n❌ ${verdict.reason}`);
     process.exitCode = 1;
   }
+}
+
+function printSiteResult(result: ScraperResult): void {
+  const label = result.source.toUpperCase();
+  const seconds = (result.durationMs / 1000).toFixed(1);
+
+  if (result.success) {
+    console.log(
+      `✅ [${label}] ${result.itemsCount} rackets from ` +
+        `${result.pagesFetched ?? "?"} pages in ${seconds}s` +
+        (result.reportedTotal ? ` (site reports ${result.reportedTotal} in category)` : "") +
+        (result.skippedNonRacket ? `, ${result.skippedNonRacket} accessories skipped` : ""),
+    );
+    for (const note of result.notes ?? []) console.log(`   ℹ️  ${note}`);
+    return;
+  }
+
+  console.log(
+    `⏭️  [${label}] ${result.timedOut ? "timed out" : "failed"} after ${seconds}s — ` +
+      `skipping this shop`,
+  );
+  if (result.error) console.log(`   ${result.error}`);
+  if (result.itemsCount > 0) {
+    console.log(`   ${result.itemsCount} rackets were read before it stopped and are kept.`);
+  }
+  console.log(
+    `   The remaining shops carry on, and nothing is retired for ${result.source} — a shop ` +
+      `we could not walk tells us nothing about what it has stopped selling.`,
+  );
 }
 
 /**
@@ -470,7 +539,7 @@ async function syncToSupabase(
   items: NormalizedItem[],
   results: ScraperResult[],
   options: CliOptions,
-) {
+): Promise<boolean> {
   loadEnv();
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -481,13 +550,16 @@ async function syncToSupabase(
       "❌ Cannot sync: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set.\n" +
         "   Catalogue writes are admin-only under RLS, so the publishable key will not work.",
     );
-    process.exitCode = 1;
-    return;
+    return false;
   }
 
   console.log(`📡 Syncing ${items.length} offers to Supabase…`);
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const today = new Date().toISOString().slice(0, 10);
+
+  // Reported at the end rather than thrown at the first error: a table that
+  // fails is worth recording without abandoning the tables after it.
+  let ok = true;
 
   // Deduplicate the parent rows so a 3.000-offer scrape is a handful of upserts
   // rather than 3.000 round-trips per table.
@@ -607,8 +679,7 @@ async function syncToSupabase(
         console.error(`❌ ${table}: ${error.message}`);
         // Offers reference every one of these tables; carrying on would just
         // produce a wall of foreign-key errors.
-        process.exitCode = 1;
-        return;
+        return false;
       }
       offered += batch.length;
     }
@@ -627,8 +698,11 @@ async function syncToSupabase(
       .eq("observed_on", today)
       .in("variant_id", batch);
     if (error) {
+      // Only folding in what is already recorded for today, which is a
+      // refinement of the price we are about to write — not a reason to skip
+      // writing prices and stock at all.
       console.error(`❌ price_points (read): ${error.message}`);
-      process.exitCode = 1;
+      ok = false;
       break;
     }
     for (const row of data ?? []) {
@@ -649,7 +723,7 @@ async function syncToSupabase(
       const { error } = await supabase.from(table).upsert(batch, { onConflict });
       if (error) {
         console.error(`❌ ${table}: ${error.message}`);
-        process.exitCode = 1;
+        ok = false;
         break;
       }
       written += batch.length;
@@ -658,10 +732,22 @@ async function syncToSupabase(
   }
 
   // --- Retire what the shops no longer list --------------------------------
+  // The one thing that must not run after a failed write. The sweep pauses
+  // offers this run did not see; doing that when the offer writes only partly
+  // landed would pause rows whose replacements never arrived.
+  if (!ok) {
+    console.warn(
+      "   stale offers     left as they are — a write failed earlier in this sync, and " +
+        "pausing offers whose replacements may not have landed would empty the board",
+    );
+    return false;
+  }
+
   const seenOfferIds = new Set(offers.map((o) => String(o.id)));
-  await retireUnseenOffers(supabase, results, seenOfferIds, options);
+  const retired = await retireUnseenOffers(supabase, results, seenOfferIds, options);
 
   console.log("🎉 DB sync finished.");
+  return retired;
 }
 
 /**
@@ -680,24 +766,29 @@ async function retireUnseenOffers(
   results: ScraperResult[],
   seenOfferIds: Set<string>,
   options: CliOptions,
-) {
+): Promise<boolean> {
   if (!options.retireStale) {
     console.log(
       "   stale offers     left as they are " +
         "(a partial walk cannot tell a delisted racket from an unvisited page)",
     );
-    return;
+    return true;
   }
 
+  // Only the sellers this run actually walked. A shop that was skipped keeps
+  // every offer it has: we did not see its catalogue, so we know nothing about
+  // what it has stopped selling.
   const walked = results.filter((r) => r.success && r.itemsCount > 0);
-  if (walked.length === 0) return;
+  if (walked.length === 0) return true;
 
   const stamp = new Date().toISOString();
+  let ok = true;
 
   for (const result of walked) {
     const sellerId = `s-${result.source}`;
 
     const existing: string[] = [];
+    let readFailed = false;
     const pageSize = 1000;
     for (let from = 0; ; from += pageSize) {
       const { data, error } = await supabase
@@ -707,13 +798,17 @@ async function retireUnseenOffers(
         .eq("status", "live")
         .range(from, from + pageSize - 1);
       if (error) {
+        // One seller's read failing says nothing about the next seller's, so
+        // record it and move on rather than abandoning the whole sweep.
         console.error(`❌ offers (read for ${sellerId}): ${error.message}`);
-        process.exitCode = 1;
-        return;
+        ok = false;
+        readFailed = true;
+        break;
       }
       for (const row of data ?? []) existing.push(String(row.id));
       if (!data || data.length < pageSize) break;
     }
+    if (readFailed) continue;
 
     const stale = existing.filter((id) => !seenOfferIds.has(id));
     if (stale.length === 0) {
@@ -744,13 +839,15 @@ async function retireUnseenOffers(
         .in("id", batch);
       if (error) {
         console.error(`❌ offers (retire ${sellerId}): ${error.message}`);
-        process.exitCode = 1;
+        ok = false;
         break;
       }
       paused += batch.length;
     }
     console.log(`   ${sellerId.padEnd(16)} ${paused} offers no longer listed — paused`);
   }
+
+  return ok;
 }
 
 const invokedDirectly =

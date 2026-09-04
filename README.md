@@ -190,6 +190,7 @@ npm run scrape:quick            # 3 pages per site, no verification — for iter
 npm run scrape -- --site=vnb --pages=5 --verbose
 npm run scrape:sync             # also upsert into Postgres (needs the service role key)
 npm run scrape:refresh          # the scheduled one: full walk, no browser, straight to Postgres
+npm run test:scraper            # unit tests: failure isolation, the run report, the abort path
 ```
 
 | Flag | Default | What it does |
@@ -203,8 +204,26 @@ npm run scrape:refresh          # the scheduled one: full walk, no browser, stra
 | `--sync-db` | off | Write prices and stock to Postgres; create catalogue rows that do not exist yet |
 | `--no-retire` | off | Keep offers this run did not see, instead of pausing them |
 | `--force-retire` | off | Sweep even when it would pause more than half a seller's live offers |
+| `--site-timeout=` | `1800` (30 min) | Seconds one shop may take before it is abandoned and skipped. `0` waits indefinitely |
+| `--fail-on-site-error` | off | Exit non-zero the moment any one shop fails, instead of skipping it |
 | `npm run scrape:sql` | — | Emit the same rows as `supabase/scraped-catalogue.sql`, for when there is no service-role key |
 | `--concurrency=`, `--delay=` | `4`, `150` | Requests in flight and the gap between them |
+
+**One shop failing costs that shop.** Four independent storefronts means four
+independent ways for a night to go wrong, so nothing a shop does may reach the shops
+after it (`scripts/scraper/guard.ts`). An unexpected throw becomes a skipped shop rather
+than a rejection out of the site loop; a shop that hangs is abandoned when its
+`--site-timeout` runs out, with its in-flight requests aborted through the signal it was
+handed so it stops competing for the runner. A skipped shop is named in the run report
+with the reason, keeps every offer it last published — the stale-offer sweep only ever
+considers sellers this run actually walked — and does not stop the shops that answered
+from being scraped, synced, audited and backed up.
+
+The exit code follows from that: the run fails when it produced nothing usable (no source
+selected, or *every* source down) or when the database write itself failed. One shop of
+four going dark is a line in the report, not a red run, because a red run used to mean the
+image crawl, the ownership audit and the nightly backup never ran either.
+`--fail-on-site-error` restores the old all-or-nothing behaviour.
 
 **Sources.** fbshop, qvbadminton and hvshop all run WooCommerce and all expose the
 unauthenticated Store API, which gives structured prices, stock and category membership

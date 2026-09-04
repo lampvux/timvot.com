@@ -9,11 +9,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm run dev            # Next dev server on :3000 — runs with no env vars at all
 npm run build          # production build
-npm run typecheck      # tsc --noEmit — the only static gate in the repo
+npm run typecheck      # tsc --noEmit — the static gate for src/ and scripts/
 ```
 
-There is no test runner and no ESLint config. `npm run typecheck` is what "does it
-pass" means here; run it after any change to `src/` or `scripts/`.
+There is no ESLint config. `npm run typecheck` is what "does it pass" means for
+`src/`; run it after any change to `src/` or `scripts/`. The node:test suites under
+`scripts/` are the rest of the gate — no framework, just `tsx --test`:
+
+```bash
+npm run test:scraper         # scraper: per-shop failure isolation, run report, abort path
+npm run test:image-scraper   # manufacturer gallery crawl and image ownership
+npm run test:string-scraper  # string catalogue
+```
 
 Data and schema:
 
@@ -40,6 +47,19 @@ npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
 
 `npm run scrape -- --site=vnb --pages=5 --verbose` is the shape for narrowing a run;
 `--verify-only` re-checks a scrape already on disk without walking the sites again.
+
+**A shop that fails costs that shop and nothing else.** Four independent storefronts
+means four independent ways for a night to go wrong, so `guard.ts` runs each one so
+that nothing it does can reach the shops after it: an unexpected throw becomes a
+skipped shop rather than a rejection out of the site loop, and a shop that hangs is
+abandoned when `--site-timeout` (default 30 min) runs out, with its in-flight requests
+aborted through the signal threaded down to `fetchWithRetry`. A skipped shop is named
+in the report (`report.ts`, which also writes the GitHub step summary), keeps every
+offer it last published, and does not stop the run — `runVerdict` fails only when no
+source was selected, when *every* source failed, or when the database write itself did.
+Browser verification never fails the run either. That policy is what keeps the nightly
+workflow's later steps — image crawl, ownership audit, backup — running, so do not
+reintroduce a `process.exitCode = 1` per failed source.
 
 The two `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
 shop and yields offers, and a manufacturer that quotes no price would need a seller and a

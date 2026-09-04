@@ -117,7 +117,12 @@ export async function scrapeVnb(options: ScraperOptions = {}): Promise<ScraperRe
     for (let page = 1; page <= maxPages; page++) {
       const pageUrl = page === 1 ? VNB_CATEGORY_URL : `${VNB_CATEGORY_URL}?page=${page}`;
 
-      const res = await fetchWithRetry(pageUrl, { headers: HTML_HEADERS, timeoutMs, verbose });
+      const res = await fetchWithRetry(pageUrl, {
+        headers: HTML_HEADERS,
+        timeoutMs,
+        verbose,
+        signal: options.signal,
+      });
       pagesFetched++;
 
       if (!res.ok) {

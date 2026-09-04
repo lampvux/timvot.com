@@ -55,7 +55,13 @@ export async function scrapeShopee(options: ScraperOptions = {}): Promise<Scrape
         `${SHOPEE_SEARCH_API}?by=relevance&keyword=${encodeURIComponent(keyword)}` +
         `&limit=60&newest=${page * 60}&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2`;
 
-      const res = await fetchWithRetry(url, { headers, timeoutMs, retries: 1, verbose });
+      const res = await fetchWithRetry(url, {
+        headers,
+        timeoutMs,
+        retries: 1,
+        verbose,
+        signal: options.signal,
+      });
 
       if (!res.ok) {
         return {
