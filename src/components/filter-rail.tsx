@@ -242,7 +242,7 @@ function useFilterBody({ filters, facets, brands }: FilterProps) {
 export function FilterRail(props: FilterProps) {
   const body = useFilterBody(props);
   return (
-    <aside className="hidden w-[var(--filter-rail-w)] shrink-0 self-stretch border-r border-line bg-card px-5 pb-10 pt-5 lg:block">
+    <aside className="hidden w-[var(--filter-rail-w)] shrink-0 self-stretch border-r border-line bg-card px-5 pb-10 pt-5 min-[1440px]:block">
       {body}
     </aside>
   );
@@ -257,7 +257,7 @@ export function FilterSheet(props: FilterProps) {
   const active = countActive(props.filters);
 
   return (
-    <div className="lg:hidden">
+    <div className="min-[1440px]:hidden">
       <Button
         iconLeft="SlidersHorizontal"
         onClick={() => setOpen(true)}

@@ -194,12 +194,16 @@ async function CatalogResults({
           />
         ) : (
           <>
-            <div id="racket-grid-top" className="scroll-mt-20 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+            <div
+              id="racket-grid-top"
+              className="scroll-mt-20 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 min-[1081px]:!grid-cols-6"
+            >
               {pageResults.map((racket, index) => (
                 <RacketCard
                   key={racket.id}
                   racket={racket}
-                  priority={index < 4}
+                  priority={index < 6}
+                  density="catalog"
                   mobileLayout="horizontal"
                 />
               ))}

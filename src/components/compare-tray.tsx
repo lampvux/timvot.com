@@ -115,11 +115,13 @@ export function CompareToggle({
   size = "md",
   fullWidth,
   iconOnly = false,
+  shortLabel = false,
 }: {
   item: TrayItem;
   size?: "sm" | "md" | "lg";
   fullWidth?: boolean;
   iconOnly?: boolean;
+  shortLabel?: boolean;
 }) {
   const t = useTranslations("common");
   const { has, toggle, isFull, hydrated } = useCompare();
@@ -145,10 +147,11 @@ export function CompareToggle({
       size={size}
       fullWidth={fullWidth}
       iconLeft={selected ? "Check" : "GitCompare"}
+      aria-label={selected ? t("inComparison") : t("addToComparison")}
       disabled={!hydrated || (isFull && !selected)}
       onClick={() => toggle(item)}
     >
-      {selected ? t("inComparison") : t("addToComparison")}
+      {selected ? t("inComparison") : shortLabel ? t("compare") : t("addToComparison")}
     </Button>
   );
 }

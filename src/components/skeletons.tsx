@@ -4,8 +4,8 @@ import { cx } from "@/components/ds/primitives";
  * Loading shapes, not spinners.
  *
  * Every box here matches the real component's geometry — the rail is
- * `--filter-rail-w`, the card image is the same `1.15/1` aspect, the grid has
- * the same three breakpoints. That is the whole job: a skeleton whose boxes
+ * `--filter-rail-w`, the card image has the same compact aspect, and the grid
+ * follows the catalogue's responsive column count. That is the whole job: a skeleton whose boxes
  * differ from the content shifts the layout when the content lands, which is
  * worse than showing nothing.
  *
@@ -27,14 +27,14 @@ function Bar({ className }: { className?: string }) {
 
 function CardSkeleton() {
   return (
-    <div className="flex h-full flex-col rounded-md border border-line bg-card p-3">
-      <div className="aspect-[1.15/1] w-full rounded-md bg-sunken" aria-hidden />
-      <Bar className="mt-3 h-3 w-16" />
+    <div className="flex h-full flex-col rounded-md border border-line bg-card p-2">
+      <div className="aspect-[1.05/1] w-full rounded-md bg-sunken" aria-hidden />
+      <Bar className="mt-2 h-3 w-16" />
       <Bar className="mt-1.5 h-5 w-3/4" />
       <Bar className="mt-2.5 h-5 w-28" />
       <Bar className="mt-3 h-1.5 w-full" />
       <Bar className="mt-1.5 h-3 w-2/3" />
-      <Bar className="mt-3.5 h-11 w-full" />
+      <Bar className="mt-2 h-11 w-full lg:h-7" />
     </div>
   );
 }
@@ -44,7 +44,7 @@ function CardSkeleton() {
 function RailSkeleton() {
   return (
     <aside
-      className="hidden w-[var(--filter-rail-w)] shrink-0 self-stretch border-r border-line bg-card px-5 pb-10 pt-5 lg:block"
+      className="hidden w-[var(--filter-rail-w)] shrink-0 self-stretch border-r border-line bg-card px-5 pb-10 pt-5 min-[1440px]:block"
       aria-hidden
     >
       <Bar className="mb-4 h-4 w-24" />
@@ -75,7 +75,7 @@ export function CatalogSkeleton({ cards = 12 }: { cards?: number }) {
             <Bar className="h-11 w-36 lg:h-[38px]" />
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 min-[1081px]:!grid-cols-6">
           {Array.from({ length: cards }, (_, i) => (
             <CardSkeleton key={i} />
           ))}
@@ -151,26 +151,44 @@ export function AuthFormSkeleton() {
 
 export function DealsSkeleton() {
   return (
-    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+    <div role="status" aria-busy="true">
       <span className="sr-only">Loading price drop deals</span>
-      <Bar className="h-3 w-24" />
-      <Bar className="mt-2 h-9 w-2/3 max-w-[24rem]" />
-      <div className="mt-6 overflow-hidden rounded-md border border-line bg-card">
-        <div className="h-10 border-b border-line bg-sunken" />
-        {Array.from({ length: 8 }, (_, i) => (
-          <div
-            key={i}
-            className="grid grid-cols-[1fr_120px_100px_90px] items-center gap-4 border-b border-line px-4 py-3.5 last:border-0"
-          >
-            <div>
-              <Bar className="h-4 w-44" />
-              <Bar className="mt-1 h-3 w-20" />
+      <div className="bg-green-900">
+        <div className="page-shell grid gap-8 py-9 lg:grid-cols-2 lg:py-14">
+          <div>
+            <Bar className="h-6 w-36 !bg-green-800" />
+            <Bar className="mt-4 h-12 w-4/5 !bg-green-800" />
+            <Bar className="mt-3 h-4 w-full max-w-md !bg-green-800" />
+            <div className="mt-6 grid max-w-sm grid-cols-3 gap-5">
+              <Bar className="h-10 !bg-green-800" />
+              <Bar className="h-10 !bg-green-800" />
+              <Bar className="h-10 !bg-green-800" />
             </div>
-            <Bar className="h-4 w-16" />
-            <Bar className="h-5 w-24" />
-            <Bar className="h-4 w-20" />
           </div>
-        ))}
+          <div className="h-48 rounded-md border border-green-800 bg-green-800" />
+        </div>
+      </div>
+      <div className="page-shell py-10 lg:py-12">
+        <Bar className="h-3 w-32" />
+        <Bar className="mt-2 h-8 w-48" />
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="overflow-hidden rounded-md border border-line bg-card">
+              <div className="aspect-[1.35/1] bg-sunken" />
+              <div className="p-3.5">
+                <Bar className="h-3 w-16" />
+                <Bar className="mt-2 h-5 w-3/4" />
+                <Bar className="mt-3 h-5 w-28" />
+                <Bar className="mt-4 h-11 w-full lg:h-7" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-12 flex flex-col gap-2.5">
+          {Array.from({ length: 6 }, (_, i) => (
+            <Bar key={i} className="h-[74px] w-full" />
+          ))}
+        </div>
       </div>
     </div>
   );
