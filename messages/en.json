@@ -143,7 +143,7 @@
       "defence": "A lively string with a softer response helps a {skill} player lift and counter with less effort.",
       "control": "A textured hybrid gives a {skill} player extra hold for slices, tight net shots and placement."
     },
-    "safety": "This suggestion stays within the racket's {max} lbs published limit. Ask your stringer to adjust for condition, climate and warranty.",
+    "safety": "This suggestion stays within the racket's published limit of {max}. Ask your stringer to adjust for condition, climate and warranty.",
     "comparePrices": "See specs and compare prices"
   },
   "strings": {
