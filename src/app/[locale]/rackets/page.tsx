@@ -29,6 +29,7 @@ import {
   type SearchParams,
 } from "@/lib/filters";
 import { BALANCE_MESSAGE_KEY, FLEX_MESSAGE_KEY } from "@/lib/format";
+import { orderBrandsByPopularity } from "@/lib/catalog-ranking";
 
 export async function generateMetadata({
   params,
@@ -89,7 +90,8 @@ async function CatalogResults({
 
   const search = await searchParams;
   const filters = parseFilters(search);
-  const [allRackets, brands] = await Promise.all([getRackets(), getBrands()]);
+  const [allRackets, allBrands] = await Promise.all([getRackets(), getBrands()]);
+  const brands = orderBrandsByPopularity(allBrands);
 
   // `results` stays the full match set: the heading count, the empty-state
   // suggestions and the facet counts are all answers about the whole result,

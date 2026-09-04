@@ -87,7 +87,7 @@ const number = (value: string | string[] | undefined): number | null => {
 const WEIGHT_CLASSES: WeightClass[] = ["2U", "3U", "4U", "5U"];
 const BALANCE_TYPES: BalanceType[] = ["head-light", "even", "head-heavy"];
 const FLEXES: ShaftFlex[] = ["extra-stiff", "stiff", "medium", "flexible"];
-const SORTS: SortKey[] = ["score", "price-asc", "price-desc", "new"];
+const SORTS: SortKey[] = ["popular", "score", "price-asc", "price-desc", "new"];
 
 export function parseFilters(params: SearchParams): CatalogFilters {
   const sort = first(params[SEARCH_KEYS.sort]) as SortKey;
@@ -107,7 +107,7 @@ export function parseFilters(params: SearchParams): CatalogFilters {
     priceMin: number(params[SEARCH_KEYS.min]),
     priceMax: number(params[SEARCH_KEYS.max]),
     query: first(params[SEARCH_KEYS.query]),
-    sort: SORTS.includes(sort) ? sort : "score",
+    sort: SORTS.includes(sort) ? sort : "popular",
   };
 }
 
@@ -122,7 +122,7 @@ export function filtersToQuery(filters: CatalogFilters): Record<string, string> 
   if (filters.priceMin !== null) query[SEARCH_KEYS.min] = String(filters.priceMin);
   if (filters.priceMax !== null) query[SEARCH_KEYS.max] = String(filters.priceMax);
   if (filters.query) query[SEARCH_KEYS.query] = filters.query;
-  if (filters.sort !== "score") query[SEARCH_KEYS.sort] = filters.sort;
+  if (filters.sort !== "popular") query[SEARCH_KEYS.sort] = filters.sort;
   return query;
 }
 
