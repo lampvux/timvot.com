@@ -158,11 +158,41 @@ jobs:
           PRERENDERED_RACKETS: ${{ env.PRERENDERED_RACKETS }}
         run: vercel build --prod
 
+      - name: Count the build output
+        id: output_size
+        run: |
+          files="$(find .vercel/output -type f | wc -l)"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          echo ".vercel/output holds $files files"
+          # Uploaded as an archive below, so this is a number to watch rather
+          # than a budget to stay under. Printed because the day it stops being
+          # an archive, this is the number that decides whether the deploy is
+          # possible at all.
+          if [ "$files" -gt 5000 ]; then
+            echo "::warning title=Large build output::$files files. Fine while --archive=tgz is in use; a file-by-file upload would exceed Hobby's 5000-uploads-per-day limit in a single deploy."
+          fi
+
       - name: Deploy the build output
         if: ${{ !inputs.dry_run }}
         id: deploy
         run: |
-          url="$(vercel deploy --prebuilt --prod)"
+          # --archive=tgz, not a file-by-file upload. Hobby allows 5000 file
+          # uploads per day across the whole account (Vercel's "Uploads per day
+          # (Free)" rate limit), and one prebuilt deploy of this catalogue runs
+          # to thousands of files: ~1200 prerender artifacts, because Cache
+          # Components emits segment .rsc payloads alongside each .html, plus
+          # the traced dependencies inside every .func. Those artifacts carry
+          # scraped prices, so their hashes change every build and Vercel's
+          # upload dedup does not cover them. Two or three deploys in a day
+          # exhaust the quota, and the next one fails with `api-upload-free` —
+          # a 24-hour lockout on deploying anything, since the limit is scoped
+          # to the account rather than to this project.
+          #
+          # The archive collapses that to a few chunk uploads. Vercel documents
+          # it as the fix for this case: https://vercel.com/docs/cli/deploy#archive
+          # The trade-off is that per-file upload caching between deploys no
+          # longer applies, which costs seconds and is worth the lockout it avoids.
+          url="$(vercel deploy --prebuilt --prod --archive=tgz)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed: $url"
 
@@ -205,6 +235,7 @@ jobs:
             echo "|---|---|"
             echo "| Commit | \`${SHA:-unknown}\` |"
             echo "| Prerendered rackets | ${PRERENDERED_RACKETS:-unknown} |"
+            echo "| Output files (uploaded as one archive) | ${{ steps.output_size.outputs.files || 'unknown' }} |"
             echo "| Deployment | ${{ steps.deploy.outputs.url || '— (dry run)' }} |"
             echo "| Tag | ${{ inputs.tag || '(auto)' }} |"
           } >> "$GITHUB_STEP_SUMMARY"
