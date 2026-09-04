@@ -258,7 +258,7 @@ export interface StringWithMarket extends BadmintonString {
   history: StringPricePoint[];
 }
 
-export type SortKey = "score" | "price-asc" | "price-desc" | "new";
+export type SortKey = "popular" | "score" | "price-asc" | "price-desc" | "new";
 
 export interface CatalogFilters {
   brands: string[];
@@ -279,5 +279,5 @@ export const EMPTY_FILTERS: CatalogFilters = {
   priceMin: null,
   priceMax: null,
   query: "",
-  sort: "score",
+  sort: "popular",
 };

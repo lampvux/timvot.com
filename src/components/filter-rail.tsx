@@ -436,6 +436,7 @@ export function SortSelect({ filters }: { filters: CatalogFilters }) {
             })
           }
           options={[
+            { value: "popular", label: tc("sortPopular") },
             { value: "score", label: tc("sortScore") },
             { value: "price-asc", label: tc("sortPriceAsc") },
             { value: "price-desc", label: tc("sortPriceDesc") },

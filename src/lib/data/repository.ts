@@ -6,6 +6,7 @@ import { createStaticClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { courtScore } from "@/lib/court-score";
 import { balanceTypeOf, median } from "@/lib/format";
+import { comparePopularBrandTiers } from "@/lib/catalog-ranking";
 import type {
   Brand,
   CatalogFilters,
@@ -661,6 +662,10 @@ export function sortRackets(
   };
 
   switch (sort) {
+    case "popular":
+      return copy.sort(
+        (a, b) => comparePopularBrandTiers(a, b) || byScore(a, b),
+      );
     case "price-asc":
       return copy.sort((a, b) => priceOf(a) - priceOf(b));
     case "price-desc":

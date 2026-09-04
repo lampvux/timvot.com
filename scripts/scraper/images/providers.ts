@@ -14,7 +14,8 @@
  * URL, first source winning, so a product the storefront API named keeps that
  * name when a sitemap later rediscovers the same URL with nothing but a slug.
  *
- *   woocommerce-store    apacs        name + full gallery, 453 rackets / 5 requests
+ *   woocommerce-store    apacs        name + full gallery from the Store API
+ *                        pro-kennex   same, with rendered-HTML fallback for CI
  *                        kumpoo-vn
  *   shopify-collection   mizuno       name + full gallery from products.json
  *                        mizuno-vn
@@ -108,7 +109,7 @@
  * ------------------------------------------------------------------
  * On coverage
  *
- * Ten brands are wired up, across thirteen providers: the four largest in the
+ * Eleven brands are wired up, across fourteen providers: the four largest in the
  * catalogue by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese
  * sites publish their whole racket line in two or three requests, and Forza,
  * whose own site is not a shop at all — it publishes the specification and the
@@ -160,6 +161,7 @@ import {
   shopifyGallery,
   metaVnGallery,
   structuredDataGallery,
+  woocommerceHtmlGallery,
   wpUploadsGallery,
 } from "./gallery";
 
@@ -173,6 +175,19 @@ export type ProviderPlatform =
   | "browser";
 
 /** How a provider's product list is enumerated. */
+interface CategoryPaginationConfig {
+  /** Page one. */
+  url: string;
+  /** Query-string pagination, e.g. `?p=2`. */
+  pageParam?: string;
+  /** Pretty-permalink pagination, e.g. `page/{page}/`. */
+  pagePath?: string;
+  /** Anchor carrying the product link; its text is the product name. */
+  linkSelector: string;
+  /** Safety stop for a listing that never runs out of pages. */
+  maxPages: number;
+}
+
 export type CatalogueSource =
   | {
       kind: "sitemap";
@@ -216,6 +231,11 @@ export type CatalogueSource =
       categorySlugs: string[];
       pageSize: number;
       /**
+       * Public category pages to use when a CI runner cannot reach the Store
+       * API. Candidates discovered here are later read from product-page HTML.
+       */
+      htmlFallback?: CategoryPaginationConfig;
+      /**
        * Drop products the shop currently has no stock of.
        *
        * Stock is a fact about a shop on a Tuesday, not about a racket, so this
@@ -254,14 +274,7 @@ export type CatalogueSource =
        * hopeless; matching on the titles is exact.
        */
       kind: "category-pagination";
-      /** Page one. Later pages append `?<pageParam>=N`. */
-      url: string;
-      pageParam: string;
-      /** Anchor carrying the product link; its text is the product name. */
-      linkSelector: string;
-      /** Safety stop for a listing that never runs out of pages. */
-      maxPages: number;
-    }
+    } & CategoryPaginationConfig
   | {
       /**
        * The storefront API behind victorsport.com (the "2beasy" platform).
@@ -409,16 +422,17 @@ export interface ProviderConfig {
 }
 
 /**
- * The extractor chain per platform, used only by `sitemap` providers — the API
- * catalogues carry their galleries already. Each is tried in order and the
- * first that returns images wins, so a site that changes template degrades to
- * the generic schema.org reader instead of silently returning nothing.
+ * The extractor chain per platform, used when discovery did not already attach
+ * a gallery (sitemaps, category pages, or an API's HTML fallback). Each is tried
+ * in order and the first that returns images wins, so a site that changes
+ * template degrades to the generic schema.org reader instead of silently
+ * returning nothing.
  */
 export const EXTRACTORS: Record<ProviderPlatform, GalleryExtractor[]> = {
   magento: [magentoGallery, structuredDataGallery],
   "next-data": [nextDataGallery, structuredDataGallery],
   shopify: [shopifyGallery, structuredDataGallery],
-  woocommerce: [structuredDataGallery],
+  woocommerce: [woocommerceHtmlGallery, structuredDataGallery],
   "structured-data": [structuredDataGallery],
   // Never reached: a browser provider's gallery comes from `BrowserSession`,
   // not from parsing served HTML. Declared so the record stays total.
@@ -549,6 +563,12 @@ function metaVnModelAliases(name: string): string[] {
   return [...aliases];
 }
 
+/** The retailer catalogue keeps this colour in the model name; ProKennex does not. */
+function proKennexModelAliases(name: string): string[] {
+  const withoutColour = name.replace(/\s*-\s*xám kim loại\s*$/i, "").trim();
+  return withoutColour && withoutColour !== name ? [withoutColour] : [];
+}
+
 export const PROVIDERS: ProviderConfig[] = [
   {
     id: "yonex",
@@ -660,6 +680,29 @@ export const PROVIDERS: ProviderConfig[] = [
     // under a category that means exactly what we want, so no classifier is
     // needed to keep the overgrips and shoes out.
     catalogue: { kind: "woocommerce-store", categorySlugs: ["badminton-rackets"], pageSize: 100 },
+    politenessMs: 300,
+  },
+  {
+    id: "pro-kennex",
+    name: "ProKennex",
+    origin: "https://www.prokennex-badminton.com",
+    brandSlugs: ["pro-kennex"],
+    platform: "woocommerce",
+    catalogue: {
+      kind: "woocommerce-store",
+      categorySlugs: ["badminton-rackets"],
+      pageSize: 100,
+      // GitHub-hosted runners can be blocked from WordPress JSON while the
+      // public shop remains readable. These are the same 31 rackets, split
+      // over the manufacturer's two rendered category pages.
+      htmlFallback: {
+        url: "https://www.prokennex-badminton.com/product_cat/badminton/badminton-rackets/",
+        pagePath: "page/{page}/",
+        linkSelector: ".products a.woocommerce-loop-product__link",
+        maxPages: 2,
+      },
+    },
+    modelAliases: proKennexModelAliases,
     politenessMs: 300,
   },
   {

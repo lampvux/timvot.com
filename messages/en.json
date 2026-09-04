@@ -69,6 +69,7 @@
     "title": "Rackets",
     "resultCount": "{count} rackets",
     "activeFilters": "Active filters",
+    "sortPopular": "Popular brands",
     "sortScore": "Court Score",
     "sortPriceAsc": "Price, low to high",
     "sortPriceDesc": "Price, high to low",

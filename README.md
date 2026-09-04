@@ -394,7 +394,7 @@ npm run scrape:images -- --bucket-strategy=per-provider
 
 | Flag | Default | What it does |
 | ---- | ------- | ------------ |
-| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn` |
+| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn` |
 | `--limit=` | all | Cap the rackets crawled this run |
 | `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
@@ -415,7 +415,7 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 
 | Source | Used by | What it gives |
 | ------ | ------- | ------------- |
-| `woocommerce-store` | apacs, kumpoo-vn | Name + full gallery, from the shop's own Store API. 453 rackets in 5 requests. |
+| `woocommerce-store` | apacs, pro-kennex, kumpoo-vn | Name + full gallery from the shop's Store API. ProKennex falls back to its two public HTML catalogue pages when CI cannot reach WordPress JSON. |
 | `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn | Name + full gallery from `products.json`. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
 | `category-pagination` | yonex, gosen-vn, meta-vn | The rendered "all racquets" listing, walked `?p=1…N`. The only way in when a site has no API and no sitemap. |
@@ -581,6 +581,14 @@ Vietnam does not stock; the other two are retailer editorial the manufacturer ha
 reason to repeat ("Flareon 700 – Siêu phẩm phản tạt", "Nitrix Attack – Srikanth"), and an
 alias for the second would file the standard Nitrix Attack's photographs under a signature
 colourway this shop does not publish.
+
+**ProKennex is API-first and HTML-safe in CI.** Its Store API currently returns all
+31 rackets and their original uploads in one product request. Some WordPress firewalls
+block `/wp-json/` selectively for hosted runner IPs, while the public catalogue remains
+available. The provider therefore falls back to the manufacturer's 24-product first page
+and 7-product second page, then reads only each product page's scoped WooCommerce gallery.
+That HTML path prefers `data-large_image` or the gallery link over the rendered 300px crop,
+and cannot collect technology icons or recommended-product thumbnails outside the gallery.
 
 **The weight grade is left in the title on purpose.** Hundred sells most frames as two
 products, one per grade — "Vợt cầu lông Nitrix 70 Volta - 3U" and "- 4U" — and `3U` is a
@@ -956,7 +964,7 @@ comes back looking like a successful download.
 
 ### Coverage, and the gaps
 
-Ten of the catalogue's 36 brands are wired up across thirteen providers: the four largest
+Eleven of the catalogue's 36 brands are wired up across fourteen providers: the four largest
 by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese sites publish their whole
 racket line in two or three requests, Forza, whose own site is not a shop and supplied the
 rackets as well as the photographs, and Kamito and Adidas, neither of which has a racket

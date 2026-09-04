@@ -109,7 +109,7 @@ function cleanTitle(title: string, url: string, provider: ProviderConfig): strin
  * reorganises its taxonomy. Everything after that is straight pagination, with
  * the product's own image list coming back in the same payload.
  */
-async function discoverWooCommerce(
+async function discoverWooCommerceApi(
   provider: ProviderConfig,
   source: Extract<CatalogueSource, { kind: "woocommerce-store" }>,
   options: DiscoverOptions,
@@ -193,6 +193,51 @@ async function discoverWooCommerce(
   }
 
   return { candidates: [...byUrl.values()], urlsSeen: seen };
+}
+
+/**
+ * Prefer WooCommerce's compact Store API, but keep CI independent of whether
+ * WordPress permits JSON requests from a GitHub-hosted IP range. The public
+ * category and product HTML carry the same identity and gallery data.
+ */
+async function discoverWooCommerce(
+  provider: ProviderConfig,
+  source: Extract<CatalogueSource, { kind: "woocommerce-store" }>,
+  options: DiscoverOptions,
+  robots: RobotsPolicy,
+): Promise<{ candidates: MatchCandidate[]; urlsSeen: number }> {
+  let apiError: unknown;
+
+  try {
+    const result = await discoverWooCommerceApi(provider, source, options);
+    if (result.candidates.length > 0) return result;
+    apiError = new Error("Store API returned no products with images");
+  } catch (err) {
+    apiError = err;
+  }
+
+  if (!source.htmlFallback) throw apiError;
+
+  if (options.verbose) {
+    console.warn(
+      `   [${provider.id}] ${apiError instanceof Error ? apiError.message : String(apiError)}; ` +
+        "falling back to rendered category HTML.",
+    );
+  }
+
+  const fallback = await discoverCategoryPagination(
+    provider,
+    { kind: "category-pagination", ...source.htmlFallback },
+    options,
+    robots,
+  );
+  if (fallback.candidates.length === 0) {
+    throw new Error(
+      `${apiError instanceof Error ? apiError.message : String(apiError)}; ` +
+        "rendered category fallback found no products",
+    );
+  }
+  return fallback;
 }
 
 /**
@@ -289,7 +334,19 @@ async function discoverCategoryPagination(
   let seen = 0;
 
   for (let page = 1; page <= source.maxPages; page++) {
-    const url = page === 1 ? source.url : `${source.url}?${source.pageParam}=${page}`;
+    let url = source.url;
+    if (page > 1) {
+      if (source.pagePath) {
+        const base = source.url.endsWith("/") ? source.url : `${source.url}/`;
+        url = new URL(source.pagePath.replace("{page}", String(page)), base).toString();
+      } else if (source.pageParam) {
+        const parsed = new URL(source.url);
+        parsed.searchParams.set(source.pageParam, String(page));
+        url = parsed.toString();
+      } else {
+        break;
+      }
+    }
     if (!isAllowed(robots, url)) break;
 
     if (page > 1) await sleep(delayMs);
@@ -700,7 +757,7 @@ function runSource(
     case "sitemap":
       return discoverSitemap(provider, source, options, robots);
     case "woocommerce-store":
-      return discoverWooCommerce(provider, source, options);
+      return discoverWooCommerce(provider, source, options, robots);
     case "shopify-collection":
       return discoverShopify(provider, source, options);
     case "category-pagination":
