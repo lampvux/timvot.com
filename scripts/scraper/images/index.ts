@@ -528,11 +528,15 @@ export async function crawlImages() {
     candidatesByProvider.set(provider.id, result);
 
     if (result.error) {
-      console.log(`⚠️  [${provider.id}] sitemap unreadable: ${result.error}`);
+      console.log(`⚠️  [${provider.id}] catalogue unreadable: ${result.error}`);
     } else {
+      const sourceEntries =
+        result.urlsSeen > result.candidates.length
+          ? ` (${result.urlsSeen} entries across sources before URL deduplication)`
+          : "";
       console.log(
-        `🗺️  [${provider.id}] ${result.candidates.length} product urls ` +
-          `(of ${result.urlsSeen} in the sitemap)${result.fromCache ? " — cached" : ""}`,
+        `🗺️  [${provider.id}] ${result.candidates.length} product urls` +
+          `${sourceEntries}${result.fromCache ? " — cached" : ""}`,
       );
     }
   }
