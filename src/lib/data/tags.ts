@@ -18,6 +18,9 @@ export const TAG = {
   pricePoints: "price-points",
   reviews: "reviews",
   guides: "guides",
+  strings: "strings",
+  stringOffers: "string-offers",
+  stringPricePoints: "string-price-points",
 } as const;
 
 export type CacheTag = (typeof TAG)[keyof typeof TAG];

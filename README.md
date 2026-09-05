@@ -1,5 +1,10 @@
 # Shuttlecraft
 
+The public storefront lives at the repository root. The standalone operations
+console lives in [`admin/`](admin/) and deploys as a separate Vercel project;
+see [`admin/README.md`](admin/README.md) for setup, owner bootstrap, and release
+instructions.
+
 The neutral spec database and price-comparison layer for badminton rackets, with a
 verified seller marketplace attached. Vietnam first, English available.
 
