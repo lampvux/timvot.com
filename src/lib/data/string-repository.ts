@@ -1,12 +1,13 @@
 import "server-only";
 
 import { cache } from "react";
-import { cacheLife } from "next/cache";
+import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
 import type { BadmintonString, Seller, StringOffer, StringOfferWithSeller, StringPricePoint, StringWithMarket } from "@/lib/types";
 import { mapSeller } from "./mappers";
 import * as seed from "./seed";
 import * as fallback from "./string-seed";
+import { TAG } from "./tags";
 
 type Row = Record<string, unknown>;
 
@@ -25,6 +26,7 @@ interface StringSnapshot {
 async function loadStrings(): Promise<StringSnapshot> {
   "use cache";
   cacheLife("catalogue");
+  cacheTag(TAG.strings, TAG.stringOffers, TAG.stringPricePoints, TAG.sellers);
   const supabase = createStaticClient();
   if (!supabase) {
     return {
