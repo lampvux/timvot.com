@@ -1,4 +1,4 @@
-import type { BalanceType, Condition, ShaftFlex } from "./types";
+import type { BalanceType, Condition, PlayStyle, ShaftFlex } from "./types";
 import {
   BALANCE_MAX_MM,
   BALANCE_MIN_MM,
@@ -128,6 +128,14 @@ export const BALANCE_MESSAGE_KEY: Record<BalanceType, string> = {
   "head-light": "balanceHeadLight",
   even: "balanceEven",
   "head-heavy": "balanceHeadHeavy",
+};
+
+export const PLAY_STYLE_MESSAGE_KEY: Record<PlayStyle, string> = {
+  attack: "styleAttack",
+  "all-round": "styleAllRound",
+  speed: "styleSpeed",
+  defence: "styleDefence",
+  control: "styleControl",
 };
 
 export const CONDITION_MESSAGE_KEY: Record<Condition, string> = {

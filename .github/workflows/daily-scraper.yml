@@ -119,6 +119,23 @@ jobs:
           printf 'scraping with:'; printf ' %q' "${FLAGS[@]}"; printf '\n'
           npx tsx scripts/scraper/index.ts "${FLAGS[@]}"
 
+      # Court Score is computed in TypeScript and stored in `racket_scores`,
+      # because src/lib/court-score.ts is the published methodology and must
+      # stay the only definition of the formula. The catalogue's default sort
+      # reads that table through the `racket_market` view, so a scrape that
+      # added rackets leaves them unranked until this runs. Reads the catalogue
+      # rather than the scrape's output, so it is worth running even when the
+      # walk went badly.
+      - name: Refresh Court Scores
+        id: market
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run market:refresh -- --verbose
+
       # The three steps below read the catalogue rather than the scrape's
       # output, so they are worth running even when the walk went badly.
       - name: Crawl ProKennex Images & Sync DB
@@ -173,6 +190,7 @@ jobs:
           TEST_SCRAPER: ${{ steps.test_scraper.outcome }}
           TEST_IMAGES: ${{ steps.test_images.outcome }}
           SCRAPE: ${{ steps.scrape.outcome }}
+          MARKET: ${{ steps.market.outcome }}
           IMAGES: ${{ steps.images.outcome }}
           AUDIT: ${{ steps.audit.outcome }}
           BACKUP: ${{ steps.backup.outcome }}
@@ -212,6 +230,7 @@ jobs:
           record "Scraper tests"           "$TEST_SCRAPER" fatal
           record "Image crawler tests"     "$TEST_IMAGES"  fatal
           record "Multi-site scrape & sync" "$SCRAPE"      fatal
+          record "Court Score refresh"      "$MARKET"     fatal
           record "ProKennex image crawl"   "$IMAGES"       fatal
           record "Image ownership audit"   "$AUDIT"        fatal
           record "Post-sync backup"        "$BACKUP"       fatal

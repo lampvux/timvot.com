@@ -147,6 +147,37 @@ Run `npx tsx scripts/score-report.ts` to see the score for every seeded racket.
 **`src/lib/data/repository.ts`** — one read path. Supabase when linked, seed when not,
 same shapes either way, deduped per request with React `cache`.
 
+**`src/lib/data/catalog-page.ts`** — the catalogue listing, paginated where the rows
+are. `/rackets` calls `getCatalogPage(filters, page, pageSize)`, which reads the
+`racket_market` view with the predicates, the ordering, `count: 'exact'` and one page's
+`.range()`, then hydrates only those 24 rackets. The page never holds the catalogue in
+memory to slice it.
+
+`racket_market` (see `supabase/migrations/20260906000000_catalogue_pagination.sql`) is a
+plain view — not materialised — resolving every filter and sort key into a column:
+`effective_price`, `balance_type`, `weight_classes`, `seller_count`, `search_text`. The
+one value it cannot compute is the Court Score, because `court-score.ts` is the
+published methodology and reimplementing it in SQL would put the product's central claim
+in two languages that could disagree. So `npm run market:refresh` computes it with that
+module and stores the result in `racket_scores`; the nightly workflow runs it after each
+sync.
+
+When the view is absent — an unprovisioned project, or a database behind that migration
+— `getCatalogPage` falls back to filtering the in-memory snapshot and logs the migration
+to apply. That is what lets the code deploy before the migration does.
+
+Measure before changing any of this:
+
+```bash
+npm run benchmark                 # sql / postgrest / js layers, today vs proposed
+npm run benchmark -- --explain    # query plans for the SQL scenarios
+```
+
+Read the `baseline:round trip` row first — from a laptop it is most of every `sql`
+number, and subtracting it is the difference between "this query is slow" and "this
+continent is far away". Against production the listing measured ~9.3 s and 7.4 MB to
+render 24 cards before this change, and ~5 ms of database work after.
+
 **`src/components/ds/`** — the design system: `primitives.tsx` (Button, Card, Badge, Tag,
 TrustBadge, Icon), `forms.tsx`, `data.tsx` (BalanceRuler, ScoreBars, PriceHistory,
 PriceDelta, StockLabel).

@@ -37,6 +37,7 @@
     "filters": "Bộ lọc",
     "sort": "Sắp xếp",
     "price": "Giá",
+    "belowList": "Dưới giá niêm yết",
     "from": "từ",
     "sellers": "{count, plural, =0 {chưa có người bán} other {# người bán}}",
     "rackets": "{count, plural, =0 {chưa có mẫu vợt} other {# mẫu vợt}}",
@@ -135,7 +136,11 @@
     "styleQuestion": "Bạn muốn cước hỗ trợ điều gì?",
     "yourSetup": "Cấu hình đề xuất",
     "tension": "Mức căng đề xuất",
-    "feel": { "soft": "Cảm giác mềm", "medium": "Cảm giác vừa", "hard": "Cảm giác cứng" },
+    "feel": {
+      "soft": "Cảm giác mềm",
+      "medium": "Cảm giác vừa",
+      "hard": "Cảm giác cứng"
+    },
     "reason": {
       "attack": "Cước bám cầu, cảm giác cứng giúp người chơi {skill} truyền thêm lực vào những cú đập dốc.",
       "all-round": "Cước bền và dễ chơi mang lại cho người chơi {skill} sự cân bằng giữa lực, kiểm soát và tuổi thọ.",
@@ -165,8 +170,18 @@
     "chartLabel": "Lịch sử giá của {name}",
     "comparePrices": "So sánh giá người bán",
     "inStock": "còn {count}",
-    "feel": { "soft": "Cảm giác mềm", "medium": "Cảm giác vừa", "hard": "Cảm giác cứng" },
-    "style": { "attack": "Tấn công", "all-round": "Toàn diện", "speed": "Tốc độ", "defence": "Phòng thủ", "control": "Kiểm soát" }
+    "feel": {
+      "soft": "Cảm giác mềm",
+      "medium": "Cảm giác vừa",
+      "hard": "Cảm giác cứng"
+    },
+    "style": {
+      "attack": "Tấn công",
+      "all-round": "Toàn diện",
+      "speed": "Tốc độ",
+      "defence": "Phòng thủ",
+      "control": "Kiểm soát"
+    }
   },
   "compare": {
     "title": "So sánh vợt",
