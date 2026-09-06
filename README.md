@@ -452,7 +452,7 @@ npm run scrape:images -- --bucket-strategy=per-provider
 
 | Flag | Default | What it does |
 | ---- | ------- | ------------ |
-| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn` |
+| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet` |
 | `--limit=` | all | Cap the rackets crawled this run |
 | `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
@@ -477,7 +477,7 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 | `woocommerce-store` | apacs, kumpoo-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
 | `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn | Name + full gallery from `products.json`. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
-| `category-pagination` | yonex, gosen-vn, meta-vn | The rendered "all racquets" listing, walked `?p=1…N`. The only way in when a site has no API and no sitemap. |
+| `category-pagination` | yonex, gosen-vn, meta-vn, felet | The rendered "all racquets" listing, walked `?p=1…N`. The only way in when a site has no API and no sitemap. |
 | `yonex-jp-api` | yonex-jp | yonex.co.jp’s own product JSON, keyed by the model code stamped on the frame. |
 | `sitemap` | victor, mizuno-asia, forza | The long tail — discontinued models with no catalogue entry left. Carries no names, so `titleFromHead` reads them from the pages. |
 
@@ -848,6 +848,82 @@ site names differently — "Mira Light" against our "Mira Light Aura", "Ryoga Mu
 "Ryoga Muso Sunrise", "Ryoga Mugen Đền Vàng" against "Ryoga Mugen Pure" — and each would
 need a guess about whether an edition suffix means a different racket. None was made.
 
+### A shop whose product record never reaches the HTML
+
+feletsports.com is Felet's own international store, on the Malaysian SiteGiant platform,
+and it was on the "verified but not registered" list because it looked like it needed a
+browser: it is a Next.js App Router site and its product record arrives in the streamed
+React flight payload rather than in the served markup.
+
+Half of that turned out to be wrong. The *listing* is server-rendered — the
+`/collection/racquet` grid ships every product link and every product name in the HTML —
+so discovery is the same `category-pagination` walk Yonex and Gosen use, three pages of 24
+and a fourth to learn there isn't one. Only the gallery needs the payload.
+
+**One collection covers the whole line.** `/collection/racquet` publishes 63 rackets, and
+its eight sub-collections — professional, master, advance, moderate, novice, super-light,
+training, kids — sum to exactly those 63 with nothing outside them, so the parent is walked
+and the children are not. There is no sitemap to cross-check against: `/sitemap.xml` is the
+store's own 404 page and `/robots.txt` redirects to a CDN path that answers 403, which the
+robots reader treats as "no restrictions" rather than as a refusal.
+
+**The gallery is read from `productDetail` in the flight payload, and this is not
+optional.** Nothing else on the page is usable: there is no schema.org block, the
+`og:image` is a 420×420 crop rather than the hero, and every `<img>` is wrapped in a
+Next.js `/_next/image?url=…&w=…` resize proxy. Worse, the carousel prints wrap-around
+clones — the *last* shot is emitted before the first — so reading tags in document order
+files the wrong photograph as the hero, and the first image stored is what
+`rackets.hero_image_url` becomes. The payload carries `images[]` with a `sort_order` and an
+absolute full-resolution `image_url`, plus `variants[]` with their own shots and a `COLOUR`
+attribute. Reading it also makes the module's oldest rule structural rather than careful: a
+Felet product page lists four or five *other* products' photographs under their own
+`product-<id>/` folders, and reading one product's record cannot collect them.
+
+The payload is reassembled from the `self.__next_f.push([1,"…"])` calls the page streams;
+a 200 kB product record lands in a dozen of them and a value is routinely cut in half
+across two, so every chunk is unescaped and concatenated in document order before the
+object is sliced out.
+
+**The colour is in the product name, not in an attribute.** This store publishes one
+product per colourway — HYPERMAX RED, HYPERMAX BLACK, HYPERMAX WHITE, HYPERMAX BLUE are
+four products and one frame — and says so only in the name. So `titleTransform` hands the
+name to the same `splitColourway` the retailer scrape runs on Vietnamese listings, which
+strips only a *trailing* run of known colour words and backs out the moment what remains
+stops naming a model. That is what collapses those four pages onto one catalogue racket
+with 20 shots, and what leaves the store's plain "ARCANA" alone. The extractor reads the
+same colour back off the name so every stored row carries the colourway it is a photograph
+of. Two colour runs needed a word each to be read whole rather than half: `rose`
+("NEO 722 PURPLE/ROSE RED") and `snow` ("AERO CARBON SNOW WHITE", the Aero Carbon's fifth
+colourway on a page of its own). Neither word appears in any of the catalogue's 3.076
+racket names, so nothing already matched moves.
+
+**30 of the catalogue's 104 Felet rackets match, 28 of them keeping the page.** The
+remaining two are `Woven` and `Woven TJ Power`, which the ownership pass hands to
+`Woven Eighty 8` and `Woven TJ Power V2` — the pages are more exactly theirs. The 74 that
+find nothing are frames this store does not sell: it is a current-line shop, and the
+catalogue's Felet rows come from Vietnamese retailers carrying a decade of stock. Four
+near-misses are refused rather than guessed at, because each would put one racket's
+photography under another's id:
+
+| Catalogue holds | Store publishes | Why it is refused |
+| --------------- | --------------- | ----------------- |
+| Nevow TJ | NEVOW TJ 1000 | `1000` is a model number, not a SKU suffix |
+| Woven TJ | WOVEN TJ 1000 | the same |
+| F-Force | F-FORCE SUPER LIGHT | a lighter frame, not a colourway |
+| Sakura | SAKURRA | one letter, and nothing says which of a misspelling or a sequel it is |
+
+Arcana is the shape of the rest: the store sells four colours of a frame it calls plain
+"ARCANA", and the catalogue holds Arcana 80L, 80L Plus, 80S, 80S Plus, 90 and Frame.
+Nothing on either side says which of the six the store means. The catalogue also holds a
+bare "Arcana" row, and that is the one that takes all four pages.
+
+**The first live run stored 176 images across those 28 rackets**, every one of them coming
+back with a gallery, at 1080×1080 to 2400×2400 and 154 MB in total. 61 of the 176 rows
+carry a colourway — BLACK, GREY, NAVY BLUE, WHITE, RED, BLUE, WHITE/BLUE, WHITE/YELLOW,
+BLACK/GREEN, PURPLE/ROSE RED, SNOW WHITE. `images:audit` afterwards reports no slug or URL
+mismatch, no source page with two owners, no stale hero pointer and no unreferenced object
+under `racket-images/felet/`.
+
 ### When the manufacturer's site is not a shop
 
 Every other provider here reads a storefront, and a storefront is a list of things somebody
@@ -1031,19 +1107,19 @@ comes back looking like a successful download.
 
 ### Coverage, and the gaps
 
-Eleven of the catalogue's 36 brands are wired up across fourteen providers: the four largest
+Twelve of the catalogue's 36 brands are wired up across fifteen providers: the four largest
 by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese sites publish their whole
-racket line in two or three requests, Forza, whose own site is not a shop and supplied the
-rackets as well as the photographs, and Kamito and Adidas, neither of which has a racket
-site and which are together the one brand pair here photographed by a retailer. Every other
-brand was probed against its real site with browser headers before being written off:
+racket line in two or three requests, Felet, whose Malaysian store publishes its current
+line in three, Forza, whose own site is not a shop and supplied the rackets as well as the
+photographs, and Kamito and Adidas, neither of which has a racket site and which are
+together the one brand pair here photographed by a retailer. Every other brand was probed
+against its real site with browser headers before being written off:
 
 | Brand | Rackets | Why there is no provider |
 | ----- | ------- | ------------------------ |
 | Li-Ning | 336 | li-ning.com is a corporate landing page linking out to Amazon and AliExpress; it publishes no catalogue. en.lining.com answers 403 to any non-browser client. |
 | Fleet | 153 | fleet.com.my answers 503. |
 | Proace | 112 | no official domain resolves. |
-| Felet | 103 | no official domain resolves. |
 | Kawasaki | 86 | kawasaki-sports.com is the OEM sportswear-fabric business, not the badminton brand — its 183 products are textiles. |
 | Flypower, Ashaway, Babolat | 85–13 | sites are alive but publish neither a sitemap nor a product API, so the catalogue cannot be enumerated without guessing URLs. |
 | Redson, Vicleo, Adonex, … | ≤30 | no resolvable official site. |

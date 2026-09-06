@@ -44,6 +44,10 @@ const COLOUR_WORDS = new Set([
   "black", "white", "blue", "red", "yellow", "pink", "purple", "orange",
   "grey", "gray", "silver", "gold", "navy", "green", "charcoal", "violet",
   "cyan", "beige", "ivory", "bronze", "copper", "teal", "lime", "coral",
+  // feletsports.com sells the Neo 722 in four colours and writes one of them
+  // "PURPLE/ROSE RED". Without `rose` the run stops there and the page reads as
+  // a model called "Neo 722 Purple/Rose".
+  "rose",
 ]);
 
 /**
@@ -72,6 +76,10 @@ const COLOUR_MODIFIERS = new Set([
   "cốm", "com",
   "mint",
   "light", "dark", "neon", "matte",
+  // "AERO CARBON SNOW WHITE" is the fifth colourway of the Aero Carbon, on a
+  // page of its own. A modifier rather than a head, so a lone "Snow" can never
+  // start a run and eat a model name.
+  "snow",
 ]);
 
 /** Separators that can sit between two colours without ending the run. */
