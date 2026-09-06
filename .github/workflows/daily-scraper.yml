@@ -121,7 +121,20 @@ jobs:
 
       # The three steps below read the catalogue rather than the scrape's
       # output, so they are worth running even when the walk went badly.
-      - name: Crawl ProKennex Images & Sync DB
+      #
+      # Two providers, one step, and the same policy as the shop walk above:
+      # `discoverCandidates` returns its failure rather than throwing, so a
+      # provider whose catalogue has moved is reported as unreadable and the
+      # other still crawls. Both are cheap and neither needs a browser —
+      # ProKennex is a WooCommerce category tree and Felet is three rendered
+      # listing pages plus one product page per matched racket — so they share
+      # the 45-minute cap rather than each claiming one and pushing the sum of
+      # the step caps toward the job's own timeout.
+      #
+      # Rackets that already have images are skipped unless --refresh is
+      # passed, so a nightly run costs the discovery walk and whatever the
+      # store has added since, not the whole gallery again.
+      - name: Crawl ProKennex & Felet Images & Sync DB
         id: images
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -129,7 +142,7 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run scrape:images -- --provider=pro-kennex --verbose
+        run: npm run scrape:images -- --provider=pro-kennex,felet --verbose
 
       - name: Audit Racket Image Ownership
         id: audit
@@ -212,7 +225,7 @@ jobs:
           record "Scraper tests"           "$TEST_SCRAPER" fatal
           record "Image crawler tests"     "$TEST_IMAGES"  fatal
           record "Multi-site scrape & sync" "$SCRAPE"      fatal
-          record "ProKennex image crawl"   "$IMAGES"       fatal
+          record "Manufacturer image crawl" "$IMAGES"      fatal
           record "Image ownership audit"   "$AUDIT"        fatal
           record "Post-sync backup"        "$BACKUP"       fatal
 
