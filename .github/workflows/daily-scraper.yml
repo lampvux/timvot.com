@@ -101,6 +101,17 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Without these the scrape writes prices to Postgres and the deployed
+          # site keeps serving the old ones until `cacheLife("prices")` expires
+          # — up to an hour after the number changed. `scripts/scraper/
+          # revalidate.ts` skips silently when they are absent, which is why
+          # this went unnoticed: the run still says it succeeded.
+          #
+          # Both are optional. Add REVALIDATE_URL (https://<site>/api/revalidate)
+          # and REVALIDATE_SECRET (the same value the deployment has) as
+          # repository secrets to have a scrape publish the moment it finishes.
+          REVALIDATE_URL: ${{ secrets.REVALIDATE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
           # Read as environment values rather than interpolated into the script,
           # so a dispatch input cannot become shell.
           SITE: ${{ inputs.site }}
