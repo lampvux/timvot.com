@@ -88,6 +88,22 @@ export function Select({
   );
 }
 
+export function Textarea({
+  className,
+  ...props
+}: ComponentProps<"textarea">) {
+  return (
+    <textarea
+      className={cx(
+        FIELD_BASE,
+        "min-h-28 resize-y px-3.5 py-3 text-[14px] leading-6",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 export function Checkbox({
   label,
   count,
@@ -113,7 +129,7 @@ export function Checkbox({
           bg-center bg-no-repeat transition-colors duration-[90ms]"
         {...props}
       />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1">{label}</span>
       {count !== undefined && (
         <span className="font-mono text-[11px] text-tertiary tabular-nums">
           {count}

@@ -140,13 +140,14 @@ async function countRows(
 
 export async function getDashboardData(staff: StaffSession) {
   const supabase = await createClient();
-  const [rackets, strings, sellers, liveDeals, reviewQueue, imageCount] =
+  const [rackets, strings, sellers, liveDeals, reviewQueue, sellerReviewQueue, imageCount] =
     await Promise.all([
       countRows(supabase, "rackets"),
       countRows(supabase, "strings"),
       countRows(supabase, "sellers"),
       countRows(supabase, "offers", ["status", "live"]),
       countRows(supabase, "reviews", ["status", "pending"]),
+      countRows(supabase, "seller_applications", ["status", "pending"]),
       countRows(supabase, "racket_images"),
     ]);
 
@@ -166,6 +167,7 @@ export async function getDashboardData(staff: StaffSession) {
   return {
     metrics,
     reviewQueue,
+    sellerReviewQueue,
     imageCount,
     activity: (activity ?? []) as AuditEvent[],
     staff,

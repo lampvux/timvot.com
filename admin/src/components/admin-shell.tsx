@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  Activity, BookOpenText, Boxes, ChartNoAxesColumnIncreasing, ChevronRight,
+  Activity, BookOpenText, Boxes, ChartNoAxesColumnIncreasing, ChevronRight, ClipboardCheck,
   CircleDollarSign, GalleryVerticalEnd, LayoutDashboard, LogOut, Menu,
   PackageSearch, PanelLeftClose, ShieldCheck, ShoppingBasket, Store, Tags, Users, X,
 } from "lucide-react";
@@ -18,6 +18,7 @@ const collectionIcons: Record<string, typeof PackageSearch> = {
   "racket-variants": Boxes,
   "racket-images": GalleryVerticalEnd,
   strings: PanelLeftClose,
+  "seller-applications": ClipboardCheck,
   sellers: Store,
   offers: CircleDollarSign,
   "price-points": ChartNoAxesColumnIncreasing,

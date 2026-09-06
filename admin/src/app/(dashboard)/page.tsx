@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, GalleryVerticalEnd, ShieldAlert } from "lucide-react";
+import { ArrowRight, ClipboardCheck, GalleryVerticalEnd, ShieldAlert } from "lucide-react";
 import { ActivityList } from "@/components/activity-list";
 import { PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth";
@@ -18,7 +18,8 @@ export default async function DashboardPage() {
       <section aria-label="Catalogue metrics" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {data.metrics.map((metric) => <Link key={metric.label} href={metric.href} className="admin-card group p-5 hover:border-[#c9bdf3]"><div className="flex items-start justify-between"><span className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${tones[metric.tone]}`}>{metric.label}</span><ArrowRight aria-hidden="true" className="size-4 text-[#8a8491] transition-transform group-hover:translate-x-0.5" /></div><p className="mt-6 text-3xl font-bold tabular-nums tracking-[-0.04em]">{metric.value.toLocaleString()}</p><p className="mt-1 text-xs text-[#77717e]">Open records</p></Link>)}
       </section>
-      <section className="mt-4 grid gap-4 md:grid-cols-2">
+      <section className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Link href="/content/seller-applications" className="admin-card flex items-center gap-4 p-5 hover:border-[#c9bdf3]"><span className="grid size-11 place-items-center rounded-xl bg-[#eee9ff] text-[#5b37d2]"><ClipboardCheck aria-hidden="true" className="size-5" /></span><div><p className="text-2xl font-bold tabular-nums">{data.sellerReviewQueue.toLocaleString()}</p><p className="text-sm text-[#686470]">Seller applications waiting for review</p></div><ArrowRight aria-hidden="true" className="ml-auto size-5 text-[#8a8491]" /></Link>
         <Link href="/content/reviews" className="admin-card flex items-center gap-4 p-5 hover:border-[#e4c47e]"><span className="grid size-11 place-items-center rounded-xl bg-[#fff4d6] text-[#9a5b00]"><ShieldAlert aria-hidden="true" className="size-5" /></span><div><p className="text-2xl font-bold tabular-nums">{data.reviewQueue.toLocaleString()}</p><p className="text-sm text-[#686470]">Reviews waiting for moderation</p></div><ArrowRight aria-hidden="true" className="ml-auto size-5 text-[#8a8491]" /></Link>
         <Link href="/content/racket-images" className="admin-card flex items-center gap-4 p-5 hover:border-[#c9bdf3]"><span className="grid size-11 place-items-center rounded-xl bg-[#eee9ff] text-[#5b37d2]"><GalleryVerticalEnd aria-hidden="true" className="size-5" /></span><div><p className="text-2xl font-bold tabular-nums">{data.imageCount.toLocaleString()}</p><p className="text-sm text-[#686470]">Racket gallery images</p></div><ArrowRight aria-hidden="true" className="ml-auto size-5 text-[#8a8491]" /></Link>
       </section>

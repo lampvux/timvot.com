@@ -12,6 +12,7 @@ export const navigationGroups = [
   {
     label: "Marketplace",
     items: [
+      { key: "seller-applications", label: "Seller applications" },
       { key: "sellers", label: "Sellers" },
       { key: "offers", label: "Racket deals" },
       { key: "price-points", label: "Racket price history" },
