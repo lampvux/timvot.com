@@ -3,6 +3,10 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, isSupabaseConfigured } from "./config";
+import {
+  REMEMBER_SESSION_COOKIE,
+  cookieOptionsForPersistence,
+} from "./cookies";
 
 /**
  * Static Supabase client (no cookies required).
@@ -21,11 +25,17 @@ export function createStaticClient(): SupabaseClient | null {
  * If executed inside a static context (e.g. `generateStaticParams`), falls back
  * to a static client rather than crashing on `cookies()`.
  */
-export async function createClient(): Promise<SupabaseClient | null> {
+export async function createClient({
+  rememberSession,
+}: {
+  rememberSession?: boolean;
+} = {}): Promise<SupabaseClient | null> {
   if (!isSupabaseConfigured) return null;
 
   try {
     const cookieStore = await cookies();
+    const shouldRemember =
+      rememberSession ?? cookieStore.get(REMEMBER_SESSION_COOKIE)?.value === "1";
 
     return createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
       cookies: {
@@ -35,7 +45,11 @@ export async function createClient(): Promise<SupabaseClient | null> {
         setAll(cookiesToSet) {
           try {
             for (const { name, value, options } of cookiesToSet) {
-              cookieStore.set(name, value, options);
+              cookieStore.set(
+                name,
+                value,
+                cookieOptionsForPersistence(options, shouldRemember),
+              );
             }
           } catch {
             // Called from a Server Component. The proxy refreshes the session,

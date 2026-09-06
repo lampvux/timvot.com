@@ -125,7 +125,10 @@ verification is optional because it requires Playwright Chromium; install it wit
 | `/[locale]/guides`               | Editorial index                                          |
 | `/[locale]/methodology`          | How the Court Score is calculated — the trust page       |
 | `/[locale]/account`              | Watchlist and price alerts                               |
+| `/[locale]/account/profile`      | Account profile editing                                  |
+| `/[locale]/seller`               | Seller application and review status                     |
 | `/[locale]/seller/dashboard`     | Listings, stock, order counts                            |
+| `/[locale]/seller/dashboard/listings/new` | Approved-seller listing submission             |
 | `/[locale]/sign-in`, `/sign-up`  | Supabase Auth                                            |
 | `/auth/callback`                 | Email confirmation exchange                              |
 
@@ -1091,5 +1094,5 @@ cannot write either the table or the bucket.
 
 ## Not built
 
-Payments, order capture, seller application flow, admin moderation queue, review
-submission, `/vs/[a]-vs-[b]` SEO pages, guide bodies (index only), dark mode.
+Payments, order capture, review submission, `/vs/[a]-vs-[b]` SEO pages, guide
+bodies (index only), dark mode.

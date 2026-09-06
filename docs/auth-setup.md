@@ -2,6 +2,8 @@
 
 Shuttlecraft uses Supabase Auth with cookie sessions (`@supabase/ssr`). Three
 sign-in methods are wired up: **email and password**, **Google** and **Facebook**.
+Registration includes password confirmation and lets an unverified account
+request another confirmation email.
 
 An account is only ever needed for the watchlist, price alerts and reviews.
 Browsing, comparing and the Finder need nothing, and that should stay true — do
@@ -35,10 +37,12 @@ The pieces in the code:
 | File | Role |
 | ---- | ---- |
 | `src/lib/supabase/config.ts` | Which providers to render, and the site URL OAuth returns to |
-| `src/lib/auth-actions.ts` | `signIn`, `signUp`, `signInWithProvider`, `signOut` |
+| `src/lib/auth-actions.ts` | Sign-in, sign-up, resend-confirmation, OAuth and sign-out actions |
+| `src/lib/supabase/cookies.ts` | Applies remembered or browser-session lifetime to Supabase cookies |
 | `src/components/oauth-buttons.tsx` | The Google and Facebook buttons |
 | `src/app/auth/callback/route.ts` | Exchanges the one-time code for a session |
 | `src/proxy.ts` | Refreshes the session; **excludes `/auth`** (see below) |
+| `src/app/[locale]/account/profile/page.tsx` | Authenticated display-name and skill-level editing |
 
 > **`/auth` must stay out of the proxy matcher.** `localePrefix` is `"always"`,
 > so next-intl redirects unprefixed paths — which sent `/auth/callback?code=…`
@@ -69,6 +73,17 @@ Sign-up sends a confirmation email whose link comes back through
 Supabase's **Confirm email** setting under Authentication → Providers → Email.
 Turn it off there if you want sign-up to log people straight in, but leave it on
 for anything public.
+
+When Supabase reports an existing account or an unconfirmed sign-in, the auth
+form exposes **Resend verification email**. The server action uses Supabase's
+signup resend endpoint and keeps the same callback URL as the original email.
+Supabase deliberately avoids revealing whether arbitrary addresses exist, so
+the UI gives the same neutral success response.
+
+The login checkbox only controls the lifetime of Supabase's encrypted session
+cookies. Checked sessions receive a persistent lifetime; unchecked sessions are
+browser-session cookies. The application never stores the password in a custom
+cookie.
 
 For local development the default Supabase SMTP is rate-limited to a handful of
 messages an hour. Add your own SMTP under **Project Settings → Authentication →
