@@ -883,6 +883,13 @@ Arcana is the shape of the rest: the store sells four colours of a frame it call
 Nothing on either side says which of the six the store means. The catalogue also holds a
 bare "Arcana" row, and that is the one that takes all four pages.
 
+**The first live run stored 176 images across those 28 rackets**, every one of them coming
+back with a gallery, at 1080×1080 to 2400×2400 and 154 MB in total. 61 of the 176 rows
+carry a colourway — BLACK, GREY, NAVY BLUE, WHITE, RED, BLUE, WHITE/BLUE, WHITE/YELLOW,
+BLACK/GREEN, PURPLE/ROSE RED, SNOW WHITE. `images:audit` afterwards reports no slug or URL
+mismatch, no source page with two owners, no stale hero pointer and no unreferenced object
+under `racket-images/felet/`.
+
 ### When the manufacturer's site is not a shop
 
 Every other provider here reads a storefront, and a storefront is a list of things somebody
