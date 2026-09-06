@@ -200,6 +200,18 @@ export interface RacketWithMarket extends Racket {
   history: PricePoint[];
 }
 
+/**
+ * What a catalogue card needs, and nothing more.
+ *
+ * The axis breakdowns and the price series belong to the detail page, which
+ * computes them from a racket's full review and price history. A card shows
+ * neither, and the paginated catalogue read never fetches them — so this is the
+ * shape it can honestly return. `RacketWithMarket` satisfies it, which is why
+ * the detail page and comparison can pass their richer objects to the same card
+ * without a conversion.
+ */
+export type CatalogRacket = Omit<RacketWithMarket, "spec" | "player" | "history">;
+
 export interface AxisScores {
   power: number;
   speed: number;

@@ -2,7 +2,8 @@ import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { Icon } from "@/components/ds/primitives";
-import { getUser } from "@/lib/supabase/server";
+import { AccountMenu } from "@/components/account-menu";
+import { createClient, getUser } from "@/lib/supabase/server";
 
 /**
  * The one piece of the chrome that knows who is looking.
@@ -42,7 +43,24 @@ async function AccountLink({ signedIn }: { signedIn: boolean }) {
 
 async function ResolvedAccountLink() {
   const user = await getUser();
-  return <AccountLink signedIn={Boolean(user)} />;
+  if (!user) return <AccountLink signedIn={false} />;
+
+  const supabase = await createClient();
+  const { data: profile } = supabase
+    ? await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .maybeSingle()
+    : { data: null };
+
+  const email = user.email ?? "";
+  const displayName =
+    profile?.display_name ||
+    String(user.user_metadata?.display_name ?? "").trim() ||
+    email;
+
+  return <AccountMenu email={email} displayName={displayName} />;
 }
 
 /**

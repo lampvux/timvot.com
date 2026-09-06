@@ -13,11 +13,9 @@ import {
   type FacetCounts,
 } from "@/components/filter-rail";
 import {
-  applyFilters,
-  countFilteredRackets,
-  facetCounts,
+  countCatalogMatches,
   getBrands,
-  getRackets,
+  getCatalogPage,
 } from "@/lib/data/repository";
 import { Pagination } from "@/components/pagination";
 import { CatalogSkeleton } from "@/components/skeletons";
@@ -40,9 +38,6 @@ export async function generateMetadata({
   const t = await getTranslations({ locale, namespace: "catalog" });
   return { title: t("title") };
 }
-
-const toRecord = <T extends string>(map: Map<T, number>): Record<string, number> =>
-  Object.fromEntries(map.entries());
 
 /**
  * The catalogue's shell prerenders; the filtered result streams into it.
@@ -90,60 +85,64 @@ async function CatalogResults({
 
   const search = await searchParams;
   const filters = parseFilters(search);
-  const [allRackets, allBrands] = await Promise.all([getRackets(), getBrands()]);
+
+  // One request for one page. The count, the facets and the 24 cards all come
+  // back from `racket_market` with the offset applied in Postgres — the page
+  // never holds the catalogue in memory to slice it. See
+  // `src/lib/data/catalog-page.ts` for the fallback when the view is absent.
+  const [result, allBrands] = await Promise.all([
+    getCatalogPage(filters, parsePage(search), PAGE_SIZE),
+    getBrands(),
+  ]);
   const brands = orderBrandsByPopularity(allBrands);
 
-  // `results` stays the full match set: the heading count, the empty-state
-  // suggestions and the facet counts are all answers about the whole result,
-  // not about one page of it. Only the grid is sliced.
-  const results = applyFilters(allRackets, filters);
-  const counts = facetCounts(allRackets, filters);
-
-  const pages = pageCount(results.length);
-  const page = Math.min(parsePage(search), pages);
-  const pageResults = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  const facets: FacetCounts = {
-    brands: toRecord(counts.brands),
-    weightClasses: toRecord(counts.weightClasses),
-    balanceTypes: toRecord(counts.balanceTypes),
-    flexes: toRecord(counts.flexes),
-  };
+  const total = result.total;
+  const pages = pageCount(total);
+  const page = Math.min(result.page, pages);
+  const pageResults = result.rackets;
+  const facets: FacetCounts = result.facets;
 
   /**
    * Empty states say what to do next, with the number that makes the advice
    * actionable: "Removing 'extra stiff' gives 12 results."
    */
   let emptyBody = t("emptyBodyNoSuggestion");
-  if (results.length === 0) {
-    const candidates: { label: string; count: number }[] = [
+  if (total === 0) {
+    // Each candidate is one `head: true` count — no rows, just the number. They
+    // run in parallel, and only on a page that already has nothing to show.
+    const probes: { label: string; filters: typeof filters }[] = [
       ...filters.flexes.map((flex) => ({
         label: te(FLEX_MESSAGE_KEY[flex]),
-        count: countFilteredRackets(allRackets, {
+        filters: {
           ...filters,
           flexes: filters.flexes.filter((f) => f !== flex),
-        }),
+        },
       })),
       ...filters.balanceTypes.map((balanceType) => ({
         label: te(BALANCE_MESSAGE_KEY[balanceType]),
-        count: countFilteredRackets(allRackets, {
+        filters: {
           ...filters,
           balanceTypes: filters.balanceTypes.filter((b) => b !== balanceType),
-        }),
+        },
       })),
       ...(filters.priceMin !== null || filters.priceMax !== null
         ? [
             {
               label: t("sortPriceAsc"),
-              count: countFilteredRackets(allRackets, {
-                ...filters,
-                priceMin: null,
-                priceMax: null,
-              }),
+              filters: { ...filters, priceMin: null, priceMax: null },
             },
           ]
         : []),
-    ].filter((candidate) => candidate.count > 0);
+    ];
+
+    const candidates = (
+      await Promise.all(
+        probes.map(async (probe) => ({
+          label: probe.label,
+          count: await countCatalogMatches(probe.filters),
+        })),
+      )
+    ).filter((candidate) => candidate.count > 0);
 
     const best = candidates.sort((a, b) => b.count - a.count)[0];
     if (best)
@@ -156,7 +155,7 @@ async function CatalogResults({
         filters={filters}
         facets={facets}
         brands={brands}
-        resultCount={results.length}
+        resultCount={total}
       />
 
       <div className="min-w-0 flex-1 px-4 pb-10 pt-6 lg:px-10">
@@ -167,7 +166,7 @@ async function CatalogResults({
             aria-atomic="true"
           >
             <span className="font-mono text-[24px] font-bold tabular-nums">
-              {results.length}
+              {total}
             </span>{" "}
             {t("title").toLowerCase()}
           </h1>
@@ -176,7 +175,7 @@ async function CatalogResults({
               filters={filters}
               facets={facets}
               brands={brands}
-              resultCount={results.length}
+              resultCount={total}
             />
             <SortSelect filters={filters} />
           </div>
@@ -184,7 +183,7 @@ async function CatalogResults({
 
         <ActiveFilterPills filters={filters} brands={brands} />
 
-        {results.length === 0 ? (
+        {total === 0 ? (
           <EmptyState
             title={t("emptyTitle")}
             body={emptyBody}
@@ -214,7 +213,7 @@ async function CatalogResults({
               filters={filters}
               page={page}
               pages={pages}
-              total={results.length}
+              total={total}
             />
           </>
         )}

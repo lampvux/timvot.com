@@ -23,6 +23,12 @@ import type {
 import * as seed from "./seed";
 import { TAG } from "./tags";
 import {
+  countCatalogMatchesInView,
+  readCatalogPageFromView,
+  type CatalogPage,
+} from "./catalog-page";
+export type { CatalogPage, CatalogFacets } from "./catalog-page";
+import {
   mapBrand,
   mapGuide,
   mapOffer,
@@ -675,6 +681,64 @@ export function sortRackets(
     default:
       return copy.sort(byScore);
   }
+}
+
+/* --------------------------------------------------------- catalogue page */
+
+/**
+ * One page of the catalogue, paginated where the rows are.
+ *
+ * This is the only function the listing route should call. It asks Postgres for
+ * 24 rows and a total (`catalog-page.ts`), and falls back to filtering the
+ * in-memory snapshot when the view is not there to answer — an unprovisioned
+ * project, a database behind `20260906000000_catalogue_pagination.sql`, or any
+ * query error. Both routes return the same shape, so the page never branches on
+ * which one answered; `source` is reported for the benchmark's benefit, not for
+ * the UI's.
+ *
+ * The fallback is not a second read path in the sense CLAUDE.md forbids: it is
+ * this function's own degraded mode, behind this function's own signature, and
+ * it reuses the same `filterRackets`/`sortRackets` predicates the fast path
+ * expresses as SQL.
+ */
+export async function getCatalogPage(
+  filters: CatalogFilters,
+  page: number,
+  pageSize: number,
+): Promise<CatalogPage> {
+  const fromView = await readCatalogPageFromView(filters, page, pageSize);
+  if (fromView) return { ...fromView, source: "view" };
+
+  const all = await getRackets();
+  const matched = sortRackets(filterRackets(all, filters), filters.sort);
+  const counts = facetCounts(all, filters);
+  const toRecord = <T extends string>(map: Map<T, number>): Record<string, number> =>
+    Object.fromEntries(map.entries());
+
+  return {
+    rackets: matched.slice((page - 1) * pageSize, page * pageSize),
+    total: matched.length,
+    page,
+    facets: {
+      brands: toRecord(counts.brands),
+      weightClasses: toRecord(counts.weightClasses),
+      balanceTypes: toRecord(counts.balanceTypes),
+      flexes: toRecord(counts.flexes),
+    },
+    source: (await loadSnapshot()).source === "seed" ? "seed" : "snapshot",
+  };
+}
+
+/**
+ * How many rackets a filter set matches. Used only by the empty state, which
+ * needs a number to make its advice worth following.
+ */
+export async function countCatalogMatches(
+  filters: CatalogFilters,
+): Promise<number> {
+  const fromView = await countCatalogMatchesInView(filters);
+  if (fromView !== null) return fromView;
+  return countFilteredRackets(await getRackets(), filters);
 }
 
 /** Facet counts, computed against everything except that facet's own filter. */

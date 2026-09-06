@@ -60,10 +60,12 @@ export function OAuthButtons({
   providers,
   locale,
   disabled,
+  rememberSession = false,
 }: {
   providers: OAuthProvider[];
   locale: Locale;
   disabled?: boolean;
+  rememberSession?: boolean;
 }) {
   const t = useTranslations("auth");
   const [state, action, pending] = useActionState<AuthState, FormData>(
@@ -86,6 +88,11 @@ export function OAuthButtons({
 
       <form action={action} className="mt-4 flex flex-col gap-2.5">
         <input type="hidden" name="locale" value={locale} />
+        <input
+          type="hidden"
+          name="remember"
+          value={rememberSession ? "1" : "0"}
+        />
 
         {providers.map((provider) => {
           const Mark = MARKS[provider];

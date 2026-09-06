@@ -7,7 +7,8 @@ the same Supabase project as the public storefront.
 ## Local setup
 
 1. Copy `.env.example` to `.env.local` and provide the Supabase values.
-2. From the repository root, apply `supabase/migrations/20260905000000_admin_console.sql`.
+2. From the repository root, apply the migrations through
+   `supabase/migrations/20260906000000_account_seller_onboarding.sql`.
 3. In this directory, run `npm run bootstrap:admin` once.
 4. Run `npm run dev` and open `http://localhost:3000/login`.
 
@@ -36,3 +37,8 @@ npm run typecheck
 npm run lint
 npm run build
 ```
+
+Seller applications are reviewed at `/content/seller-applications`. Approval is
+transactional: it creates the applicant's seller record, promotes the profile to
+the seller role, and only then allows listing submissions. New seller offers
+enter catalogue review instead of publishing immediately.

@@ -8,18 +8,14 @@ import { Link } from "@/i18n/navigation";
 import type { Locale } from "@/i18n/routing";
 import {
   Badge,
-  Button,
   ButtonLinkStyle,
   EmptyState,
   Eyebrow,
+  Icon,
   TrustBadge,
 } from "@/components/ds/primitives";
 import { StockLabel } from "@/components/ds/data";
-import {
-  getOffersForSeller,
-  getSellers,
-  loadSnapshot,
-} from "@/lib/data/repository";
+import { getOffersForSeller, loadSnapshot } from "@/lib/data/repository";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { CONDITION_MESSAGE_KEY, formatDong } from "@/lib/format";
 import type { SellerTier } from "@/lib/types";
@@ -52,35 +48,47 @@ export default async function SellerDashboardPage({
   const ts = await getTranslations("sellers");
   const te = await getTranslations("enums");
   const tk = await getTranslations("stock");
+  const ta = await getTranslations("auth");
+  const tc = await getTranslations("common");
 
-  const snapshot = await loadSnapshot();
   const user = await getUser();
 
-  /**
-   * On a live project the dashboard is scoped to the seller row that owns the
-   * signed-in account. Without one, it renders the seeded storefront and says
-   * so — a dashboard that silently shows someone else's inventory would be a
-   * far worse failure than an honest banner.
-   */
-  let seller = null as Awaited<ReturnType<typeof getSellers>>[number] | null;
-  let seeded = false;
+  if (!user) {
+    return (
+      <div className="page-shell py-12 lg:py-20">
+        <div className="mx-auto max-w-[520px]">
+          <EmptyState
+            title={ta("signInTitle")}
+            body={t("signInRequired")}
+            action={
+              <Link
+                href="/sign-in"
+                className={ButtonLinkStyle({ variant: "primary", size: "md" })}
+              >
+                {tc("signIn")}
+              </Link>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
 
-  if (user) {
-    const supabase = await createClient();
-    if (supabase) {
-      const { data } = await supabase
+  const snapshot = await loadSnapshot();
+  let seller: (typeof snapshot.sellers)[number] | null = null;
+  const supabase = await createClient();
+  if (supabase) {
+    const [{ data: sellerRow }, { data: profile }] = await Promise.all([
+      supabase
         .from("sellers")
         .select("id")
         .eq("owner_id", user.id)
-        .maybeSingle();
-      if (data?.id)
-        seller = snapshot.sellers.find((s) => s.id === data.id) ?? null;
+        .maybeSingle(),
+      supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+    ]);
+    if (sellerRow?.id && profile?.role === "seller") {
+      seller = snapshot.sellers.find((entry) => entry.id === sellerRow.id) ?? null;
     }
-  }
-
-  if (!seller && snapshot.source === "seed") {
-    seller = snapshot.sellers[0] ?? null;
-    seeded = true;
   }
 
   if (!seller) {
@@ -92,7 +100,7 @@ export default async function SellerDashboardPage({
             body={t("notASellerBody")}
             action={
               <Link
-                href="/sellers"
+                href="/seller"
                 className={ButtonLinkStyle({ variant: "primary", size: "md" })}
               >
                 {ts("applyCta")}
@@ -121,22 +129,19 @@ export default async function SellerDashboardPage({
 
   return (
     <div className="page-shell py-8 lg:py-12">
-      {seeded && (
-        <p className="mb-5 rounded-md border border-[color-mix(in_srgb,var(--signal-caution)_30%,transparent)] bg-caution-bg px-3.5 py-2.5 text-body-sm text-caution">
-          Seeded data. Link a Supabase project and a seller row to see your own
-          inventory here.
-        </p>
-      )}
-
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="display text-[27px] text-primary lg:text-h1">
           {seller.name}
         </h1>
         <TrustBadge state={TIER_STATE[seller.tier]} label={ts(tierKey)} />
         <div className="ml-auto">
-          <Button variant="primary" size="md" iconLeft="Plus" disabled>
+          <Link
+            href="/seller/dashboard/listings/new"
+            className={ButtonLinkStyle({ variant: "primary", size: "md" })}
+          >
+            <Icon name="Plus" size="sm" />
             {t("addListing")}
-          </Button>
+          </Link>
         </div>
       </div>
 
