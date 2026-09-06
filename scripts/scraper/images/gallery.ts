@@ -17,6 +17,7 @@
 
 import * as cheerio from "cheerio";
 import { decodeEntities } from "../http";
+import { splitColourway, stripVariantTokens } from "../colourway";
 
 export interface GalleryImage {
   /** Full-resolution URL, after any known upscale trick for the platform. */
@@ -550,6 +551,138 @@ function readJsonArray(block: string, key: string): unknown[] {
 
   return [];
 }
+
+/* --------------------------------------------------------------- SiteGiant */
+
+/**
+ * Reassemble the React flight payload a Next.js App Router page streams.
+ *
+ * The payload arrives as a run of `self.__next_f.push([1, "<chunk>"])` calls
+ * whose second argument is a JavaScript string literal, and a value can be cut
+ * in half across two of them — SiteGiant's product record is 200 kB and lands
+ * in a dozen pieces. So every chunk is unescaped with `JSON.parse` (the literal
+ * is already valid JSON) and concatenated in document order, which is the order
+ * the browser's own `push` calls would have appended them in.
+ *
+ * A chunk that does not parse is skipped rather than aborting the read: the
+ * page also pushes bootstrap arrays that are not string literals at all, and
+ * they carry nothing this file wants.
+ */
+function flightPayload(html: string): string {
+  const chunks: string[] = [];
+
+  for (const match of html.matchAll(
+    /self\.__next_f\.push\(\[\d+\s*,\s*("(?:[^"\\]|\\.)*")/g,
+  )) {
+    try {
+      chunks.push(JSON.parse(match[1]) as string);
+    } catch {
+      /* not a string chunk; the next one may be */
+    }
+  }
+
+  return chunks.join("");
+}
+
+interface SiteGiantImage {
+  image_url?: string;
+  sort_order?: number;
+  visibility?: string;
+}
+
+interface SiteGiantVariant {
+  attributes?: { attribute?: string; value?: string }[];
+  images?: SiteGiantImage[];
+}
+
+interface SiteGiantProduct {
+  name?: string;
+  images?: SiteGiantImage[];
+  variants?: SiteGiantVariant[];
+}
+
+/** The colour a SiteGiant variant is filed under. The store spells it both ways. */
+function variantColour(variant: SiteGiantVariant): string | undefined {
+  for (const attribute of variant.attributes ?? []) {
+    if (/^colou?r$/i.test(attribute.attribute ?? "") && attribute.value) return attribute.value;
+  }
+  return undefined;
+}
+
+function siteGiantImages(
+  source: SiteGiantImage[] | undefined,
+  pageUrl: string,
+  colourway: string | undefined,
+  into: GalleryImage[],
+): void {
+  // `sort_order` is the shop's own ordering and starts at 1 with the shot the
+  // page uses as its hero. Sorting by it rather than trusting array order costs
+  // nothing and is what the field is for.
+  const ordered = [...(source ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  for (const image of ordered) {
+    if (image.visibility === "no") continue;
+    const url = absolute((image.image_url ?? "").split("?")[0], pageUrl);
+    if (!isPlausible(url)) continue;
+    into.push({ url, position: into.length, colourway });
+  }
+}
+
+/**
+ * SiteGiant (feletsports.com), whose product record is in the flight payload.
+ *
+ * The rendered page is no use to any of the extractors above it: there is no
+ * schema.org block, the og:image is a 420×420 crop, and every `<img>` on the
+ * page is wrapped in a Next.js `/_next/image?url=…&w=…` resize proxy. Worse,
+ * the carousel prints wrap-around clones — the last shot is emitted *before*
+ * the first — so reading the tags in document order would file the wrong
+ * photograph as the hero, and `rackets.hero_image_url` is the first row stored.
+ *
+ * What the page does carry is the whole product as the shop's CMS holds it,
+ * under `productDetail` in the streamed flight payload: `images[]` with a
+ * `sort_order` and an absolute `image_url` at full resolution, and `variants[]`
+ * with their own shots and a `COLOUR` attribute. Reading that is both cheaper
+ * and more precise than parsing tags, and — the reason it matters — a product
+ * page here also lists four or five *other* products' photographs under their
+ * own `product-<id>/` folders, which any `<img>` sweep would have collected as
+ * this racket's.
+ *
+ * Two things become colourways. A variant's own shots take its `COLOUR`
+ * attribute. The main gallery takes whatever colour the *product name* trails,
+ * because this shop publishes one product per colour and says so in the name
+ * rather than in an attribute — "HYPERMAX RED" and "HYPERMAX BLUE" are two
+ * pages of five shots each, and without this they merge into one racket with
+ * ten unlabelled ones. `splitColourway` refuses to strip so far that what
+ * remains stops naming a model, so a frame whose name simply ends in a colour
+ * word keeps it.
+ */
+export const sitegiantGallery: GalleryExtractor = (html, pageUrl) => {
+  const payload = flightPayload(html);
+
+  const at = payload.indexOf('"productDetail":');
+  if (at < 0) return [];
+  const open = payload.indexOf("{", at);
+  if (open < 0) return [];
+  const block = balancedSlice(payload, open);
+  if (!block) return [];
+
+  let product: SiteGiantProduct;
+  try {
+    product = JSON.parse(block) as SiteGiantProduct;
+  } catch {
+    return [];
+  }
+
+  const images: GalleryImage[] = [];
+  const named = splitColourway(stripVariantTokens(product.name ?? "")).colourway ?? undefined;
+
+  siteGiantImages(product.images, pageUrl, named, images);
+  for (const variant of product.variants ?? []) {
+    siteGiantImages(variant.images, pageUrl, variantColour(variant) ?? named, images);
+  }
+
+  return dedupe(images);
+};
 
 /* ------------------------------------------------- WordPress media library */
 

@@ -920,10 +920,6 @@ function runSource(
       return discover2beasy(provider, source, options);
     case "yonex-jp-api":
       return discoverYonexJp(provider, source, options);
-    case "sitegiant-collection":
-      // feletsports.com keeps its catalogue in the RSC flight payload rather
-      // than behind a product API.
-      return Promise.reject(new Error('catalogue kind "sitegiant-collection" is not implemented'));
   }
 }
 

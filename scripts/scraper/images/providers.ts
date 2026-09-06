@@ -27,6 +27,8 @@
  *                        gosen-vn     a hand-built site with no API at all
  *                        meta-vn      a retailer: the only Kamito source, and
  *                                     the only Adidas one
+ *                        felet        a SiteGiant store whose grid is rendered
+ *                                     even though its product record is not
  *   yonex-jp-api         yonex-jp     yonex.co.jp's own product JSON, keyed by model code
  *   sitemap              victor       the long tail of discontinued models
  *                        forza        a WordPress page sitemap; the site is not a shop
@@ -110,10 +112,11 @@
  * ------------------------------------------------------------------
  * On coverage
  *
- * Eleven brands are wired up, across fourteen providers: the four largest in the
+ * Twelve brands are wired up, across fifteen providers: the four largest in the
  * catalogue by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese
- * sites publish their whole racket line in two or three requests, and Forza,
- * whose own site is not a shop at all — it publishes the specification and the
+ * sites publish their whole racket line in two or three requests, Felet, whose
+ * Malaysian store publishes its current line in three, and Forza, whose own
+ * site is not a shop at all — it publishes the specification and the
  * photography and no price, and `scripts/scraper/forza-catalogue.ts` is what
  * turns that into catalogue rows for this provider to attach photographs to.
  *
@@ -141,11 +144,13 @@
  *              distributor on Haravan — does publish 106 rackets, and is
  *              verified but NOT YET REGISTERED here.
  *
- * Also verified and not yet registered: proacevn.vn (WooCommerce, 59) and
- * feletsports.com (SiteGiant, 62). Those two plus Li-Ning need the same
- * Vietnamese listing-title normalisation kumpoo-vn now does — see its
- * titleNoise, and the note there on which editorial is worth stripping and
- * which is a guess wearing a regex.
+ * Also verified and not yet registered: proacevn.vn (WooCommerce, 59). That and
+ * Li-Ning need the same Vietnamese listing-title normalisation kumpoo-vn now
+ * does — see its titleNoise, and the note there on which editorial is worth
+ * stripping and which is a guess wearing a regex.
+ *
+ * feletsports.com was on that list and is now registered; see the `felet`
+ * entry below for what its listing publishes and what its flight payload does.
  *
  * Shipping an adapter that has never parsed a real page would be worse than an
  * honest gap, so the registry carries what works and the run names what it
@@ -162,6 +167,7 @@ import {
   shopifyGallery,
   wooCommerceGallery,
   metaVnGallery,
+  sitegiantGallery,
   structuredDataGallery,
   woocommerceHtmlGallery,
   wpUploadsGallery,
@@ -272,11 +278,6 @@ export type CatalogueSource =
       productTypePattern?: RegExp;
       /** Haravan caps at 50 per page and ignores anything larger. */
       pageSize?: number;
-    }
-  | {
-      kind: "sitegiant-collection";
-      /** Collection handles, e.g. `racquet`. Sub-collections roll up into it. */
-      collections: string[];
     }
   | {
       /**
@@ -586,6 +587,29 @@ function metaVnModelAliases(name: string): string[] {
 function proKennexModelAliases(name: string): string[] {
   const withoutColour = name.replace(/\s*-\s*xám kim loại\s*$/i, "").trim();
   return withoutColour && withoutColour !== name ? [withoutColour] : [];
+}
+
+/**
+ * A feletsports.com listing name, reduced to the frame it is a page for.
+ *
+ * This shop publishes one product per colourway and puts the colour in the
+ * product name rather than in an attribute — "HYPERMAX RED", "NEO 722
+ * WHITE/YELLOW", "THE LEGEND ZAKRY LIMITED RED" — which is the same habit the
+ * Vietnamese retailers have and therefore the same splitter, run on the same
+ * closed colour vocabulary. It backs out the moment what remains stops naming a
+ * model, so "ARCANA" survives as a model and "SNOW WHITE" would not.
+ *
+ * The weight grade comes off first for the same reason it does on META.vn: the
+ * catalogue keeps the grade on the variant, and a grade left between the model
+ * and the colour stops the colour walk before it starts.
+ *
+ * The url is not consulted. Felet's permalinks are the product names slugified
+ * with the punctuation dropped — `neo-722-whiteyellow`, `felet-6055-speed--
+ * control` — so they carry strictly less than the names do, and every match
+ * this provider makes is made on the title.
+ */
+function feletTitle(title: string): string {
+  return splitColourway(stripVariantTokens(title)).base;
 }
 
 export const PROVIDERS: ProviderConfig[] = [
@@ -1135,6 +1159,64 @@ export const PROVIDERS: ProviderConfig[] = [
     modelAliases: metaVnModelAliases,
     extractors: [metaVnGallery],
     politenessMs: 500,
+  },
+  {
+    // feletsports.com, Felet's own international store, on SiteGiant.
+    //
+    // It was verified and left unregistered because its catalogue looked like
+    // it needed a browser: the store is a Next.js App Router site and its
+    // product record streams in the flight payload. The listing does not — the
+    // `/collection/racquet` grid is server-rendered, product links and product
+    // names included — so discovery is the same paginated category walk Yonex
+    // and Gosen use, and only the gallery reads the payload.
+    //
+    // One collection covers the whole line. `/collection/racquet` publishes 63
+    // rackets over three pages, and its eight sub-collections (professional,
+    // master, advance, moderate, novice, super-light, training, kids) sum to
+    // exactly those 63 with nothing outside them, so the parent is walked and
+    // the children are not. There is no sitemap to cross-check against —
+    // /sitemap.xml is the store's 404 page and robots.txt redirects to a 403 —
+    // which is also why nothing here is filtered on robots rules.
+    //
+    // 30 of the catalogue's 104 Felet rackets match. The remainder are frames
+    // this store does not sell: it is a current-line shop, and the catalogue's
+    // Felet rows come from Vietnamese retailers carrying a decade of stock.
+    // Four near-misses are deliberately refused rather than guessed at, because
+    // each would put one racket's photography under another's id:
+    //
+    //   Nevow TJ      vs NEVOW TJ 1000        — 1000 is not a SKU suffix
+    //   Woven TJ      vs WOVEN TJ 1000        — same
+    //   Sakura        vs SAKURRA              — one letter, and no way to tell
+    //                                           a misspelling from a sequel
+    //   F-Force       vs F-FORCE SUPER LIGHT  — a lighter frame, not a colour
+    //
+    // Arcana is the shape of the rest: the store sells four colours of a frame
+    // it calls plain "ARCANA", and the catalogue holds Arcana 80L, 80L Plus,
+    // 80S, 80S Plus, 90 and Frame. Nothing here says which of the six the
+    // store means, so no photograph is attached to any of them.
+    id: "felet",
+    name: "Felet International",
+    origin: "https://www.feletsports.com",
+    brandSlugs: ["felet"],
+    // Never consulted: `extractors` below replaces the platform chain. These
+    // pages carry no schema.org block at all, and their og:image is a 420×420
+    // crop of the hero rather than the hero.
+    platform: "structured-data",
+    catalogue: {
+      kind: "category-pagination",
+      url: "https://www.feletsports.com/collection/racquet",
+      pageParam: "page",
+      // The card's name anchor. The image above it links to the same url with
+      // no text, and picking that one instead would leave every candidate
+      // nameless — which on this shop means matching nothing, since the
+      // permalinks carry less than the names do.
+      linkSelector: ".product-content h3 a",
+      // Three pages today, at 24 a page. The walk stops when a page adds
+      // nothing new, so this only bounds a shop that grows.
+      maxPages: 8,
+    },
+    titleTransform: (title) => feletTitle(title),
+    extractors: [sitegiantGallery],
   },
 ];
 
