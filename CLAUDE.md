@@ -30,8 +30,24 @@ npm run migrate        # apply them (needs SUPABASE_ACCESS_TOKEN or DIRECT_URL/S
 npm run seed:sql       # regenerate supabase/seed.sql from src/lib/data/seed.ts
 npm run seed:db        # push the seed straight into Postgres
 npm run backup         # dump tables to backups/*.json ; npm run restore [file] [--dry-run]
+npm run market:refresh # recompute racket_scores (Court Score) from the catalogue
 npx tsx scripts/score-report.ts   # Court Score for every seeded racket
 ```
+
+Measuring, before changing anything about the read path:
+
+```bash
+npm run benchmark                   # every hot path, 5 runs, sql / postgrest / js layers
+npm run benchmark -- --explain      # plus EXPLAIN (ANALYZE, BUFFERS) for the SQL scenarios
+npm run benchmark -- --only=catalogue --runs=10
+npm run benchmark -- --markdown --json=bench.json
+```
+
+Read the `baseline:round trip` row first: it is the latency to the database
+region, and from a laptop it is most of every `sql` number. Subtract it before
+concluding a query is slow. `today` rows are what the app does now, `proposed`
+rows are the alternative — the table exists so a read-path change is argued from
+a number rather than from a guess.
 
 Scrapers (full flag tables live in `README.md`):
 
@@ -93,6 +109,28 @@ truncates, so a plain `.select()` silently returned the first 1000 of 3037 racke
 404ed every detail page beyond it. Five of the seven tables are over the cap. A new
 `.select()` without `selectAll` — or with `selectAll` but no unique `.order()` to page
 against — reintroduces that.
+
+**The catalogue listing paginates in Postgres, not in JavaScript.**
+`getCatalogPage(filters, page, pageSize)` is the only function `/rackets` calls
+for results. It reads the `racket_market` view — one row per racket, with every
+filter and sort key resolved into a column — carrying the predicates, the
+ordering, `count: 'exact'` and one page's `.range()`, then hydrates just those
+24 ids. Reading the snapshot and slicing the array instead measured ~9.3 s and
+7.4 MB to render 24 cards; the view answers the same page in ~5 ms of database
+work. Court Score is the one value the view cannot compute — `court-score.ts` is
+the published methodology and must stay the only definition — so
+`scripts/refresh-market.ts` computes it with that module and stores the result
+in `racket_scores`, which the nightly workflow refreshes after each sync.
+
+The in-memory route still exists as `getCatalogPage`'s own degraded mode, taken
+when the view cannot answer (unprovisioned project, database behind the
+migration, any query error) and logged once with the migration to apply. That is
+what lets the code deploy before the migration. It is not licence to add a second
+read path: new catalogue reads extend the view.
+
+Facet counts are their own `use cache` scope keyed on the filters *without* the
+page, so paging a filtered catalogue reuses one entry instead of recomputing the
+same four tallies per page.
 
 **`src/lib/types.ts` is the schema.** Field names there become the Postgres columns,
 the filter facets, the comparison rows and the Finder inputs. Renaming one is a
@@ -203,10 +241,21 @@ price change does not wait out a timer.
 
 **Fetch the rows a page needs, not the table.** `loadSnapshot` reads seven tables in
 full because the seed fallback has to answer the same questions from memory. That is
-the ceiling, not the target: a new read path adds a Postgres query *and* its seed
-equivalent behind one repository function, so callers still cannot tell which source
-answered. `selectAll` and its unique `.order()` remain mandatory for anything that
-does read a whole table (see the 1000-row cap above).
+the ceiling, not the target — and the catalogue listing no longer pays it: it goes
+through `racket_market` with a `.range()`, which is what took that page from ~9.3 s
+and 7.4 MB to two bounded round trips. A new read path adds a Postgres query *and*
+its seed equivalent behind one repository function, so callers still cannot tell
+which source answered. `selectAll` and its unique `.order()` remain mandatory for
+anything that does read a whole table (see the 1000-row cap above).
+
+**A derived value that a page sorts or filters by belongs in a column.** Court
+Score, lowest price, seller count, balance type and the weight-class set were all
+computed in `enrich` and therefore invisible to Postgres, which is why the listing
+had to hold the whole catalogue to order it. `racket_market` resolves them; where a
+value cannot be expressed in SQL without restating product logic, it is computed in
+TypeScript and stored (`racket_scores`), never reimplemented in the migration. The
+one constant the SQL does restate — the even-balance band — is guarded by
+`assertBalanceBands()`, which throws if `types.ts` and the view disagree.
 
 **Every route that awaits data has a `loading.tsx` or a `<Suspense>` boundary.**
 Without one the browser holds the previous page until the server has finished, which

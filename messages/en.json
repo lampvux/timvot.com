@@ -40,6 +40,7 @@
     "filters": "Filters",
     "sort": "Sort",
     "price": "Price",
+    "belowList": "Below list",
     "from": "from",
     "sellers": "{count, plural, =0 {no sellers} =1 {1 seller} other {# sellers}}",
     "rackets": "{count, plural, =0 {no rackets} =1 {1 racket} other {# rackets}}",
@@ -138,7 +139,11 @@
     "styleQuestion": "What do you want from your strings?",
     "yourSetup": "Recommended setup",
     "tension": "Suggested tension",
-    "feel": { "soft": "Soft feel", "medium": "Medium feel", "hard": "Hard feel" },
+    "feel": {
+      "soft": "Soft feel",
+      "medium": "Medium feel",
+      "hard": "Hard feel"
+    },
     "reason": {
       "attack": "A grippy, hard-feeling string helps a {skill} player transfer more bite and weight into steep shots.",
       "all-round": "A durable, forgiving string gives a {skill} player a dependable mix of power, control and string life.",
@@ -168,8 +173,18 @@
     "chartLabel": "Price history for {name}",
     "comparePrices": "Compare seller prices",
     "inStock": "{count} in stock",
-    "feel": { "soft": "Soft feel", "medium": "Medium feel", "hard": "Hard feel" },
-    "style": { "attack": "Attack", "all-round": "All-round", "speed": "Speed", "defence": "Defence", "control": "Control" }
+    "feel": {
+      "soft": "Soft feel",
+      "medium": "Medium feel",
+      "hard": "Hard feel"
+    },
+    "style": {
+      "attack": "Attack",
+      "all-round": "All-round",
+      "speed": "Speed",
+      "defence": "Defence",
+      "control": "Control"
+    }
   },
   "compare": {
     "title": "Compare rackets",
