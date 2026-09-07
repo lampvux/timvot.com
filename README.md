@@ -1091,8 +1091,17 @@ the stricter test anyway.
 
 Most gallery links 404 — the editors replaced the uploads years ago without touching the
 markup — so a typical racket yields one live hero at 330×440 and three or four dead entries
-the downloader discards. **77 of the 153 Fleet rackets now match a page, for 120 images**,
-against nothing at all before.
+the downloader discards. **107 of the 193 Fleet rackets carry a photograph, across 170
+images**, against nothing at all before.
+
+**Ten of the pages serve the Fleet logo instead of a racket.** The same 78.436 bytes,
+uploaded under ten different GUID filenames into the same `/Upload/product/` folder as the
+real shots, 330×330 — over `--min-pixels`, and nothing in the url says what it is, so
+`NON_PRODUCT` cannot see it. Storing it put a purple wordmark under ten rackets' ids as
+though it were the frame. `PLACEHOLDER_CHECKSUMS` in `images/index.ts` rejects it by content
+hash, which is the narrowest rule available and a fact rather than a heuristic: the file was
+fetched and opened. Those ten rackets now report `no-gallery` and show no photograph, which
+is the honest answer.
 
 **A racket that already has images is still matched.** It is dropped from the download
 afterwards, not from the contest — and the difference is the whole of a bug this brand

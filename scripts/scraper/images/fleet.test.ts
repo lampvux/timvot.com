@@ -13,6 +13,7 @@ import test from "node:test";
 
 import { discoverCandidates } from "./discover";
 import { fleetVnGallery } from "./gallery";
+import { isPlaceholderChecksum } from "./index";
 import { bestMatch, type MatchCandidate } from "./match";
 import { providerById, type ProviderConfig } from "./providers";
 
@@ -301,4 +302,27 @@ test("fleet.vn gallery is empty on a page with no product block", () => {
   const html = `<div class="product-list"><div class="product">
     <img src="/Upload/product/listing-card.jpg" /></div></div>`;
   assert.deepEqual(fleetVnGallery(html, "http://fleet.vn/san-pham/vot-cau-long/89"), []);
+});
+
+/* -------------------------------------------------------------- placeholder */
+
+test("the brand logo the site serves as a photograph is refused by content", () => {
+  // fleet.vn names every upload with a GUID, so `NON_PRODUCT` — which reads the
+  // filename — cannot see this one, and it clears --min-pixels at 330×330. Ten
+  // product pages with no photograph of their own serve the Fleet wordmark from
+  // the same /Upload/product/ folder as the real shots, and storing it put a
+  // logo under ten rackets' ids as though it were the frame.
+  for (const checksum of [
+    "ae834033973839fc92b63cb5becbd6299df6e41f4e7fb250b77365ac4f201c12",
+    "8b6a8b5555dc23240a708d0d197cc0b193f3fe8ac351eac2703ac93db768f640",
+  ]) {
+    assert.equal(isPlaceholderChecksum(checksum), true);
+  }
+
+  // Only those bytes. The rule is a hash so that it cannot reach anything else —
+  // this is the hero of the FX Slash 500, from the same folder on the same site.
+  assert.equal(
+    isPlaceholderChecksum("ae834033973839fc92b63cb5becbd6299df6e41f4e7fb250b77365ac4f201c11"),
+    false,
+  );
 });

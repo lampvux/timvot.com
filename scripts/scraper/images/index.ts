@@ -326,6 +326,39 @@ async function readGallery(
 }
 
 /**
+ * Files a site serves out of its product-image folder that are not a photograph
+ * of anything.
+ *
+ * `NON_PRODUCT` in `gallery.ts` already rejects these wherever the filename says
+ * what the file is — `logo.png`, `placeholder.jpg`, `spinner.gif`. fleet.vn
+ * names every upload with a GUID and serves its own brand logo as the
+ * "photograph" on ten product pages that have none: the same 78.436 bytes under
+ * ten different names, out of the same `/Upload/product/` folder as the real
+ * shots, at 330×330 — comfortably over `--min-pixels`, and indistinguishable
+ * from a studio shot by url. The only thing that identifies it is its content.
+ *
+ * So the rule is a hash, which is the narrowest one available: it rejects these
+ * exact bytes and nothing else. It is a fact rather than a heuristic — each was
+ * fetched, opened and looked at, and is the Fleet wordmark on a purple square.
+ * And a racket whose only image is this is better off with none: the card then
+ * says it has no photograph, instead of showing a logo as though it were the
+ * frame.
+ *
+ * Add to this only after looking at the file. A checksum nobody has opened is a
+ * guess with a long number in front of it.
+ */
+const PLACEHOLDER_CHECKSUMS = new Set([
+  // fleet.vn, the Fleet wordmark. Two files, byte-different from a re-save.
+  "ae834033973839fc92b63cb5becbd6299df6e41f4e7fb250b77365ac4f201c12",
+  "8b6a8b5555dc23240a708d0d197cc0b193f3fe8ac351eac2703ac93db768f640",
+]);
+
+/** Whether these bytes are a known non-photograph. Exposed for the tests. */
+export function isPlaceholderChecksum(checksum: string): boolean {
+  return PLACEHOLDER_CHECKSUMS.has(checksum);
+}
+
+/**
  * Download one gallery's files.
  *
  * Anything that is not decodable as one of the five image types we accept, or
@@ -372,13 +405,16 @@ async function downloadGallery(
       const size = readDimensions(res.body);
       if (size && size.width * size.height < options.minPixels) return null;
 
+      const checksum = sha256(res.body);
+      if (PLACEHOLDER_CHECKSUMS.has(checksum)) return null;
+
       return {
         ...image,
         bytes: res.body,
         contentType,
         width: size?.width ?? null,
         height: size?.height ?? null,
-        checksum: sha256(res.body),
+        checksum,
       } satisfies CrawledImage;
     } catch {
       return null;
