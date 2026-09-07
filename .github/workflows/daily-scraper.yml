@@ -130,6 +130,28 @@ jobs:
           printf 'scraping with:'; printf ' %q' "${FLAGS[@]}"; printf '\n'
           npx tsx scripts/scraper/index.ts "${FLAGS[@]}"
 
+      # venson.vn is the VS brand's own site and the only source for a brand the
+      # four storefronts barely stock: it publishes its whole racket line — 42
+      # products, in one WooCommerce category with the Store API on — so the
+      # import is two JSON requests and needs neither a browser nor the scrape's
+      # output. It runs here rather than after the image crawl because a frame
+      # this adds should get its photography on the same night, and before the
+      # Court Score refresh so the new rows are ranked in this run too.
+      #
+      # It never touches a racket the catalogue already holds: which of the 42
+      # are new is decided by `images/match.ts`, not by the row id. So a night
+      # where VS published nothing writes nothing, and the step's whole cost is
+      # the two requests.
+      - name: Import Venson (VS) Catalogue
+        id: venson
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/scraper/venson-catalogue.ts --sync-db --verbose
+
       # Court Score is computed in TypeScript and stored in `racket_scores`,
       # because src/lib/court-score.ts is the published methodology and must
       # stay the only definition of the formula. The catalogue's default sort
@@ -150,24 +172,26 @@ jobs:
       # The three steps below read the catalogue rather than the scrape's
       # output, so they are worth running even when the walk went badly.
       #
-      # Four providers, one step, and the same policy as the shop walk above:
+      # Five providers, one step, and the same policy as the shop walk above:
       # `discoverCandidates` returns its failure rather than throwing, so a
       # provider whose catalogue has moved is reported as unreadable and the
       # others still crawl. None needs a browser — ProKennex is a WooCommerce
       # category tree, Felet is three rendered listing pages, fleet.vn is eight,
-      # and lining-vn is two API requests that carry their own galleries — so
-      # they share the 45-minute cap rather than each claiming one and pushing
-      # the sum of the step caps toward the job's own timeout.
+      # and lining-vn and venson-vn are two API requests each that carry their
+      # own galleries — so they share the 45-minute cap rather than each
+      # claiming one and pushing the sum of the step caps toward the job's own
+      # timeout.
       #
-      # fleet-vn and lining-vn are here because neither brand's manufacturer
-      # site answers: fleet.com.my is dead and li-ning.com publishes no
-      # catalogue. Between them that is 493 rackets with no photography at all
-      # until these two were registered.
+      # fleet-vn, lining-vn and venson-vn are here because neither brand's
+      # manufacturer site answers or, for VS, was ever registered: fleet.com.my
+      # is dead, li-ning.com publishes no catalogue, and venson.vn went unread
+      # until its titles could be reduced to model names. Between them that is
+      # 607 rackets with no photography at all until these three were added.
       #
       # Rackets that already have images are skipped unless --refresh is
       # passed, so a nightly run costs the discovery walk and whatever the
       # stores have added since, not the whole gallery again.
-      - name: Crawl ProKennex, Felet, Fleet & Li-Ning Images & Sync DB
+      - name: Crawl ProKennex, Felet, Fleet, Li-Ning & Venson Images & Sync DB
         id: images
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -175,7 +199,7 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run scrape:images -- --provider=pro-kennex,felet,fleet-vn,lining-vn --verbose
+        run: npm run scrape:images -- --provider=pro-kennex,felet,fleet-vn,lining-vn,venson-vn --verbose
 
       - name: Audit Racket Image Ownership
         id: audit
@@ -219,6 +243,7 @@ jobs:
           TEST_SCRAPER: ${{ steps.test_scraper.outcome }}
           TEST_IMAGES: ${{ steps.test_images.outcome }}
           SCRAPE: ${{ steps.scrape.outcome }}
+          VENSON: ${{ steps.venson.outcome }}
           MARKET: ${{ steps.market.outcome }}
           IMAGES: ${{ steps.images.outcome }}
           AUDIT: ${{ steps.audit.outcome }}
@@ -259,9 +284,12 @@ jobs:
           record "Scraper tests"           "$TEST_SCRAPER" fatal
           record "Image crawler tests"     "$TEST_IMAGES"  fatal
           record "Multi-site scrape & sync" "$SCRAPE"      fatal
-          record "Manufacturer image crawl" "$IMAGES"      fatal
+          record "Venson catalogue import"  "$VENSON"     fatal
           record "Court Score refresh"      "$MARKET"     fatal
-          record "ProKennex image crawl"   "$IMAGES"       fatal
+          # One row, once. This was recorded twice under two labels, which
+          # printed a step that does not exist and counted a single failed crawl
+          # as two.
+          record "Manufacturer image crawl" "$IMAGES"      fatal
           record "Image ownership audit"   "$AUDIT"        fatal
           record "Post-sync backup"        "$BACKUP"       fatal
 

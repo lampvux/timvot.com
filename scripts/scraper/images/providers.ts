@@ -18,6 +18,9 @@
  *                        apacs        recursive tier/family HTML catalogue
  *   woocommerce-store    apacs        hidden-but-live products omitted from cards
  *                        kumpoo-vn    name + full gallery from the Store API
+ *                        venson-vn    the same, and the description with it,
+ *                                     which is where venson-catalogue.ts reads
+ *                                     the specification
  *   shopify-collection   mizuno       name + full gallery from products.json
  *                        mizuno-vn
  *                        yonex-uk
@@ -114,7 +117,7 @@
  * ------------------------------------------------------------------
  * On coverage
  *
- * Thirteen brands are wired up, across sixteen providers: the four largest in
+ * Fifteen brands are wired up, across eighteen providers: the four largest in
  * the catalogue by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese
  * sites publish their whole racket line in two or three requests, Felet, whose
  * Malaysian store publishes its current line in three, and Forza, whose own
@@ -131,6 +134,12 @@
  * Fleet Việt Nam, the brand's own Vietnamese property — publishes 120 rackets
  * over 8 listing pages, with a specification table `fleet-catalogue.ts` reads
  * the same way `forza-catalogue.ts` reads FZ's.
+ *
+ * And VS, which is the odd one out: venson.vn was alive, complete and readable
+ * the whole time, and the brand's 114 rackets carried no photograph because
+ * nothing here could read what its listings are called. Every title is a
+ * paragraph of Vietnamese sales copy with the model at the front — see
+ * `vensonTitle`, which is the whole of the work in that entry.
  *
  * And Kamito and Adidas, neither of which has a racket site — no Kamito domain
  * resolves, and Adidas badminton is a licensed line adidas.com does not carry —
