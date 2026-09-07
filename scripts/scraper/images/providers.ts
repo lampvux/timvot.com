@@ -25,6 +25,7 @@
  *   2beasy-category      victor       Victor's storefront API, 245 rackets / 2 requests
  *   category-pagination  yonex        the rendered "all racquets" listing, ?p=1…N
  *                        gosen-vn     a hand-built site with no API at all
+ *                        fleet-vn     another, paginated `…/89/page=2`
  *                        meta-vn      a retailer: the only Kamito source, and
  *                                     the only Adidas one
  *                        felet        a SiteGiant store whose grid is rendered
@@ -120,6 +121,12 @@
  * photography and no price, and `scripts/scraper/forza-catalogue.ts` is what
  * turns that into catalogue rows for this provider to attach photographs to.
  *
+ * And Fleet, whose manufacturer domain is the one dead end here that a
+ * distributor closed: fleet.com.my answers 503 to everything, while fleet.vn —
+ * Fleet Việt Nam, the brand's own Vietnamese property — publishes 120 rackets
+ * over 8 listing pages, with a specification table `fleet-catalogue.ts` reads
+ * the same way `forza-catalogue.ts` reads FZ's.
+ *
  * And Kamito and Adidas, neither of which has a racket site — no Kamito domain
  * resolves, and Adidas badminton is a licensed line adidas.com does not carry —
  * which are the two brands here whose photographs come from a shop rather than
@@ -129,7 +136,6 @@
  * The rest are not oversights; each was probed against its live site with real
  * browser headers:
  *
- *   Fleet      fleet.com.my answers 503.
  *   Kawasaki   kawasaki-sports.com is the OEM sportswear-fabric business, not
  *              the badminton brand; its 183 products are textiles.
  *   Adidas     badminton is a licensed line with no catalogue site of its own.
@@ -168,6 +174,7 @@ import {
   wooCommerceGallery,
   metaVnGallery,
   sitegiantGallery,
+  fleetVnGallery,
   structuredDataGallery,
   woocommerceHtmlGallery,
   wpUploadsGallery,
@@ -194,6 +201,22 @@ interface CategoryPaginationConfig {
   linkSelector: string;
   /** Safety stop for a listing that never runs out of pages. */
   maxPages: number;
+  /**
+   * The slug to match on, when it is not the url's last path segment.
+   *
+   * `slugOfUrl` takes the last segment because that is the product key on every
+   * shop platform here. fleet.vn is not one: it addresses products as
+   * `/chi-tiet-san-pham/<slug>/<id>` and the segment that ends the url is the
+   * numeric id, so the default reads "220" as the identity of a racket. That is
+   * both useless in the report and quietly dangerous — a catalogue row whose
+   * model name is a bare number would match a product it has nothing to do
+   * with.
+   *
+   * What comes back is the racket rather than merely a different segment: see
+   * `fleetVnSlug`, which takes the segment before the id and then removes the
+   * category and brand copy the site slugifies into it.
+   */
+  slugFromUrl?: (url: string) => string;
 }
 
 export type CatalogueSource =
@@ -581,6 +604,77 @@ function metaVnModelAliases(name: string): string[] {
   }
 
   return [...aliases];
+}
+
+/**
+ * The racket, out of a fleet.vn permalink.
+ *
+ * The site addresses a product as `/chi-tiet-san-pham/<slug>/<id>`, and that
+ * slug is the whole listing title slugified — category copy, brand and all:
+ * `/chi-tiet-san-pham/vot-cau-long-fleet-triotec-t6/220`. Neither half of the
+ * url identifies the racket on its own. The id is a bare number, and the slug
+ * as written is not something the matcher can be made to read: `filterFurniture`
+ * drops a brand only when its whole name sits at one edge of the token run, and
+ * here `fleet` sits fourth, behind three tokens of "vợt cầu lông" that no
+ * furniture list holds. So the racket is cut out here instead.
+ *
+ * The category comes off first, in both spellings the shop uses interchangeably
+ * (`vot-cau-long-` and the abbreviated `vot-cl-`), and then the brand — leaving
+ * `triotec-t6`, which is exactly what `titleNoise` leaves of the title beside
+ * it, so both sides of the comparison are asked the same question.
+ *
+ * Both strips are anchored at the front, and the brand is only ever taken where
+ * the category already was. That is what keeps this from being a search and
+ * replace: `vot-cl-magic-fx100` carries no brand and keeps every token it has,
+ * and a model the catalogue happened to call "Fleet something" would keep its
+ * own name.
+ *
+ * It also merges the two permalinks this shop publishes one racket under.
+ * Guardian is listed as both `vot-cau-long-fleet-guardian` and
+ * `vot-cl-guardian`, and `bestMatch` groups candidates by `productKey(slug)`:
+ * with the prefixes left on, those read as two different rackets called
+ * Guardian and the match is refused as ambiguous. Reduced, they are one product
+ * with two pages, which is what they are.
+ *
+ * All 120 listings the category walk finds are prefixed this way, and
+ * `guardian` is the only slug two of them reduce to.
+ */
+function fleetVnSlug(url: string): string {
+  const slug = new URL(url).pathname.split("/").filter(Boolean).at(-2) ?? "";
+  return slug.replace(/^vot-(?:cau-long|cl)-/i, "").replace(/^fleet-/i, "");
+}
+
+/**
+ * Put back the `2000` the retailer scrape's year rule took off a Fleet model.
+ *
+ * `normalizer.ts` strips a trailing four-digit number from a listing title,
+ * because on a Vietnamese shop that number is nearly always the season — "Vợt
+ * cầu lông Yonex Astrox 88D Pro 2024". Fleet is the brand where it is not: it
+ * names a whole family after one, and eleven catalogue rows arrived here with
+ * the number gone. "Speed FT", "Power FT", "Drive FT", "Tour FT", "Team FT",
+ * "Hyper FT", "Force FT", "Pulse FT" and "sword FT" are all the frame fleet.vn
+ * publishes as Speed FT2000, Power FT2000 and so on; "FT-Elite" is FT-Elite-2000
+ * and "AHANKEN Long Sword" is AHANKEN Long Sword 2000.
+ *
+ * So every name is offered again with a 2000 restored, in both spellings the
+ * site uses — joined ("Speed FT2000", nine pages) and spaced ("Pulse FT 2000",
+ * "AHANKEN Long Sword 2000"). Offering it for every name rather than only for
+ * the ones ending in `FT` costs nothing and is the same fault in both cases:
+ * this is an alias like every other here, tried only after the name as written
+ * has matched nothing, put through the same strict comparison, and unable to
+ * displace a direct match. "Dura FT" gets the same treatment and still matches
+ * nothing, because the Dura family is FT 1500/2500/3500/5500 and there is no
+ * Dura FT2000 — which is the right answer rather than a near miss.
+ *
+ * The same rule cost this brand more than a 2000: "Max Power" is Max Power 8810,
+ * "Power Volt" is Power Volt 7710, "Brave" is Brave 6300. Those cannot be
+ * repaired here, because the missing digits differ per row and this hook cannot
+ * see the site to check. They stay unmatched, and `fleet-catalogue.ts` names
+ * them in its report as rows the site's fuller name now sits beside.
+ */
+function fleetModelAliases(name: string): string[] {
+  if (/2000\s*$/i.test(name)) return [];
+  return [`${name}2000`, `${name} 2000`];
 }
 
 /** The retailer catalogue keeps this colour in the model name; ProKennex does not. */
@@ -1080,6 +1174,79 @@ export const PROVIDERS: ProviderConfig[] = [
     // as a racket with no photographs. Twice the usual gap is cheap here: the
     // whole provider is 29 pages.
     politenessMs: 800,
+  },
+  {
+    // Fleet's Vietnamese distributor, and the brand's only reachable property.
+    //
+    // fleet.com.my — the Malaysian manufacturer — answers 503 to everything, so
+    // for 153 catalogue rackets there was no source at all and every one of them
+    // carried zero photographs. fleet.vn is Fleet Việt Nam's own site: the same
+    // brand, an official distributor rather than a shop that happens to stock
+    // it, in the same class as kumpoo-vn, gosen-vn, hundred-vn and mizuno-vn.
+    //
+    // It is a hand-built ASP.NET site with no API, no sitemap and no structured
+    // data, so both halves of this entry are bespoke: `fleetVnGallery` reads the
+    // photographs out of the one container that holds them, and
+    // `scripts/scraper/fleet-catalogue.ts` reads the specification table the
+    // same pages print — weight, balance, tension and hole count, which is more
+    // than the retailer listings these rackets came from ever carried.
+    //
+    // Plain http, and that is not an oversight: fleet.vn serves no TLS at all
+    // (the handshake fails, it does not redirect), so an https origin here finds
+    // nothing. robots.txt is a 404, which the reader treats as allow-all.
+    id: "fleet-vn",
+    name: "Fleet Vietnam",
+    origin: "http://fleet.vn",
+    brandSlugs: ["fleet"],
+    // Never consulted: `extractors` below replaces the platform chain, because
+    // there is no structured data on this site for any of them to read.
+    platform: "structured-data",
+    catalogue: {
+      kind: "category-pagination",
+      url: "http://fleet.vn/san-pham/vot-cau-long/89",
+      // Not a query string and not a pretty permalink: the pager writes the
+      // page number into a path segment as `…/89/page=2`.
+      pagePath: "page={page}",
+      // One anchor per card in the main grid. The sidebar's "newest products"
+      // list links the same products with a bare `<a>`, so the class is what
+      // keeps the walk from counting sixteen rackets twice on every page.
+      linkSelector: ".product-list .product a.name",
+      // The listing is 8 pages of 16 and the walk stops when a page adds
+      // nothing, so this is only the guard against a pager that never ends.
+      maxPages: 15,
+      // `/chi-tiet-san-pham/vot-cau-long-fleet-woven-ice/353` → `woven-ice`.
+      slugFromUrl: fleetVnSlug,
+    },
+    // The same Vietnamese retail copy as kumpoo-vn and gosen-vn, in three
+    // spellings this one shop uses interchangeably: "Vợt cầu lông Fleet Woven
+    // IV", "Vợt Cầu lông FLEET SATURN" and the abbreviated "Vợt CL Knight V6".
+    // The permalink is that copy slugified, so without this nothing matches on
+    // either the title or the slug.
+    // The brand comes off with it, which `filterFurniture` would otherwise do
+    // at comparison time. It has to happen here instead because the shop
+    // publishes Guardian twice — "Vợt Cầu lông FLEET GUARDIAN" and "Vợt CL
+    // Guardian" — and `bestMatch` merges two pages into one product only when
+    // their cleaned titles are identical. With the brand left in they read as
+    // two rackets called Guardian and the match is refused as ambiguous.
+    titleNoise: [
+      /\s*v[ơợ]t\s+c[aâầ]u\s+l[oôộ]ng\s*/gi,
+      /\s*v[ơợ]t\s+cl\s+/gi,
+      /(?:^|\s)fleet(?=\s|$)/gi,
+    ],
+    // "Speed FT" here, "Speed FT2000" there — see fleetModelAliases.
+    modelAliases: fleetModelAliases,
+    // Two listings sell three and four frames under one product page, and the
+    // photograph on them is the group shot: "Fleet 900 Tour, 900 Max, 900 Pro"
+    // and "Fleet Starshine, Brand FR18, Max Speed, Arsas FR18". The catalogue
+    // holds all seven of those as separate rackets, so each listing is a page
+    // for none of them. A comma is the whole rule here because no Fleet model
+    // name contains one — the site writes "Woven Mach 5.1" and "JR-1 III".
+    excludeTitle: [/,/],
+    // Shared hosting, no CDN, and 8 listing pages plus ~120 product pages is
+    // already the whole site. Twice the usual gap costs a minute and keeps the
+    // crawl below what this server notices.
+    politenessMs: 800,
+    extractors: [fleetVnGallery],
   },
   {
     // META.vn, and the first retailer in this registry.

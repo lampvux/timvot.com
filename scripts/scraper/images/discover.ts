@@ -520,7 +520,8 @@ async function discoverCategoryPagination(
       if (!isAllowed(robots, clean)) return;
 
       const title = cleanTitle($(el).text(), clean, provider);
-      byUrl.set(clean, { url: clean, slug: slugOfUrl(clean), title: title || undefined });
+      const slug = source.slugFromUrl ? slugify(source.slugFromUrl(clean)) : slugOfUrl(clean);
+      byUrl.set(clean, { url: clean, slug, title: title || undefined });
       fresh++;
     });
 

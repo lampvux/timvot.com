@@ -59,6 +59,7 @@ npm run scrape:sql     # emit supabase/scraped-catalogue.sql instead (no key nee
 npm run scrape:images:dry   # manufacturer gallery crawl, match-only, no credentials
 npx tsx scripts/scraper/forza-catalogue.ts   # manufacturer pages as catalogue rows,
 npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
+npx tsx scripts/scraper/fleet-catalogue.ts   #   fleet.vn, the same shape
 ```
 
 `npm run scrape -- --site=vnb --pages=5 --verbose` is the shape for narrowing a run;
@@ -77,12 +78,16 @@ Browser verification never fails the run either. That policy is what keeps the n
 workflow's later steps — image crawl, ownership audit, backup — running, so do not
 reintroduce a `process.exitCode = 1` per failed source.
 
-The two `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
-shop and yields offers, and a manufacturer that quotes no price would need a seller and a
-price invented for every row. They write rackets with no offers, and never touch a racket
-the catalogue already holds. Whether it *does* hold one is decided by `images/match.ts`,
-not by the row id — the id comes from the manufacturer's spelling and the catalogue's came
-from retailers, so `ASTROX 88 S PRO` and `Astrox 88S Pro` are two ids for one frame.
+The three `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
+shop and yields offers, which needs a seller row, a stock state and the nightly sweep that
+retires what a shop stopped listing. They write rackets with no offers, and never touch a
+racket the catalogue already holds. Whether it *does* hold one is decided by
+`images/match.ts`, not by the row id — the id comes from the manufacturer's spelling and
+the catalogue's came from retailers, so `ASTROX 88 S PRO` and `Astrox 88S Pro` are two ids
+for one frame. `fleet-catalogue.ts` also passes the `fleet-vn` provider's `titleNoise` and
+`modelAliases` through that match, so the importer and the gallery crawler cannot disagree
+about which pages are duplicates. fleet.vn *does* quote prices; they land in `rackets.msrp`
+where a distributor's list price belongs, never as an offer.
 
 `supabase db push` is not used — it needs an interactive password prompt.
 `scripts/migrate.ts` runs the same SQL over the Management API or a direct

@@ -773,3 +773,63 @@ export const metaVnGallery: GalleryExtractor = (html, pageUrl) => {
 
   return dedupe(images);
 };
+
+/* ---------------------------------------------------------------- fleet.vn */
+
+/**
+ * Fleet's Vietnamese distributor, whose product photographs are identified by
+ * where they sit on the page rather than by what they are named.
+ *
+ * fleet.vn is a hand-built ASP.NET site carrying no structured data of any
+ * kind — no schema.org block, no og:image, no product API — so every extractor
+ * in the table above returns nothing on it. What it does have is one container,
+ * `#product-detail`, holding the hero shot and the lightbox gallery beside it,
+ * while the page's three other `/Upload/product/` blocks sit outside it: the
+ * "sản phẩm mới nhất" sidebar, the "sản phẩm cùng loại" rail underneath, and
+ * the header carousel. Those are other rackets' photographs, served from the
+ * same folder with the same filename shape, so a filename pattern of the kind
+ * `wpUploadsGallery` takes cannot tell them apart, and a whole-page sweep would
+ * file three other frames' shots under this frame's id.
+ *
+ * `isPlausible` is not used here, because of the file extension: the older
+ * heroes are named `.gif` (FX-Slash-500.gif, FT-Elite-2000.gif) while the bytes
+ * behind them are PNG — an upload tool's leftover rather than an animation.
+ * Requiring the `/Upload/product/` folder is the stricter test of the two,
+ * since nothing but product photography is served from there, and `NON_PRODUCT`
+ * still runs.
+ *
+ * Most gallery links 404. The site's editors replaced the uploads behind them
+ * years ago without touching the markup, so a typical product publishes one
+ * live hero and three or four dead gallery entries. They are emitted anyway: a
+ * dead url costs one request the downloader discards, while reading the hero
+ * alone would silently drop the gallery shots that are still there.
+ */
+const FLEET_UPLOAD = /^\/Upload\/product\/[^/]+\.(?:jpe?g|png|webp|gif)$/i;
+
+export const fleetVnGallery: GalleryExtractor = (html, pageUrl) => {
+  const $ = cheerio.load(html);
+  const detail = $("#product-detail");
+  if (detail.length === 0) return [];
+
+  const images: GalleryImage[] = [];
+  const push = (src: string | undefined) => {
+    if (!src || src.startsWith("data:")) return;
+    const url = absolute(src.split("?")[0], pageUrl);
+    if (!url || NON_PRODUCT.test(url)) return;
+    try {
+      if (!FLEET_UPLOAD.test(new URL(url).pathname)) return;
+    } catch {
+      return;
+    }
+    images.push({ url, position: images.length });
+  };
+
+  // The hero, then the lightbox thumbnails. A thumbnail's `data-src` is the
+  // file lightgallery opens full size; the `<img>` inside it is the same path.
+  detail.find(".left img").each((_, el) => push($(el).attr("src")));
+  detail
+    .find(".image-list .gallery")
+    .each((_, el) => push($(el).attr("data-src") || $(el).find("img").first().attr("src")));
+
+  return dedupe(images);
+};

@@ -369,7 +369,8 @@ which is where the optimizer is meant to stay.
 
 **Not done — the full gallery crawl.** 2.627 rackets still have no image at all. A full
 `scrape:images` attempts roughly 1.250 of them (the rest are brands with no manufacturer
-site in `providers.ts` — li-ning, fleet, vs, proace, kawasaki, flypower, adidas).
+site in `providers.ts` — li-ning, vs, proace, kawasaki, flypower, adidas; Fleet's
+153 joined the attemptable set when `fleet-vn` was registered).
 That is hours of browser-driven external crawling, and the crawler records rows only after
 the whole walk, so an interrupted run loses its work. Worth running deliberately, not as a
 step inside another task.
