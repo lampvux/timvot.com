@@ -74,6 +74,25 @@ function modelSlug(racketSlug: string, brandSlug: string): string {
   return racketSlug.startsWith(prefix) ? racketSlug.slice(prefix.length) : racketSlug;
 }
 
+/**
+ * Retailer hero URLs are allowed without a manufacturer gallery. A hero that
+ * points into our own racket-image buckets is different: its object must be
+ * represented by a racket_images row, even when an equivalent catalogue row
+ * owns that gallery.
+ */
+function isRacketStorageUrl(url: string): boolean {
+  try {
+    const marker = "/storage/v1/object/public/";
+    const path = new URL(url).pathname;
+    const markerAt = path.indexOf(marker);
+    if (markerAt < 0) return false;
+    const bucket = path.slice(markerAt + marker.length).split("/", 1)[0];
+    return bucket.startsWith("racket-images");
+  } catch {
+    return false;
+  }
+}
+
 function show(label: string, issues: string[], limit = 20): void {
   console.log(`${label}: ${issues.length}`);
   for (const issue of issues.slice(0, limit)) console.log(`  - ${issue}`);
@@ -147,6 +166,8 @@ async function main(): Promise<void> {
   const imagesByRacket = new Map<string, ImageRow[]>();
   const ownersByPage = new Map<string, Set<string>>();
   const expectedByBucket = new Map<string, Set<string>>();
+  const knownOriginalUrls = new Set<string>();
+  const knownThumbUrls = new Set<string>();
   const pathIssues: string[] = [];
   const urlIssues: string[] = [];
 
@@ -176,6 +197,7 @@ async function main(): Promise<void> {
     if (image.public_url && image.public_url !== expectedPublicUrl) {
       urlIssues.push(`${image.id}: original public URL does not match bucket/path`);
     }
+    if (image.public_url) knownOriginalUrls.add(image.public_url);
     if (image.thumb_path && image.thumb_url) {
       const expectedThumbUrl = supabase.storage
         .from(image.storage_bucket)
@@ -184,6 +206,7 @@ async function main(): Promise<void> {
         urlIssues.push(`${image.id}: thumbnail public URL does not match bucket/path`);
       }
     }
+    if (image.thumb_url) knownThumbUrls.add(image.thumb_url);
 
     const racketImages = imagesByRacket.get(image.racket_id) ?? [];
     racketImages.push(image);
@@ -203,6 +226,27 @@ async function main(): Promise<void> {
     .filter(([, owners]) => owners.size > 1)
     .map(([page, owners]) => `${page}: ${[...owners].join(", ")}`);
   const heroIssues: string[] = [];
+
+  for (const racket of rackets) {
+    if (
+      racket.hero_image_url &&
+      isRacketStorageUrl(racket.hero_image_url) &&
+      !knownOriginalUrls.has(racket.hero_image_url)
+    ) {
+      heroIssues.push(
+        `${racket.slug}: hero_image_url points to Storage but no gallery row owns it`,
+      );
+    }
+    if (
+      racket.hero_thumb_url &&
+      isRacketStorageUrl(racket.hero_thumb_url) &&
+      !knownThumbUrls.has(racket.hero_thumb_url)
+    ) {
+      heroIssues.push(
+        `${racket.slug}: hero_thumb_url points to Storage but no gallery row owns it`,
+      );
+    }
+  }
 
   for (const [racketId, gallery] of imagesByRacket) {
     gallery.sort(
