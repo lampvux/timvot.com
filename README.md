@@ -452,7 +452,7 @@ npm run scrape:images -- --bucket-strategy=per-provider
 
 | Flag | Default | What it does |
 | ---- | ------- | ------------ |
-| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet` |
+| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet`, `fleet-vn`, `lining-vn`, `venson-vn` |
 | `--limit=` | all | Cap the rackets crawled this run |
 | `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
@@ -474,10 +474,10 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 | Source | Used by | What it gives |
 | ------ | ------- | ------------- |
 | `woocommerce-category-tree` | apacs | Recursively follows level → family → product cards and then reads each matched detail-page gallery. |
-| `woocommerce-store` | apacs, kumpoo-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
-| `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn | Name + full gallery from `products.json`. |
+| `woocommerce-store` | apacs, kumpoo-vn, venson-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
+| `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn, lining-vn | Name + full gallery from `products.json`. Haravan speaks it too, and caps a page at 50 however large a `limit` is asked for. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
-| `category-pagination` | yonex, gosen-vn, meta-vn, felet | The rendered "all racquets" listing, walked `?p=1…N`. The only way in when a site has no API and no sitemap. |
+| `category-pagination` | yonex, gosen-vn, meta-vn, felet, fleet-vn | The rendered "all racquets" listing, walked `?p=1…N` — or `…/89/page=2`, where the pager writes the number into a path segment. The only way in when a site has no API and no sitemap. |
 | `yonex-jp-api` | yonex-jp | yonex.co.jp’s own product JSON, keyed by the model code stamped on the frame. |
 | `sitemap` | victor, mizuno-asia, forza | The long tail — discontinued models with no catalogue entry left. Carries no names, so `titleFromHead` reads them from the pages. |
 
@@ -1034,6 +1034,308 @@ ids for one frame. Checking by id inserts a second row for seven frames already 
 whole ASTROX 88 D/S family plus NANOFLARE 1000 Z. So the importer asks `match.ts`, the
 same reconciliation the gallery crawler uses, and inserts 11 rather than 18.
 
+### Li-Ning, the largest gap in the catalogue
+
+340 Li-Ning rackets, **zero photographs on any of them**, and the biggest single hole in
+this registry. li-ning.com is a corporate landing page linking out to Amazon and AliExpress;
+en.lining.com answers 403 to any non-browser client. Neither publishes a catalogue.
+
+liningbadminton.vn is Li-Ning Việt Nam's own store, and it publishes 98 rackets. It runs on
+Haravan, which speaks the Shopify product API — so `products.json` returns the name and the
+full gallery together and **the crawl is finished the moment discovery is**: not one product
+page is fetched.
+
+```bash
+npm run scrape:images -- --provider=lining-vn
+```
+
+**Two requests cover the collection.** Haravan silently caps a page at 50 however large a
+`limit` is asked for, so `vot-cau-long` is pages 1 and 2 and an empty third. The union of the
+shop's own rendered listing pages is exactly the same 98, so nothing hides behind the grid.
+
+**Not the `/search` endpoint** the site's filtered listing calls: robots.txt disallows
+`/search` outright, and it carries less than `products.json` does anyway.
+
+**The listing name carries six things and the catalogue holds one.** "Vợt cầu lông Li-Ning
+Fengying BLADEX SPIRAL Pink (4U) AYPT365-4 (Khung vợt)" is category, brand, series, model,
+grade, colour and the code Li-Ning prints on the frame. `titleNoise` takes off everything
+that is on every listing — including the SKU, which the matcher would otherwise forgive as a
+trailing fragment except that it sits *before* "(Khung vợt)", where nothing forgives it —
+and the colour splitter the retailer scrape already runs on these titles takes the rest.
+
+**Three repairs, and only one of them is a typo fix.** The shop writes the Turbo Charging
+line as "TURBOCHAGING" on one listing and "Blue" as "Bule" on two; both are consistent
+enough to name, and the SKU beside them agrees on which frame it is. The third is an
+inconsistency about Li-Ning's own naming: Thunder and Axforce are one line, and this shop
+uses both words, sometimes in the same title — "Axforce Thunder Cannon", "Thunder Axforce
+JR", and the BigBang New published as *both* "Thunder BIGBANG NEW" and "Axforce BIGBANG
+NEW". `bestMatch` merges colourway pages only where their cleaned titles agree, so settling
+on the catalogue's spelling is what turns four listings into one racket with four pages
+instead of two rackets with one and three.
+
+**Six listings are bundles** — "SET Vợt cầu lông Li-Ning phiên bản LÂM", "Combo Li-Ning
+Axforce 60" — a frame sold with a bag, shoes or shuttles and photographed as the bundle.
+`excludeTitle` drops them; the catalogue holds none of them as a product.
+
+**57 rackets match, and six near-misses are refused.** Two of the six are the interesting
+ones: the catalogue holds a bare "Aeronaut" and a bare "Axforce 80", and the matcher's
+SKU-suffix allowance lets each accept a page belonging to a real frame — Aeronaut 4000C,
+Axforce 80 JR. `resolvePageOwnership` rejects both, because the frame that names itself
+exactly outranks the stub that merely tolerates the name. The other four are duplicate
+catalogue rows (`3D Calibar 300B` beside `Calibar 300B`, `Blackiron` beside `Black-Iron`)
+losing to the spelling that matches the shop's.
+
+**51 rackets carry 336 photographs**, against nothing at all before. The remaining 283
+catalogue rows are what a decade of retailer listings looks like beside a current-line shop
+— Woods N90, Ultra Carbon, N7II, the whole 3G Ti Powertec family — and Li-Ning publishes no
+archive on any property, so there is no source for them.
+
+### Fleet, where the manufacturer is gone and the distributor is not
+
+fleet.com.my answers 503 to everything, and for a long time that was the end of it: 153
+Fleet rackets in the catalogue, **zero photographs on any of them**, and no site to ask.
+
+fleet.vn is Fleet Việt Nam — the brand's own Vietnamese property, an official distributor
+rather than a shop that happens to stock the brand, in the same class as the Kumpoo, Gosen,
+Hundred and Mizuno Vietnamese sites already registered here. It publishes 120 rackets over
+eight listing pages, each with a specification table, a distributor price and photography.
+Two pieces read it:
+
+```bash
+npm run scrape:images -- --provider=fleet-vn            # the photographs
+npx tsx scripts/scraper/fleet-catalogue.ts              # the rackets — report only
+npx tsx scripts/scraper/fleet-catalogue.ts --sync-db    # …and upsert what is missing
+```
+
+**The site is hand-built ASP.NET, so both halves are bespoke.** No API, no sitemap, no
+schema.org, no `og:image`. Pagination is a path segment rather than a query string
+(`/san-pham/vot-cau-long/89/page=2`), and the listing grid has to be picked out by class,
+because a "newest products" sidebar links four of the same products on every page.
+
+**Neither half of a product url names the racket.** They are shaped
+`/chi-tiet-san-pham/<title slugified>/<id>` —
+`/chi-tiet-san-pham/vot-cau-long-fleet-triotec-t6/220`. `slugOfUrl`'s "the last segment is
+the product key" rule therefore reads `220` as the identity of a racket, which is useless in
+the report and quietly dangerous besides: a catalogue row named after a bare number would
+match a product it has nothing to do with. The segment before it is not usable as written
+either, and not merely unlucky — `filterFurniture` drops a brand only when its whole name
+sits at one edge of the token run, and here `fleet` sits fourth, behind three tokens of
+category copy that no furniture list holds.
+
+So the `slugFromUrl` hook takes that segment and cuts the racket out of it: the category
+first, in both spellings the shop uses interchangeably (`vot-cau-long-` and the abbreviated
+`vot-cl-`), then the brand. `vot-cau-long-fleet-triotec-t6` becomes `triotec-t6`, which is
+exactly what `titleNoise` leaves of the title beside it, so both sides of the comparison are
+asked the same question. Both strips are anchored at the front and the brand is only taken
+where the category already was, so `vot-cl-magic-fx100` keeps every token it has. All 120
+listings are prefixed this way.
+
+It also merges the two permalinks Guardian is published under —
+`vot-cau-long-fleet-guardian` and `vot-cl-guardian`. `bestMatch` groups candidates by
+`productKey(slug)`, so with the shop's copy left on, those read as two different rackets
+called Guardian and the match is refused as ambiguous. Reduced, they are one product with
+two pages, which is what they are — and the only slug two of the 120 reduce to.
+
+**The gallery is found by position, not by filename.** Four blocks on a product page serve
+`/Upload/product/` files — the newest-products sidebar, the header carousel, the product
+itself and the related-products rail — with the same filename shape in all four. A
+`wpUploadsGallery`-style filename pattern cannot tell them apart, and a whole-page sweep
+would file three other frames' shots under this frame's id. `fleetVnGallery` reads inside
+`#product-detail` and nowhere else. It also skips `isPlausible`: this site's older heroes
+are named `.gif` with PNG bytes behind them, and requiring the `/Upload/product/` folder is
+the stricter test anyway.
+
+Most gallery links 404 — the editors replaced the uploads years ago without touching the
+markup — so a typical racket yields one live hero at 330×440 and three or four dead entries
+the downloader discards. **107 of the 193 Fleet rackets carry a photograph, across 170
+images**, against nothing at all before.
+
+**Ten of the pages serve the Fleet logo instead of a racket.** The same 78.436 bytes,
+uploaded under ten different GUID filenames into the same `/Upload/product/` folder as the
+real shots, 330×330 — over `--min-pixels`, and nothing in the url says what it is, so
+`NON_PRODUCT` cannot see it. Storing it put a purple wordmark under ten rackets' ids as
+though it were the frame. `PLACEHOLDER_CHECKSUMS` in `images/index.ts` rejects it by content
+hash, which is the narrowest rule available and a fact rather than a heuristic: the file was
+fetched and opened. Those ten rackets now report `no-gallery` and show no photograph, which
+is the honest answer.
+
+**A racket that already has images is still matched.** It is dropped from the download
+afterwards, not from the contest — and the difference is the whole of a bug this brand
+found. `resolvePageOwnership` decides which racket a page belongs to by contest between
+everything that claimed it, so a racket taken out of the pool does not leave its page
+unclaimed: it concedes it to whatever matched it next. This catalogue holds near-duplicate
+retailer rows — "Woven 888II" beside "woven 888 II", "Professional 3000IV" beside
+"Professional 3000 IV" — which are exactly the next claimant. Importing the 40 new rackets
+and re-running without `--refresh` therefore handed six pages to the losers of the previous
+run's contest, the database's ownership guard rejected the batch, and the hero pointers
+were written anyway because they are a separate statement. 46 rackets ended up advertising
+photographs no `racket_images` row backed. Two things changed: the skip moved to after
+ownership resolution, and `hero_image_url` is no longer written when the gallery write was
+rejected.
+
+**Two listings sell several frames under one product page**, "Fleet 900 Tour, 900 Max, 900
+Pro" and "Fleet Starshine, Brand FR18, Max Speed, Arsas FR18", and the photograph on each is
+the group shot. The catalogue holds all seven of those as separate rackets, so each listing
+is a page for none of them; `excludeTitle` drops both at discovery. A comma is the whole
+rule, because no Fleet model name contains one.
+
+**The retailer scrape's year rule cost this brand its model numbers.** `normalizer.ts`
+strips a trailing four-digit number from a listing title, which on a Vietnamese shop is
+nearly always the season. Fleet names a whole family after one, so eleven catalogue rows
+arrived as "Speed FT", "Power FT", "FT-Elite", "AHANKEN Long Sword" — every one of them the
+frame fleet.vn publishes as Speed FT2000, FT-Elite-2000 and so on. `modelAliases` offers
+each name again with the 2000 restored; like every alias here it is tried only after the
+name as written has matched nothing, and goes through the same strict comparison. It cannot
+repair the rest of the damage — "Max Power" is Max Power 8810, "Brave" is Brave 6300, and
+the missing digits differ per row — so those stay unmatched and the importer names them.
+
+What the specification table gives, and what becomes of it:
+
+| Published | Column |
+| --------- | ------ |
+| `Trọng lượng : 84 - 89 g` | `weight_grams`, the midpoint, and the `weight_class` band it falls in |
+| `Điểm cân bằng : 288 ± 2 mm` | `balance_point_mm`, as measured — no mapping needed, unlike Forza |
+| `Sức căng : 20 - 28 lbs` | both ends of `max_tension` |
+| `Tính năng : Ultra Power Frame, …` | `frame_material`, and `shaft_flex` from the Vietnamese sentence after it, through `extractFlex` |
+| `Giá : 1,460,000 VNĐ` | `msrp` |
+| `Số lỗ : 72` | read and reported; there is no column, and `string_pattern` is a pattern rather than a count |
+
+**The price is an msrp, not an offer.** fleet.vn quotes prices, which makes it tempting to
+add as a fifth `sites/` adapter — but an offer needs a seller row, a stock state and a
+nightly sweep that retires what the shop stopped listing, and a distributor's list price
+sitting beside four shops' real prices as though it were one of them is not what the
+comparison is for. So it lands in `rackets.msrp` where a manufacturer's price belongs, and
+the racket carries no offer until a scraped storefront turns out to sell it.
+
+40 of the 120 listings are frames the catalogue does not hold. 28 of the 120 publish no
+price at all ("Liên hệ", or a literal `00`) and get `msrp` 0; 49 publish no specification
+and fall back to the same placeholders every spec-less racket here already carries. The
+run names all three groups rather than leaving them to be discovered.
+
+The distributor's sales copy is deliberately **not** written to `summary_vi`. The catalogue
+is meant to read as neutral beside a Court Score that cannot be bought, and a seller's
+paragraph is not that, whichever seller it is.
+
+### Venson, where the site was fine and the titles were the problem
+
+The catalogue held **114 VS rackets and not one photograph**, and unlike Fleet or Li-Ning
+that was not the site's fault. VS is a Vietnamese brand — the frames say VS, the company is
+Venson, and this catalogue's rows use both words because the retailers they came from do —
+and [venson.vn](https://venson.vn/danh-muc-san-pham/vot-cau-long/) is the brand's own
+property, publishing its whole racket line: 42 products, one WooCommerce category, Store API
+switched on. The brand went uncovered because nothing here could read what its listings are
+called.
+
+```bash
+npm run scrape:images -- --provider=venson-vn            # the photographs
+npx tsx scripts/scraper/venson-catalogue.ts              # the rackets — report only
+npx tsx scripts/scraper/venson-catalogue.ts --sync-db    # …and upsert what is missing
+```
+
+**Two requests for all 42 product details.** The Store API returns the whole product record
+— the gallery at the size it was uploaded (4 to 12 shots, 1500 px), the description the
+product page renders, and both prices — so discovery finishes the crawl and
+`venson-catalogue.ts` reads the specification out of the same payload. No product page is
+opened by either half, and the test asserts that.
+
+**Every title is a paragraph, with the model buried at the front.**
+
+> Vợt cầu lông VS Thunder 100 chính hãng dạ quang phát sáng, sợi carbon bền nhẹ 4U dành cho
+> mọi người chơi
+
+The catalogue holds that as "Thunder 100". `titleNoise` takes off what is on every listing —
+the category, the brand in both spellings and wherever it sits, "chính hãng" (genuine), "cao
+cấp" (premium), the weight grade and grip (`4U`, `4UG6`), the lay-up (`full carbon`, `carbon
+graphite`, `carbon 40T Mitsubishi 1K`), the gift-box packaging — and what remains is still a
+model name followed by a sentence of Vietnamese.
+
+The sentence is separable because of the script it is in. **VS names its frames in Latin
+letters and describes them in Vietnamese**, so the model ends at the first diacritic. That
+is the whole of `vensonTitle`: the shop's own typography, not a vocabulary of marketing
+phrases fitted to these 42 listings. Two details make it hold on the real pages:
+
+- **A leading Vietnamese run is kept.** Two listings open in Vietnamese, and one of them is
+  "Dây cước vợt cầu lông VENSON VS Kirin …" — a reel of *string*, mis-filed in the racket
+  category. Cutting at the first diacritic would leave "Dây"; skipping to the first Latin
+  word would leave "Kirin", which is string wearing the Kirin 80's name. Keeping the run
+  leaves "Dây cước Kirin", which `excludeTitle` can recognise.
+- **The head stops at a spaced dash.** One page gives both spellings of one name, "VS AP77 –
+  Ace Power 77", and the matcher forgives nothing trailing a model but a SKU fragment. The
+  dash has to be spaced, because "V-Dragon" is a model name.
+
+Two bare material words come off only when a Vietnamese word follows them — `carbon` in
+"Turbo 300 chính hãng carbon bền nhẹ", `titan` in "Kirin 80 chính hãng titan 4U cao cấp, vợt
+kỳ lân". That bound is what keeps the two listings actually named after a material intact:
+"High Carbon Series" and "titan 1000".
+
+**Six listings are a page for several frames, or for none, and the shop says which.**
+WooCommerce publishes the variation axis with the product, and where that axis is `Phân loại`
+("classification") its terms are *different models* — HC 898 and HC 890 under "High Carbon
+Series", 7000/7100/7200/7300 under one Blade, four Demon Slayer characters under one Kimetsu,
+Youth 310/311/312/313 under one Youth, eleven assorted B-grade frames under the clearance
+listing — where `Màu sắc` ("colour") is one frame in two colours. The photograph on a `Phân
+loại` page is the group shot, and this catalogue holds those frames separately, so
+`excludeTitle` drops all six at discovery rather than filing a picture of four rackets under
+one racket's id.
+
+**Three colour pages of one racket are its siblings.** Youlong is published in black, white
+and blue, plus a Full Box edition, and all four reduce to the same name; `bestMatch` merges
+candidates whose cleaned titles agree, so they are one product with four pages and their
+galleries merge. That is the difference between storing one colour of a racket and storing
+the racket.
+
+**`modelAliases` carries two of VS's own conventions**, each read off its own pages rather
+than guessed: `Ace Power 77` → `AP77`, which the shop states itself on the page titled "VS
+AP77 – Ace Power 77" (two rackets need it, the other being ACE Power 11 Max); and `Ultra
+Woven 70X` → `Woven 70X`, because the series word is written on one page and dropped on the
+next. Like every alias here, both are tried only after the name as written has matched
+nothing and go through the same strict comparison.
+
+What the description publishes, and what becomes of it:
+
+| Published | Column |
+| --------- | ------ |
+| `Trọng lượng : 4U (82 ± 2g)` | `weight_class`, and `weight_grams` from the gram figure where there is one |
+| `Điểm cân bằng : 300 ± 3mm` | `balance_point_mm`, the centre of the tolerance |
+| `Mức căng : 24 – 28 Lbs` | both ends of `max_tension`; a listing quoting only kilos is converted |
+| `Độ cứng : Cứng` | `shaft_flex`, through `extractFlex` |
+| `Chất liệu : Japan Ultra High Modulus Carbon Graphite` | `frame_material`, joined by the frame and shaft lay-ups where they are listed separately |
+| `Chu vi cán cầm : G5` | the variant's `grip_size` |
+| `Độ dài : 675 mm` | `length_mm` |
+| `Số lỗ gen : 72` | read and reported; there is no column, and `string_pattern` is a pattern rather than a count |
+| `regular_price` | `msrp` — the list price, not the sale price half these listings carry |
+
+**Each label is written four ways, because half the descriptions carry a second spec table
+machine-translated from the manufacturer's Chinese.** Weight is "Trọng lượng", "Khối lượng"
+or "Cân nặng"; tension is "Mức căng", "Sức căng tối đa", "Lực căng tối đa", "Độ căng" or
+"Xâu chuỗi"; the grip is "Chu vi cán cầm", "Kích thước cán" or "Tay cầm". Every fact is
+matched on the phrase that identifies it and **bounded by what it can possibly be**, which is
+what makes the shop's own mislabelling harmless: Windsoul Fengling files its string tension
+under the weight label ("Cân nặng: 22-30 lbs"), and 22 is not a mass a racket can have, so
+that row keeps no weight rather than a wrong one. A `label: value` line that is neither a
+known fact nor known editorial is reported, which is how the next spelling gets noticed —
+one line is, today, and it is the shop calling a balance point a size.
+
+**20 of the 36 readable listings are frames the catalogue did not hold** — Grandmaster,
+Phantom 70, Assassin 47, Mighty Lion, HC990P, the Youlong colours — and they were written
+with the brand's list price as `msrp` and no offer, on the same reasoning as fleet.vn: an
+offer needs a seller row, a stock state and the nightly sweep, and a brand's RRP beside four
+shops' real prices is not what the comparison is for. 14 publish no specification block at
+all and take the placeholders every spec-less racket here already carries.
+
+One page is left alone deliberately: "Vợt cầu lông Venson Rồng văn trắng, VS ACE Power 11 Max
+Dragon …" reduces to a name that still carries Vietnamese, and a name the reduction could not
+finish is not a name to put in the catalogue. The importer names it rather than writing it.
+
+**32 rackets carry 213 photographs**, against nothing at all before, and every one of the 32
+came back with a gallery. The 102 rows that match no page are what a decade of retailer
+listings looks like beside a current-line shop — the Challenger 7xx family, the Vicleo Power
+series, six One Piece editions — and VS publishes no archive, so there is no source for them.
+A few are a thinner or fuller spelling of a page the import just added ("Pofang" beside "Po
+Fang", "Razor X" beside "Razor", "FengLing" beside "Windsoul Fengling"); which of those are
+the same frame is not knowable from either side, so the run names them rather than merging
+them.
+
 ### The one retailer, and the two brands that needed it
 
 The whole point of this module is to stop depending on shop photography: a shop re-shoots
@@ -1107,18 +1409,16 @@ comes back looking like a successful download.
 
 ### Coverage, and the gaps
 
-Twelve of the catalogue's 36 brands are wired up across fifteen providers: the four largest
+Fifteen of the catalogue's 36 brands are wired up across eighteen providers: the four largest
 by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese sites publish their whole
 racket line in two or three requests, Felet, whose Malaysian store publishes its current
-line in three, Forza, whose own site is not a shop and supplied the rackets as well as the
+line in three, Forza, Fleet and VS, whose own sites supplied the rackets as well as the
 photographs, and Kamito and Adidas, neither of which has a racket site and which are
 together the one brand pair here photographed by a retailer. Every other brand was probed
 against its real site with browser headers before being written off:
 
 | Brand | Rackets | Why there is no provider |
 | ----- | ------- | ------------------------ |
-| Li-Ning | 336 | li-ning.com is a corporate landing page linking out to Amazon and AliExpress; it publishes no catalogue. en.lining.com answers 403 to any non-browser client. |
-| Fleet | 153 | fleet.com.my answers 503. |
 | Proace | 112 | no official domain resolves. |
 | Kawasaki | 86 | kawasaki-sports.com is the OEM sportswear-fabric business, not the badminton brand — its 183 products are textiles. |
 | Flypower, Ashaway, Babolat | 85–13 | sites are alive but publish neither a sitemap nor a product API, so the catalogue cannot be enumerated without guessing URLs. |
