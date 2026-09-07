@@ -22,6 +22,7 @@
  *                        mizuno-vn
  *                        yonex-uk
  *                        hundred-vn
+ *                        lining-vn    Haravan speaks it too; 98 rackets / 2 requests
  *   2beasy-category      victor       Victor's storefront API, 245 rackets / 2 requests
  *   category-pagination  yonex        the rendered "all racquets" listing, ?p=1…N
  *                        gosen-vn     a hand-built site with no API at all
@@ -113,16 +114,20 @@
  * ------------------------------------------------------------------
  * On coverage
  *
- * Twelve brands are wired up, across fifteen providers: the four largest in the
- * catalogue by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese
+ * Thirteen brands are wired up, across sixteen providers: the four largest in
+ * the catalogue by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese
  * sites publish their whole racket line in two or three requests, Felet, whose
  * Malaysian store publishes its current line in three, and Forza, whose own
  * site is not a shop at all — it publishes the specification and the
  * photography and no price, and `scripts/scraper/forza-catalogue.ts` is what
  * turns that into catalogue rows for this provider to attach photographs to.
  *
- * And Fleet, whose manufacturer domain is the one dead end here that a
- * distributor closed: fleet.com.my answers 503 to everything, while fleet.vn —
+ * And Li-Ning and Fleet, the two dead ends here that a distributor closed.
+ * Li-Ning was the biggest gap in the catalogue — 340 rackets, no photograph on
+ * any of them — and liningbadminton.vn publishes 98 of the current line through
+ * the Haravan product API, gallery included, in two requests.
+ *
+ * As for Fleet: fleet.com.my answers 503 to everything, while fleet.vn —
  * Fleet Việt Nam, the brand's own Vietnamese property — publishes 120 rackets
  * over 8 listing pages, with a specification table `fleet-catalogue.ts` reads
  * the same way `forza-catalogue.ts` reads FZ's.
@@ -144,19 +149,19 @@
  *   Flypower,  the sites are alive but publish neither a sitemap nor a product
  *   Ashaway,   API, so their catalogues cannot be enumerated without guessing
  *   Babolat    URLs.
- *   Li-Ning    li-ning.com is a corporate landing page linking out to Amazon
- *              and AliExpress; en.lining.com answers 403 to any non-browser
- *              client. But liningbadminton.vn — a brand-dedicated Vietnamese
- *              distributor on Haravan — does publish 106 rackets, and is
- *              verified but NOT YET REGISTERED here.
  *
- * Also verified and not yet registered: proacevn.vn (WooCommerce, 59). That and
- * Li-Ning need the same Vietnamese listing-title normalisation kumpoo-vn now
- * does — see its titleNoise, and the note there on which editorial is worth
+ * Also verified and not yet registered: proacevn.vn (WooCommerce, 59). It needs
+ * the same Vietnamese listing-title normalisation kumpoo-vn and lining-vn now
+ * do — see their titleNoise, and the note there on which editorial is worth
  * stripping and which is a guess wearing a regex.
  *
- * feletsports.com was on that list and is now registered; see the `felet`
- * entry below for what its listing publishes and what its flight payload does.
+ * feletsports.com and liningbadminton.vn were both on that list and are now
+ * registered; see the `felet` and `lining-vn` entries below for what each
+ * publishes. Li-Ning was the largest gap in the catalogue by some way — 340
+ * rackets with no source at all — and li-ning.com is still no help: it is a
+ * corporate landing page linking out to Amazon and AliExpress, and en.lining.com
+ * answers 403 to any non-browser client. The Vietnamese distributor is the
+ * brand's only property that publishes a catalogue.
  *
  * Shipping an adapter that has never parsed a real page would be worse than an
  * honest gap, so the registry carries what works and the run names what it
@@ -607,6 +612,83 @@ function metaVnModelAliases(name: string): string[] {
 }
 
 /**
+ * A liningbadminton.vn listing name, reduced to the frame it is a page for.
+ *
+ * The shop writes the category, the brand, the series, the model, the weight
+ * grade, the colour and the SKU into one string — "Vợt cầu lông Li-Ning
+ * Fengying BLADEX SPIRAL Pink (4U) AYPT365-4 (Khung vợt)" — and the catalogue
+ * holds the frame alone, as "Bladex Spiral". `titleNoise` takes off what is the
+ * same on every listing; what is left is this.
+ *
+ * Two of the shop's own misspellings are repaired rather than worked around,
+ * because each is consistent enough to name: the Turbo Charging line is written
+ * "TURBOCHAGING" on one listing, and "Blue" is "Bule" on two. Repairing them is
+ * reading the shop's own evidence — the SKU and the rest of the title agree on
+ * which frame it is — where leaving them costs three pages for nothing.
+ *
+ * The third repair is not a typo but an inconsistency about Li-Ning's own
+ * naming. Thunder and Axforce are one line, and this shop uses both words,
+ * sometimes in the same title: "Axforce Thunder Cannon", "Thunder Axforce JR",
+ * "Thunder BIGBANG NEW" and "Axforce BIGBANG NEW" are four listings of two
+ * frames. `bestMatch` merges colourway pages only where their cleaned titles
+ * agree, so left alone the BigBang New reads as two rackets and three of its
+ * four pages go unclaimed. Settling on the spelling the catalogue uses merges
+ * them, and it rewrites the shop's side of the comparison only.
+ *
+ * What remains goes to the same colour splitter the retailer scrape runs on
+ * these same Vietnamese titles, which backs out the moment what it has left
+ * stops naming a model — so "Bladex Assassin White/Black" reduces to the frame
+ * while a model actually called a colour would keep its name.
+ */
+function liningVnTitle(title: string): string {
+  const repaired = title
+    .replace(/\bturbochaging\b/gi, "Turbo Charging")
+    .replace(/\bbule\b/gi, "Blue")
+    .replace(/\bthunder\s+axforce\b/gi, "Axforce")
+    .replace(/\baxforce\s+thunder\b/gi, "Axforce")
+    .replace(/\bthunder\b/gi, "Axforce");
+
+  return splitColourway(stripVariantTokens(repaired)).base;
+}
+
+/**
+ * The catalogue's name for a Li-Ning racket, in the other spellings the brand
+ * and its retailers use.
+ *
+ * The catalogue's 340 Li-Ning rows came from Vietnamese retailers over a decade
+ * and they disagree with this shop about three things, in both directions.
+ * Li-Ning's series names are optional to a retailer — the shop says "Fengying
+ * Bladex 900" and the catalogue holds both that and a bare "Bladex 900"; the
+ * Windstorm line is sold here as "Storm"; and a family name run onto its model
+ * number ("Blackiron", "Turbocharging N9") is spaced on the shop's side.
+ *
+ * Every one is an alias like the rest: offered only after the name as written
+ * has matched nothing, put through the same strict comparison, and unable to
+ * displace a direct match.
+ */
+function liningVnModelAliases(name: string): string[] {
+  const out = new Set<string>();
+  const add = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== name) out.add(trimmed);
+  };
+
+  add(name.replace(/^\s*axforce\s+/i, ""));
+  add(name.replace(/^\s*fengying\s+/i, ""));
+  add(name.replace(/^\s*thunder\s+/i, ""));
+  add(name.replace(/^\s*windstorm\b/i, "Storm"));
+  add(name.replace(/^\s*storm\b/i, "Windstorm"));
+  add(name.replace(/\bturbocharging\b/gi, "Turbo Charging"));
+  add(name.replace(/\bblackiron\b/gi, "Black-Iron"));
+
+  // The same reduction the shop's side gets, so a catalogue row carrying a
+  // colourway of its own is asked the question its page can answer.
+  for (const form of [...out, name]) add(splitColourway(stripVariantTokens(form)).base);
+
+  return [...out];
+}
+
+/**
  * The racket, out of a fleet.vn permalink.
  *
  * The site addresses a product as `/chi-tiet-san-pham/<slug>/<id>`, and that
@@ -704,6 +786,91 @@ function proKennexModelAliases(name: string): string[] {
  */
 function feletTitle(title: string): string {
   return splitColourway(stripVariantTokens(title)).base;
+}
+
+/**
+ * A Vietnamese letter — anything outside ASCII. What separates a VS model name
+ * from the sales copy that follows it on venson.vn, and the whole basis of
+ * `vensonTitle` below.
+ */
+const VIETNAMESE = /[^\u0000-\u007F]/;
+
+/**
+ * A venson.vn listing name, reduced to the frame it is a page for.
+ *
+ * This shop writes a paragraph where the other providers write a name: "Vợt cầu
+ * lông VS Thunder 100 chính hãng dạ quang phát sáng, sợi carbon bền nhẹ 4U dành
+ * cho mọi người chơi" is one product, and the catalogue holds it as "Thunder
+ * 100". `titleNoise` takes off what is on every listing — the category, the
+ * brand in both its spellings, "chính hãng", the weight grade, the lay-up — and
+ * what is left is still the model followed by a sentence of prose.
+ *
+ * The prose is separable from the name because of the script it is written in.
+ * VS names its frames in Latin letters (Thunder 100, Kriss Sword XP, HC990P,
+ * Kirin 80) and describes them in Vietnamese, so the model ends at the first
+ * diacritic. That is the rule, and it is the shop's own typography rather than a
+ * vocabulary of marketing phrases fitted to these 42 listings.
+ *
+ * Two details make it hold on the real pages:
+ *
+ *   * A leading Vietnamese run is kept. Two listings open in Vietnamese — "Dây
+ *     cước vợt cầu lông VENSON VS Kirin …", which is a *string* mis-filed in the
+ *     racket category, and "Vợt cầu lông Venson Rồng văn trắng, VS ACE Power 11
+ *     Max Dragon …" — and cutting at the first diacritic would leave "Dây",
+ *     while skipping to the first Latin word would leave "Kirin" and make a
+ *     reel of string look like the Kirin 80. Keeping the run means `excludeTitle`
+ *     can still read what the shop said it was selling.
+ *   * The head stops at a spaced dash. One listing gives both spellings of one
+ *     name — "VS AP77 – Ace Power 77" — and the matcher forgives nothing that
+ *     trails a model but a SKU fragment, so the second spelling has to go. The
+ *     dash has to be spaced: "V-Dragon" is a model name.
+ */
+function vensonTitle(title: string): string {
+  const head = title.split(/\s+[–—-]\s+/)[0];
+  const words: string[] = [];
+  let latin = false;
+
+  for (const word of head.split(/\s+/)) {
+    if (VIETNAMESE.test(word)) {
+      if (latin) break;
+    } else if (/[A-Za-z0-9]/.test(word)) {
+      latin = true;
+    }
+    words.push(word);
+  }
+
+  return words.join(" ").replace(/[,:;.]+$/, "").trim();
+}
+
+/**
+ * The catalogue's name for a VS racket, in the other spellings VS uses.
+ *
+ * Two, and both are the manufacturer's own convention read off its own pages
+ * rather than a guess fitted to a row:
+ *
+ *   * `Ace Power 77` → `AP77`. venson.vn publishes one listing under both names
+ *     at once — "Vợt cầu lông VS AP77 – Ace Power 77" — which is VS stating the
+ *     expansion itself. The catalogue's rows came from retailers and hold the
+ *     long form; the shop's own pages are titled with the code. Two rackets need
+ *     it, Ace Power 77 and ACE Power 11 Max.
+ *   * `Ultra Woven 70X` → `Woven 70X`. Ultra Woven is a series, and this shop
+ *     writes the series word on one page ("VS Ultra Woven 88S") and drops it on
+ *     the next ("VENSON VS WOVEN 70X"), so it is optional in VS's own writing.
+ *
+ * Both are aliases like every other here: offered only after the name as
+ * written has matched nothing, put through the same strict comparison, and
+ * unable to displace a direct match.
+ */
+function vensonModelAliases(name: string): string[] {
+  const out = new Set<string>();
+
+  const acePower = /^\s*ace\s+power\s+(\d+)\b(.*)$/i.exec(name);
+  if (acePower) out.add(`AP${acePower[1]}${acePower[2]}`);
+
+  if (/^\s*ultra\s+\S/i.test(name)) out.add(name.replace(/^\s*ultra\s+/i, ""));
+
+  out.delete(name);
+  return [...out];
 }
 
 export const PROVIDERS: ProviderConfig[] = [
@@ -1176,6 +1343,84 @@ export const PROVIDERS: ProviderConfig[] = [
     politenessMs: 800,
   },
   {
+    // liningbadminton.vn — Li-Ning Việt Nam's own store, and the only Li-Ning
+    // property that answers with a catalogue at all.
+    //
+    // li-ning.com is a corporate landing page linking out to Amazon and
+    // AliExpress, and en.lining.com answers 403 to any non-browser client, so
+    // for 340 catalogue rackets — the largest single gap in this registry —
+    // there was no source and not one of them carried a photograph.
+    //
+    // The shop runs on Haravan, which speaks the Shopify product API, so
+    // `/collections/<handle>/products.json` returns the name and the full
+    // gallery together and the crawl is finished the moment discovery is: no
+    // product page is ever fetched.
+    //
+    // One collection covers the line. `vot-cau-long` publishes 98 rackets, and
+    // the union of its rendered listing pages is exactly those 98, so nothing
+    // is hiding behind the grid. Haravan silently caps a page at 50 however
+    // large a `limit` is asked for, which makes this two requests and an empty
+    // third.
+    //
+    // Not the `/search` endpoint the site's own filtered listing calls:
+    // robots.txt disallows /search outright, and it carries less than
+    // products.json does anyway.
+    //
+    // 57 of the 340 rackets match. The rest are what a decade of retailer rows
+    // looks like beside a current-line shop — Woods N90, Ultra Carbon, N7II,
+    // the whole 3G Ti Powertec family — and Li-Ning publishes no archive on any
+    // property, so there is no source for them and no amount of crawling finds
+    // one.
+    id: "lining-vn",
+    name: "Li-Ning Vietnam",
+    origin: "https://liningbadminton.vn",
+    brandSlugs: ["li-ning"],
+    platform: "shopify",
+    catalogue: {
+      kind: "shopify-collection",
+      collections: ["vot-cau-long"],
+      // Every product in it is a racket today, filed under three spellings of
+      // "Vợt cầu lông". The filter is what keeps that true the day the shop
+      // files a bag or a grip in the same collection.
+      productTypePattern: /v[ơợ]t\s+c[aâầ]u\s+l[oôộ]ng/i,
+      // Haravan's real page size, whatever is asked for.
+      pageSize: 50,
+    },
+    // Everything that is on every listing rather than on this frame.
+    titleNoise: [
+      // "[Tặng kèm 01 hộp cầu Li-Ning AYQN024]" — a promotion stapled to the
+      // name, and the only thing here in square brackets.
+      /\s*\[[^\]]*\]\s*/g,
+      // "(Khung vợt)" — sold as a frame rather than strung. On 94 of the 98.
+      /\s*\(\s*khung\s+v[ơợ]t\s*\)\s*/gi,
+      // The category, then a bare leading "Vợt" for the listings that write
+      // "Vợt Li Ning Aeronaut 4000C" instead.
+      /\s*v[ơợ]t\s+c[aâầ]u\s+l[oôộ]ng\s*/gi,
+      /^\s*v[ơợ]t\s+/gi,
+      // The brand, hyphenated or not, in any case.
+      /\s*li[\s-]?ning\s*/gi,
+      // The code Li-Ning prints on the frame — AYPT293-4, P-AYPU115-88C — which
+      // this shop appends to every name. The matcher would forgive it as a
+      // trailing SKU fragment, but it sits *before* "(Khung vợt)" rather than
+      // at the end, and a code wedged inside a name is forgiven by nothing.
+      /\s*\(?P?-?AYP[A-Z]\d{3}-\d{1,2}[A-Z]?\)?\s*/gi,
+      // The weight grade, always parenthesised here and usually mid-name.
+      /\s*\(\s*[2-7]U\s*\)\s*/gi,
+      // Fengying is Li-Ning's series name for the Bladex line. This shop prints
+      // it and the catalogue's retailer rows mostly do not; where one of them
+      // does, `liningVnModelAliases` answers from the other side.
+      /\s*fengying\s*/gi,
+    ],
+    titleTransform: (title) => liningVnTitle(title),
+    modelAliases: liningVnModelAliases,
+    // "SET Vợt cầu lông Li-Ning phiên bản LÂM" and "Combo Li-Ning Axforce 60"
+    // are bundles — a frame with a bag, shoes or shuttles — and the photograph
+    // on them is of the bundle. Six of the 98 listings are one or the other,
+    // and the catalogue holds none of them as a product.
+    excludeTitle: [/^\s*(?:set|combo)\b/i],
+    politenessMs: 400,
+  },
+  {
     // Fleet's Vietnamese distributor, and the brand's only reachable property.
     //
     // fleet.com.my — the Malaysian manufacturer — answers 503 to everything, so
@@ -1384,6 +1629,133 @@ export const PROVIDERS: ProviderConfig[] = [
     },
     titleTransform: (title) => feletTitle(title),
     extractors: [sitegiantGallery],
+  },
+  {
+    // Venson, and the 114 rackets this catalogue held under the brand slug `vs`
+    // with not one photograph between them.
+    //
+    // VS is a Vietnamese brand — the frames say VS, the company is Venson, and
+    // this catalogue's rows use both words because the retailers they came from
+    // do. venson.vn is the brand's own property: WooCommerce on Hostinger,
+    // publishing all 42 of its rackets in one category, `vot-cau-long`, with the
+    // Store API switched on. So the whole crawl is two requests — the category
+    // list, then one page of products — and the product record carries the full
+    // gallery (4 to 12 shots at 1500 px) and the specification block beside it,
+    // which is why there is no per-racket page fetch here at all and why
+    // `venson-catalogue.ts` can read the specs off the same payload.
+    //
+    // The reason this brand was uncovered until now is not the site. It is that
+    // every title on it is a paragraph of Vietnamese sales copy with the model
+    // name buried at the front — see `vensonTitle`, which is the whole of the
+    // work in this entry.
+    id: "venson-vn",
+    name: "Venson (VS)",
+    origin: "https://venson.vn",
+    brandSlugs: ["vs"],
+    platform: "woocommerce",
+    catalogue: {
+      kind: "woocommerce-store",
+      categorySlugs: ["vot-cau-long"],
+      pageSize: 100,
+      // 15 of the 42 are out of stock, and on this shop that shelf is where the
+      // brand's own back catalogue sits — the Woven 70X, the Youlong colours,
+      // the year-of-the-snake AP11 Max. Their photography is still theirs, and
+      // the catalogue is a reference rather than a storefront, so they are kept.
+      //
+      // Public category pages for the case where a CI runner is served the shop
+      // but blocked from WordPress JSON. The card's own anchor
+      // (`woocommerce-loop-product__link`) wraps the thumbnail and carries no
+      // text, and a nameless candidate on this shop matches nothing at all — its
+      // permalinks are the same sales copy slugified — so the fallback reads the
+      // Astra theme's summary link, which is the one that holds the title.
+      htmlFallback: {
+        url: "https://venson.vn/danh-muc-san-pham/vot-cau-long/",
+        pagePath: "page/{page}/",
+        linkSelector: ".astra-shop-summary-wrap a",
+        // All 42 fit on page one today. This only bounds a shop that grows.
+        maxPages: 4,
+      },
+    },
+    // Everything that is on every listing rather than on this frame. Order
+    // matters: the punctuation and the grades come off before the lay-up rules,
+    // because "Kirin 80 chính hãng titan 4U cao cấp, vợt kỳ lân…" only reads as
+    // "titan followed by Vietnamese" once the 4U between them is gone.
+    titleNoise: [
+      // "(Thanh gươm diệt quỷ)", "(Bản Hộp)" — a gloss, never part of a name.
+      /\s*\([^)]*\)\s*/g,
+      // A comma or colon separates the name from a clause on 20 of the 42, and
+      // no VS model name carries either: the shop writes "Woven 70X" and "HC990P".
+      /\s*[,;:]\s*/g,
+      // The category, then the bare word "vợt" (racket) wherever it appears —
+      // "vợt kỳ lân sơn dạ quang" has it mid-sentence.
+      /\s*v[ơợ]t\s+c[aâầ]u\s+l[oôộ]ng\s*/gi,
+      /(?:^|\s)v[ơợ]t(?=\s|$)/gi,
+      // "chính hãng" (genuine) and "cao cấp" (premium), between them on 24.
+      /\s*chính\s+hãng\s*/gi,
+      /\s*cao\s+cấp\s*/gi,
+      // The brand, in both spellings and wherever it sits. `filterFurniture`
+      // takes a brand only at an edge of the token run, and this shop puts it in
+      // the middle: "VS Po Fang chính hãng VENSON, tấn công tốc độ".
+      /(?:^|\s)venson(?=\s|$)/gi,
+      /(?:^|\s)vs(?=\s|$)/gi,
+      // The weight grade and grip, spaced or run together: 4U, 6U, 4UG5, 4UG6.
+      // Both are variant fields, and the grade sits between the model and the
+      // copy here, so leaving it in place stops the reduction before it starts.
+      /(?:^|\s)[2-7]U(?:\s*G[3-6])?(?=\s|$)/gi,
+      /(?:^|\s)G[3-6](?=\s|$)/gi,
+      // The lay-up. It is what the frame is made of, not what it is called:
+      // "full carbon", "full cacbon" (the shop's own spelling), "carbon
+      // graphite", "nano carbon", "carbon 30T Mitsubishi", "carbon 40T
+      // Mitsubishi 1K".
+      /\s*full\s+ca[rc]bon\s*/gi,
+      /\s*ca[rc]bon\s+graphite\s*/gi,
+      /\s*nano\s+ca[rc]bon\s*/gi,
+      /\s*ca[rc]bon\s+\d+t(?:\s+mitsubishi)?(?:\s+1k)?\s*/gi,
+      // "full box" — the gift-box packaging on two listings, not the frame.
+      /\s*full\s+box\s*/gi,
+      // And a bare material word that is the first word of the Vietnamese
+      // sentence rather than part of the name. Bounded by what follows it: only
+      // when the next word carries a diacritic, which is what keeps "High Carbon
+      // Series" and "titan 1000" — both real listings — intact.
+      /\s+(?:ca[rc]bon|graphite|titan)(?=\s+\S*[^\u0000-\u007F])/gi,
+    ],
+    titleTransform: (title) => vensonTitle(title),
+    // "Ace Power 77" here, "AP77" there; "Ultra Woven 70X" here, "WOVEN 70X"
+    // there. See vensonModelAliases.
+    modelAliases: vensonModelAliases,
+    /**
+     * Listings that are a page for several frames, or for no frame at all.
+     *
+     * Each is refused on the shop's own evidence rather than on a reading of its
+     * copy: WooCommerce publishes the variation axis with the product, and where
+     * that axis is `Phân loại` ("classification") its terms are *different
+     * models* — HC 898 and HC 890 under "High Carbon Series", 7000/7100/7200/7300
+     * under one Blade, four Demon Slayer characters under one Kimetsu, Youth
+     * 310/311/312/313 under one Youth, eleven assorted B-grade frames under the
+     * clearance listing — where `Màu sắc` ("colour") is one frame in two colours.
+     * The photograph on a `Phân loại` page is the group shot, and this catalogue
+     * holds those frames separately, so the listing is a page for none of them.
+     *
+     * The patterns are tested against the cleaned title, which is what
+     * `vensonTitle` has already reduced these to, so two of them are a single
+     * word: "Thanh" is what is left of "Thanh lí vợt lỗi nhẹ: Youlong, Titan 7
+     * Pro, …" ("thanh lí" is clearance) once the reduction cuts at "lí", and
+     * "Youth" is the whole of the Youth family page's name.
+     *
+     * The string is the odd one out — "Dây cước" is not a racket at all, and it
+     * is in this category by the shop's mistake.
+     */
+    excludeTitle: [
+      /^\s*thanh\s*$/i,
+      /^\s*d[aâ]y\s+c[uư][ơớ]c\b/i,
+      /\bseries\b/i,
+      /\d\s*\/\s*\d/,
+      /^\s*kimetsu\s+no\s+yaiba\s*$/i,
+      /^\s*youth\s*$/i,
+    ],
+    // Shared hosting behind an edge cache, and the whole crawl is two JSON
+    // requests plus the images. The usual gap is plenty.
+    politenessMs: 400,
   },
 ];
 

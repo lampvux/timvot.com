@@ -80,6 +80,11 @@ const COLOUR_MODIFIERS = new Set([
   // page of its own. A modifier rather than a head, so a lone "Snow" can never
   // start a run and eat a model name.
   "snow",
+  // liningbadminton.vn sells the Black-Iron as "Black-Iron - Pale Gold" and
+  // "Black-Iron - Fire Red". Both are modifiers for the same reason "snow" is:
+  // neither can start a run, so "Fire Power" keeps its name and only a colour
+  // head to the right lets either of them be read as part of the colourway.
+  "pale", "fire",
 ]);
 
 /** Separators that can sit between two colours without ending the run. */

@@ -452,7 +452,7 @@ npm run scrape:images -- --bucket-strategy=per-provider
 
 | Flag | Default | What it does |
 | ---- | ------- | ------------ |
-| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet`, `fleet-vn` |
+| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet`, `fleet-vn`, `lining-vn` |
 | `--limit=` | all | Cap the rackets crawled this run |
 | `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
@@ -475,7 +475,7 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 | ------ | ------- | ------------- |
 | `woocommerce-category-tree` | apacs | Recursively follows level → family → product cards and then reads each matched detail-page gallery. |
 | `woocommerce-store` | apacs, kumpoo-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
-| `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn | Name + full gallery from `products.json`. |
+| `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn, lining-vn | Name + full gallery from `products.json`. Haravan speaks it too, and caps a page at 50 however large a `limit` is asked for. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
 | `category-pagination` | yonex, gosen-vn, meta-vn, felet, fleet-vn | The rendered "all racquets" listing, walked `?p=1…N` — or `…/89/page=2`, where the pager writes the number into a path segment. The only way in when a site has no API and no sitemap. |
 | `yonex-jp-api` | yonex-jp | yonex.co.jp’s own product JSON, keyed by the model code stamped on the frame. |
@@ -1034,6 +1034,62 @@ ids for one frame. Checking by id inserts a second row for seven frames already 
 whole ASTROX 88 D/S family plus NANOFLARE 1000 Z. So the importer asks `match.ts`, the
 same reconciliation the gallery crawler uses, and inserts 11 rather than 18.
 
+### Li-Ning, the largest gap in the catalogue
+
+340 Li-Ning rackets, **zero photographs on any of them**, and the biggest single hole in
+this registry. li-ning.com is a corporate landing page linking out to Amazon and AliExpress;
+en.lining.com answers 403 to any non-browser client. Neither publishes a catalogue.
+
+liningbadminton.vn is Li-Ning Việt Nam's own store, and it publishes 98 rackets. It runs on
+Haravan, which speaks the Shopify product API — so `products.json` returns the name and the
+full gallery together and **the crawl is finished the moment discovery is**: not one product
+page is fetched.
+
+```bash
+npm run scrape:images -- --provider=lining-vn
+```
+
+**Two requests cover the collection.** Haravan silently caps a page at 50 however large a
+`limit` is asked for, so `vot-cau-long` is pages 1 and 2 and an empty third. The union of the
+shop's own rendered listing pages is exactly the same 98, so nothing hides behind the grid.
+
+**Not the `/search` endpoint** the site's filtered listing calls: robots.txt disallows
+`/search` outright, and it carries less than `products.json` does anyway.
+
+**The listing name carries six things and the catalogue holds one.** "Vợt cầu lông Li-Ning
+Fengying BLADEX SPIRAL Pink (4U) AYPT365-4 (Khung vợt)" is category, brand, series, model,
+grade, colour and the code Li-Ning prints on the frame. `titleNoise` takes off everything
+that is on every listing — including the SKU, which the matcher would otherwise forgive as a
+trailing fragment except that it sits *before* "(Khung vợt)", where nothing forgives it —
+and the colour splitter the retailer scrape already runs on these titles takes the rest.
+
+**Three repairs, and only one of them is a typo fix.** The shop writes the Turbo Charging
+line as "TURBOCHAGING" on one listing and "Blue" as "Bule" on two; both are consistent
+enough to name, and the SKU beside them agrees on which frame it is. The third is an
+inconsistency about Li-Ning's own naming: Thunder and Axforce are one line, and this shop
+uses both words, sometimes in the same title — "Axforce Thunder Cannon", "Thunder Axforce
+JR", and the BigBang New published as *both* "Thunder BIGBANG NEW" and "Axforce BIGBANG
+NEW". `bestMatch` merges colourway pages only where their cleaned titles agree, so settling
+on the catalogue's spelling is what turns four listings into one racket with four pages
+instead of two rackets with one and three.
+
+**Six listings are bundles** — "SET Vợt cầu lông Li-Ning phiên bản LÂM", "Combo Li-Ning
+Axforce 60" — a frame sold with a bag, shoes or shuttles and photographed as the bundle.
+`excludeTitle` drops them; the catalogue holds none of them as a product.
+
+**57 rackets match, and six near-misses are refused.** Two of the six are the interesting
+ones: the catalogue holds a bare "Aeronaut" and a bare "Axforce 80", and the matcher's
+SKU-suffix allowance lets each accept a page belonging to a real frame — Aeronaut 4000C,
+Axforce 80 JR. `resolvePageOwnership` rejects both, because the frame that names itself
+exactly outranks the stub that merely tolerates the name. The other four are duplicate
+catalogue rows (`3D Calibar 300B` beside `Calibar 300B`, `Blackiron` beside `Black-Iron`)
+losing to the spelling that matches the shop's.
+
+**51 rackets carry 336 photographs**, against nothing at all before. The remaining 283
+catalogue rows are what a decade of retailer listings looks like beside a current-line shop
+— Woods N90, Ultra Carbon, N7II, the whole 3G Ti Powertec family — and Li-Ning publishes no
+archive on any property, so there is no source for them.
+
 ### Fleet, where the manufacturer is gone and the distributor is not
 
 fleet.com.my answers 503 to everything, and for a long time that was the end of it: 153
@@ -1233,7 +1289,7 @@ comes back looking like a successful download.
 
 ### Coverage, and the gaps
 
-Twelve of the catalogue's 36 brands are wired up across fifteen providers: the four largest
+Thirteen of the catalogue's 36 brands are wired up across sixteen providers: the four largest
 by racket count, plus Hundred, Kumpoo and Gosen, whose Vietnamese sites publish their whole
 racket line in two or three requests, Felet, whose Malaysian store publishes its current
 line in three, Forza and Fleet, whose own sites are not shops and supplied the rackets as
@@ -1243,7 +1299,6 @@ was probed against its real site with browser headers before being written off:
 
 | Brand | Rackets | Why there is no provider |
 | ----- | ------- | ------------------------ |
-| Li-Ning | 336 | li-ning.com is a corporate landing page linking out to Amazon and AliExpress; it publishes no catalogue. en.lining.com answers 403 to any non-browser client. |
 | Proace | 112 | no official domain resolves. |
 | Kawasaki | 86 | kawasaki-sports.com is the OEM sportswear-fabric business, not the badminton brand — its 183 products are textiles. |
 | Flypower, Ashaway, Babolat | 85–13 | sites are alive but publish neither a sitemap nor a product API, so the catalogue cannot be enumerated without guessing URLs. |

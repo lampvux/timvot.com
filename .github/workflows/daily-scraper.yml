@@ -150,23 +150,24 @@ jobs:
       # The three steps below read the catalogue rather than the scrape's
       # output, so they are worth running even when the walk went badly.
       #
-      # Three providers, one step, and the same policy as the shop walk above:
+      # Four providers, one step, and the same policy as the shop walk above:
       # `discoverCandidates` returns its failure rather than throwing, so a
       # provider whose catalogue has moved is reported as unreadable and the
       # others still crawl. None needs a browser — ProKennex is a WooCommerce
-      # category tree, Felet is three rendered listing pages and fleet.vn is
-      # eight, each plus one product page per matched racket — so they share the
-      # 45-minute cap rather than each claiming one and pushing the sum of the
-      # step caps toward the job's own timeout.
+      # category tree, Felet is three rendered listing pages, fleet.vn is eight,
+      # and lining-vn is two API requests that carry their own galleries — so
+      # they share the 45-minute cap rather than each claiming one and pushing
+      # the sum of the step caps toward the job's own timeout.
       #
-      # fleet-vn is here because fleet.com.my is dead and this is the brand's
-      # only reachable site: its 153 rackets had no photography at all until it
-      # was registered.
+      # fleet-vn and lining-vn are here because neither brand's manufacturer
+      # site answers: fleet.com.my is dead and li-ning.com publishes no
+      # catalogue. Between them that is 493 rackets with no photography at all
+      # until these two were registered.
       #
       # Rackets that already have images are skipped unless --refresh is
       # passed, so a nightly run costs the discovery walk and whatever the
       # stores have added since, not the whole gallery again.
-      - name: Crawl ProKennex, Felet & Fleet Images & Sync DB
+      - name: Crawl ProKennex, Felet, Fleet & Li-Ning Images & Sync DB
         id: images
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -174,7 +175,7 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run scrape:images -- --provider=pro-kennex,felet,fleet-vn --verbose
+        run: npm run scrape:images -- --provider=pro-kennex,felet,fleet-vn,lining-vn --verbose
 
       - name: Audit Racket Image Ownership
         id: audit
