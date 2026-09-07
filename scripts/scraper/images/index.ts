@@ -546,23 +546,29 @@ export async function crawlImages() {
   const proposedJobs: ImageJob[] = [];
   const outcomes: RacketOutcome[] = [];
 
-  for (const racket of inScope) {
-    if (
-      !options.refresh &&
-      racket.equivalentIds.some((racketId) => alreadyStored.has(racketId))
-    ) {
-      outcomes.push({
-        racketId: racket.id,
-        racketSlug: racket.slug,
-        racketName: racket.name,
-        brandSlug: racket.brandSlug,
-        provider: "-",
-        status: "skipped",
-        detail: "already has images",
-      });
-      continue;
-    }
+  // Rackets that already have images are matched like every other, and dropped
+  // only after ownership is resolved.
+  //
+  // The skip cannot happen before matching. `resolvePageOwnership` decides which
+  // racket a page belongs to by contest between everything that claimed it, so a
+  // racket taken out of the pool concedes its page to whatever matched it next —
+  // and this catalogue holds near-duplicate rows, "Woven 888II" beside "woven 888
+  // II", which are exactly the next claimant. On the run that added 40 Fleet
+  // rackets that is what happened: six losers of the previous run's contest took
+  // pages their winners already owned, and the database's ownership guard
+  // rejected the write. Matching them costs nothing — discovery has already run,
+  // and the comparison is in memory — so they contest their pages and are
+  // dropped from the download afterwards.
+  const alreadyImaged = new Set(
+    inScope
+      .filter(
+        (racket) =>
+          !options.refresh && racket.equivalentIds.some((id) => alreadyStored.has(id)),
+      )
+      .map((racket) => racket.id),
+  );
 
+  for (const racket of inScope) {
     const matches: ImageJobOption[] = [];
     // A racket is now compared against every provider that covers its brand, so
     // "yonex.co.uk does not sell it either" is only worth reporting when no site
@@ -635,8 +641,10 @@ export async function crawlImages() {
     // if its gallery comes back thin. See `Job.alternatives`.
     const [primary, ...rest] = matches;
     if (primary) proposedJobs.push({ ...primary, alternatives: rest });
-    // One row per racket that nothing could be found for, not one per site.
-    else if (misses.length > 0) outcomes.push(misses[0]);
+    // One row per racket that nothing could be found for, not one per site. A
+    // racket that already has images reports as skipped whatever the matcher
+    // said, because what it says has no bearing on what is stored for it.
+    else if (misses.length > 0 && !alreadyImaged.has(racket.id)) outcomes.push(misses[0]);
   }
 
   // Matching one racket at a time is not enough to establish ownership: the
@@ -645,13 +653,27 @@ export async function crawlImages() {
   // set before downloading anything. This is also what makes the database's
   // `(source_page_url, checksum)` uniqueness guard satisfiable.
   const ownership = resolvePageOwnership(proposedJobs);
-  const jobs = ownership.jobs;
-  const matchedIds = new Set(jobs.map((job) => job.racket.id));
+  const jobs = ownership.jobs.filter((job) => !alreadyImaged.has(job.racket.id));
+  const matchedIds = new Set(ownership.jobs.map((job) => job.racket.id));
+
+  for (const racket of inScope) {
+    if (!alreadyImaged.has(racket.id)) continue;
+    outcomes.push({
+      racketId: racket.id,
+      racketSlug: racket.slug,
+      racketName: racket.name,
+      brandSlug: racket.brandSlug,
+      provider: "-",
+      status: "skipped",
+      detail: "already has images",
+    });
+  }
   const rejectedByRacket = new Map(
     ownership.rejected.map((claim) => [claim.racketId, claim]),
   );
   for (const claim of rejectedByRacket.values()) {
     if (matchedIds.has(claim.racketId)) continue;
+    if (alreadyImaged.has(claim.racketId)) continue;
     const proposed = proposedJobs.find((job) => job.racket.id === claim.racketId);
     if (!proposed) continue;
     outcomes.push({
@@ -1031,6 +1053,7 @@ export async function crawlImages() {
       console.log(`   replaced ${stale.length} superseded image(s) across ${ids.length} rackets`);
     }
 
+    let galleryWritten = true;
     for (let i = 0; i < rows.length; i += 500) {
       const batch = rows.slice(i, i + 500);
       const { error } = await supabase
@@ -1039,6 +1062,7 @@ export async function crawlImages() {
       if (error) {
         console.error(`❌ racket_images: ${error.message}`);
         process.exitCode = 1;
+        galleryWritten = false;
         break;
       }
     }
@@ -1111,8 +1135,21 @@ export async function crawlImages() {
     // The hero is denormalised onto the racket so a card render needs no join.
     // Written one at a time because it is an update of existing rows, not an
     // upsert — an upsert here would need every not-null column of `rackets`.
+    //
+    // Not written at all when the gallery write was rejected. The hero is a
+    // pointer into `racket_images`, and writing it after that insert failed
+    // leaves a racket advertising photographs the catalogue holds no row for —
+    // which is what a rejected Fleet batch did to 46 rackets, and what
+    // `audit.ts` then had no gallery row to compare against. A loud failure and
+    // an unchanged catalogue is the better half of that trade.
     let heroesWritten = 0;
-    for (const [racketId, url] of heroByRacket) {
+    if (!galleryWritten) {
+      console.error(
+        "   hero_image_url left unchanged: the gallery write above was rejected, " +
+          "and a hero pointing at rows that were never inserted is worse than no hero.",
+      );
+    }
+    for (const [racketId, url] of galleryWritten ? heroByRacket : []) {
       const { error } = await supabase
         .from("rackets")
         .update({

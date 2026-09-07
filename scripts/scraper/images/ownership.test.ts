@@ -149,3 +149,30 @@ test("a losing primary claim can fall back to another provider", () => {
     ],
   );
 });
+
+test("a page's owner has to be in the pool to keep it", () => {
+  // Why `index.ts` matches rackets that already have images instead of skipping
+  // them before the contest. This catalogue holds near-duplicate rows from
+  // retailer listings — "Woven 888II" beside "woven 888 II" — and only the
+  // contest tells them apart. Take the winner out of the pool and the page does
+  // not go unclaimed; it goes to the loser, which then writes over an owner the
+  // database already recorded.
+  const page = {
+    url: "http://fleet.vn/chi-tiet-san-pham/vot-cau-long-fleet-woven-888-ii/221",
+    slug: "woven-888-ii",
+    title: "Woven 888 II",
+  };
+
+  const both = resolvePageOwnership([
+    job("r-fleet-woven-888ii", "fleet-woven-888ii", "Woven 888II", [page]),
+    job("r-fleet-woven-888-ii", "fleet-woven-888-ii", "woven 888 II", [page]),
+  ]);
+  assert.deepEqual(both.jobs.map((entry) => entry.racket.id), ["r-fleet-woven-888-ii"]);
+  assert.equal(both.rejected[0].racketId, "r-fleet-woven-888ii");
+
+  const winnerRemoved = resolvePageOwnership([
+    job("r-fleet-woven-888ii", "fleet-woven-888ii", "Woven 888II", [page]),
+  ]);
+  assert.deepEqual(winnerRemoved.jobs.map((entry) => entry.racket.id), ["r-fleet-woven-888ii"]);
+  assert.equal(winnerRemoved.rejected.length, 0, "nothing is left to contest the page");
+});

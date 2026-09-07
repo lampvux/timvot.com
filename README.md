@@ -1094,6 +1094,20 @@ markup — so a typical racket yields one live hero at 330×440 and three or fou
 the downloader discards. **77 of the 153 Fleet rackets now match a page, for 120 images**,
 against nothing at all before.
 
+**A racket that already has images is still matched.** It is dropped from the download
+afterwards, not from the contest — and the difference is the whole of a bug this brand
+found. `resolvePageOwnership` decides which racket a page belongs to by contest between
+everything that claimed it, so a racket taken out of the pool does not leave its page
+unclaimed: it concedes it to whatever matched it next. This catalogue holds near-duplicate
+retailer rows — "Woven 888II" beside "woven 888 II", "Professional 3000IV" beside
+"Professional 3000 IV" — which are exactly the next claimant. Importing the 40 new rackets
+and re-running without `--refresh` therefore handed six pages to the losers of the previous
+run's contest, the database's ownership guard rejected the batch, and the hero pointers
+were written anyway because they are a separate statement. 46 rackets ended up advertising
+photographs no `racket_images` row backed. Two things changed: the skip moved to after
+ownership resolution, and `hero_image_url` is no longer written when the gallery write was
+rejected.
+
 **Two listings sell several frames under one product page**, "Fleet 900 Tour, 900 Max, 900
 Pro" and "Fleet Starshine, Brand FR18, Max Speed, Arsas FR18", and the photograph on each is
 the group shot. The catalogue holds all seven of those as separate rackets, so each listing
