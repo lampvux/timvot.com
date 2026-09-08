@@ -7,8 +7,7 @@ the same Supabase project as the public storefront.
 ## Local setup
 
 1. Copy `.env.example` to `.env.local` and provide the Supabase values.
-2. From the repository root, apply the migrations through
-   `supabase/migrations/20260906000000_account_seller_onboarding.sql`.
+2. From the repository root, apply all migrations in `supabase/migrations`.
 3. In this directory, run `npm run bootstrap:admin` once.
 4. Run `npm run dev` and open `http://localhost:3000/login`.
 
@@ -42,3 +41,13 @@ Seller applications are reviewed at `/content/seller-applications`. Approval is
 transactional: it creates the applicant's seller record, promotes the profile to
 the seller role, and only then allows listing submissions. New seller offers
 enter catalogue review instead of publishing immediately.
+
+## Racket media mapping
+
+Every racket edit page includes a **Media mapping** panel. It shows the expected
+`<brand>/<model>/` Storage folder, the gallery hero, thumbnail readiness, and any
+misplaced files. Staff can choose a gallery image as the hero or open an image to
+change its racket mapping. Saving a changed mapping moves every image from that
+manufacturer source page, keeps original/thumbnail object paths paired, and
+updates both rackets' denormalised hero pointers. New admin uploads are stored in
+the same enforced folder layout and receive a card-sized WebP thumbnail.

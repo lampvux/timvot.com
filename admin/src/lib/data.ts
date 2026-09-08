@@ -8,6 +8,10 @@ import {
   type CollectionConfig,
   type FieldOption,
 } from "@/lib/collections";
+import {
+  racketImageFolder,
+  storagePathMatchesRacket,
+} from "@/lib/racket-image-paths";
 
 export type EntityRecord = Record<string, unknown>;
 
@@ -78,6 +82,84 @@ export async function getEntity(
 
   if (error) throw new Error(`Could not load ${collection.singular}: ${error.message}`);
   return (data as EntityRecord | null) ?? null;
+}
+
+export interface RacketMediaImage {
+  id: string;
+  publicUrl: string | null;
+  thumbUrl: string | null;
+  storageBucket: string;
+  storagePath: string;
+  thumbPath: string | null;
+  position: number;
+  isHero: boolean;
+  provider: string;
+  sourcePageUrl: string;
+  folderMatches: boolean;
+}
+
+export interface RacketMediaMapping {
+  racketId: string;
+  expectedFolder: string;
+  heroImageUrl: string | null;
+  heroThumbUrl: string | null;
+  images: RacketMediaImage[];
+}
+
+export async function getRacketMediaMapping(
+  racketId: string,
+): Promise<RacketMediaMapping> {
+  await assertStaff();
+  const supabase = await createClient();
+  const { data: racket, error: racketError } = await supabase
+    .from("rackets")
+    .select("id, slug, brand_id, hero_image_url, hero_thumb_url")
+    .eq("id", racketId)
+    .single();
+  if (racketError || !racket) {
+    throw new Error(`Could not load racket media: ${racketError?.message ?? "racket not found"}`);
+  }
+
+  const [{ data: brand, error: brandError }, { data: images, error: imagesError }] =
+    await Promise.all([
+      supabase.from("brands").select("slug").eq("id", racket.brand_id).single(),
+      supabase
+        .from("racket_images")
+        .select("id, public_url, thumb_url, storage_bucket, storage_path, thumb_path, position, is_hero, provider, source_page_url")
+        .eq("racket_id", racketId)
+        .order("position")
+        .order("id"),
+    ]);
+  if (brandError || !brand) {
+    throw new Error(`Could not load racket brand: ${brandError?.message ?? "brand not found"}`);
+  }
+  if (imagesError) throw new Error(`Could not load racket images: ${imagesError.message}`);
+
+  const target = {
+    brandSlug: String(brand.slug),
+    racketSlug: String(racket.slug),
+  };
+
+  return {
+    racketId,
+    expectedFolder: racketImageFolder(target),
+    heroImageUrl: racket.hero_image_url ? String(racket.hero_image_url) : null,
+    heroThumbUrl: racket.hero_thumb_url ? String(racket.hero_thumb_url) : null,
+    images: (images ?? []).map((image) => ({
+      id: String(image.id),
+      publicUrl: image.public_url ? String(image.public_url) : null,
+      thumbUrl: image.thumb_url ? String(image.thumb_url) : null,
+      storageBucket: String(image.storage_bucket),
+      storagePath: String(image.storage_path),
+      thumbPath: image.thumb_path ? String(image.thumb_path) : null,
+      position: Number(image.position),
+      isHero: Boolean(image.is_hero),
+      provider: String(image.provider),
+      sourcePageUrl: String(image.source_page_url),
+      folderMatches: storagePathMatchesRacket(String(image.storage_path), target)
+        && (!image.thumb_path || storagePathMatchesRacket(String(image.thumb_path), target)),
+    })),
+  };
 }
 
 export async function getRelationOptions(collection: CollectionConfig) {
