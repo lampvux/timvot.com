@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "tsx --test src/lib/*.test.ts",
     "typecheck": "next typegen && tsc --noEmit",
     "bootstrap:admin": "tsx --env-file=.env.local scripts/bootstrap-admin.ts"
   },
@@ -19,6 +20,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
+    "sharp": "^0.35.4",
     "zod": "^4.5.4"
   },
   "devDependencies": {

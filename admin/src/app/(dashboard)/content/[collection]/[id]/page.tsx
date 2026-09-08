@@ -5,8 +5,9 @@ import { notFound } from "next/navigation";
 import { DeletePanel } from "@/components/delete-panel";
 import { EntityForm } from "@/components/entity-form";
 import { PageHeader } from "@/components/page-header";
+import { RacketMediaPanel } from "@/components/racket-media-panel";
 import { getCollection } from "@/lib/collections";
-import { getEntity, getRelationOptions } from "@/lib/data";
+import { getEntity, getRacketMediaMapping, getRelationOptions } from "@/lib/data";
 
 export async function generateMetadata({ params }: { params: Promise<{ collection: string; id: string }> }): Promise<Metadata> {
   const { collection: key, id } = await params;
@@ -21,7 +22,11 @@ export default async function EditEntityPage({ params, searchParams }: {
   const [{ collection: key, id }, query] = await Promise.all([params, searchParams]);
   const collection = getCollection(key);
   if (!collection) notFound();
-  const [record, options] = await Promise.all([getEntity(collection, id), getRelationOptions(collection)]);
+  const [record, options, media] = await Promise.all([
+    getEntity(collection, id),
+    getRelationOptions(collection),
+    collection.key === "rackets" ? getRacketMediaMapping(id) : Promise.resolve(null),
+  ]);
   if (!record) notFound();
   const entityId = String(record[collection.primaryKey]);
   return (
@@ -29,6 +34,7 @@ export default async function EditEntityPage({ params, searchParams }: {
       <PageHeader eyebrow={collection.label} title={`Edit ${collection.singular.toLowerCase()}`} description={`Record ${entityId}`} actions={<Link href={`/content/${collection.key}`} className="button-secondary"><ChevronLeft aria-hidden="true" className="size-4" />Back to list</Link>} />
       {query.saved ? <div role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-[#9fd8bd] bg-[#e8f8f0] px-4 py-3 text-sm font-medium text-[#05603a]"><CheckCircle2 aria-hidden="true" className="size-4" />Changes saved.</div> : null}
       <div className="admin-card p-5 sm:p-7"><EntityForm collection={collection} record={record} relationOptions={options} /></div>
+      {media ? <div className="mt-6"><RacketMediaPanel media={media} /></div> : null}
       <div className="mt-6"><DeletePanel collection={collection.key} entityId={entityId} singular={collection.singular} /></div>
     </>
   );

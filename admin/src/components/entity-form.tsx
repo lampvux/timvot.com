@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useActionState, useEffect, useRef } from "react";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, FolderSync } from "lucide-react";
 import { saveEntityAction, type ContentActionState } from "@/app/actions/content";
 import type { CollectionConfig, FieldConfig, FieldOption } from "@/lib/collections";
 import { SubmitButton } from "./submit-button";
@@ -19,6 +20,48 @@ function initialValue(record: EntityRecord | null, field: FieldConfig) {
 
 function FieldError({ id, message }: { id: string; message?: string }) {
   return message ? <p id={id} className="mt-1.5 text-xs font-medium text-[#b42318]">{message}</p> : null;
+}
+
+function RacketImagePreview({ record }: { record: EntityRecord }) {
+  const originalUrl = typeof record.public_url === "string" ? record.public_url : null;
+  const thumbUrl = typeof record.thumb_url === "string" ? record.thumb_url : null;
+  if (!originalUrl) return null;
+
+  const previews = [
+    { label: "Original", url: originalUrl, path: record.storage_path },
+    { label: "Thumbnail", url: thumbUrl, path: record.thumb_path },
+  ];
+
+  return (
+    <section className="rounded-xl border border-[#d9d3ed] bg-[#faf9ff] p-4 sm:p-5" aria-labelledby="current-files-title">
+      <div className="flex items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#eee9ff] text-[#5b37d2]">
+          <FolderSync aria-hidden="true" className="size-4" />
+        </span>
+        <div>
+          <h2 id="current-files-title" className="text-sm font-bold text-[#282330]">Current image mapping</h2>
+          <p className="mt-0.5 text-xs leading-5 text-[#686470]">Saving repairs the brand/model folder, moves its paired thumbnail, and synchronizes hero pointers when selected.</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {previews.map((preview) => (
+          <figure key={preview.label} className="overflow-hidden rounded-lg border border-[#e1ddea] bg-white">
+            <div className="relative aspect-[4/3] bg-[#f5f3f8]">
+              {preview.url ? (
+                <Image src={preview.url} alt={`${preview.label} racket image`} fill sizes="(max-width: 640px) 100vw, 360px" className="object-contain p-3" unoptimized />
+              ) : (
+                <div className="grid h-full place-items-center text-xs font-semibold text-[#8a8491]">Not generated</div>
+              )}
+            </div>
+            <figcaption className="border-t border-[#ebe8f0] px-3 py-2">
+              <span className="text-xs font-bold text-[#37323d]">{preview.label}</span>
+              <code className="mt-1 block truncate text-[0.6875rem] text-[#686470]" title={String(preview.path ?? "")}>{String(preview.path ?? "No stored path")}</code>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function FormField({ field, record, editing, relationOptions, error }: {
@@ -92,14 +135,16 @@ function FormField({ field, record, editing, relationOptions, error }: {
   );
 }
 
-export function EntityForm({ collection, record, relationOptions }: {
+export function EntityForm({ collection, record, relationOptions, initialValues = null }: {
   collection: CollectionConfig;
   record: EntityRecord | null;
   relationOptions: Record<string, FieldOption[]>;
+  initialValues?: EntityRecord | null;
 }) {
   const [state, formAction] = useActionState(saveEntityAction, {} as ContentActionState);
   const errorRef = useRef<HTMLDivElement>(null);
   const editing = Boolean(record);
+  const values = record ?? initialValues;
 
   useEffect(() => {
     if (state.status === "error") errorRef.current?.focus();
@@ -116,14 +161,18 @@ export function EntityForm({ collection, record, relationOptions }: {
           <div><p className="font-semibold">{state.message}</p>{state.fieldErrors ? <ul className="mt-1 list-disc pl-4">{Object.values(state.fieldErrors).map((message) => <li key={message}>{message}</li>)}</ul> : null}</div>
         </div>
       ) : null}
+      {collection.key === "racket-images" && record ? <RacketImagePreview record={record} /> : null}
       <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">
         {collection.fields.map((field) => (
-          <FormField key={field.name} field={field} record={record} editing={editing} relationOptions={relationOptions[field.name]} error={state.fieldErrors?.[field.name]} />
+          <FormField key={field.name} field={field} record={values} editing={editing} relationOptions={relationOptions[field.name]} error={state.fieldErrors?.[field.name]} />
         ))}
       </div>
       <div className="flex flex-col-reverse gap-3 border-t border-[#e5e2e9] pt-5 sm:flex-row sm:justify-end">
         <Link href={`/content/${collection.key}`} className="button-secondary">Cancel</Link>
-        <SubmitButton label={editing ? "Save changes" : `Create ${collection.singular.toLowerCase()}`} />
+        <SubmitButton
+          label={editing ? "Save changes" : `Create ${collection.singular.toLowerCase()}`}
+          pendingLabel={collection.key === "racket-images" ? "Updating image files…" : "Saving…"}
+        />
       </div>
     </form>
   );
