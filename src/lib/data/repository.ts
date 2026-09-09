@@ -371,13 +371,29 @@ const loadIndex = cache(async (): Promise<Index> => {
 /* ------------------------------------------------------------ enrichment */
 
 function enrich(index: Index, racket: Racket): RacketWithMarket {
-  const liveOffers = (index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS).filter(
-    (o) => o.qtyAvailable > 0,
-  );
   const racketReviews = index.reviewsByRacket.get(racket.id) ?? EMPTY_REVIEWS;
   const history = racket.variants
     .flatMap((v) => index.historyByVariant.get(v.id) ?? EMPTY_POINTS)
     .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+  return enrichRacket(
+    racket,
+    index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS,
+    racketReviews,
+    history,
+  );
+}
+
+/** Enrich one racket from either the full snapshot or the bounded detail read. */
+function enrichRacket(
+  racket: Racket,
+  offers: readonly Offer[],
+  racketReviews: readonly Review[],
+  history: PricePoint[],
+): RacketWithMarket {
+  const liveOffers = offers.filter(
+    (offer) => offer.status === "live" && offer.qtyAvailable > 0,
+  );
   const score = courtScore(racket, racketReviews as Review[]);
 
   return {
@@ -412,10 +428,145 @@ export const getGuides = cache(async (): Promise<Guide[]> => {
   return (await loadSnapshot()).guides;
 });
 
+type DirectRacketRead =
+  | { status: "found"; racket: RacketWithMarket }
+  | { status: "missing" | "unavailable" };
+
+/**
+ * Read the one row a detail URL names.
+ *
+ * The catalogue listing is intentionally query-shaped, while the historical
+ * detail lookup used `loadIndex()` and therefore inherited the lifetime of the
+ * full catalogue snapshot. After a catalogue import, a fresh listing could
+ * link to a racket that the older snapshot did not contain; `getRacket` then
+ * turned that cache disagreement into a 404. Reading the named row directly
+ * keeps the detail route bounded and makes a newly listed racket readable on
+ * the same cache generation.
+ *
+ * The two slug variants preserve the gallery merge for older duplicate rows:
+ * some catalogue entries repeat the brand in the slug and some do not.
+ */
+async function readRacketByPath(
+  brandSlug: string,
+  racketSlug: string,
+): Promise<DirectRacketRead> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(
+    TAG.brands,
+    TAG.rackets,
+    TAG.offers,
+    TAG.pricePoints,
+    TAG.reviews,
+  );
+
+  const supabase = createStaticClient();
+  if (!supabase) return { status: "unavailable" };
+
+  try {
+    const { data: brand, error: brandError } = await supabase
+      .from("brands")
+      .select("id")
+      .eq("slug", brandSlug)
+      .maybeSingle();
+    if (brandError) throw new Error(brandError.message);
+    // A project with no catalogue at all uses the seed snapshot, so let the
+    // caller take that fallback rather than turning every seeded route into a
+    // 404 merely because Supabase is configured but not provisioned yet.
+    if (!brand) return { status: "unavailable" };
+
+    const prefix = `${brandSlug}-`;
+    const modelSlug = racketSlug.startsWith(prefix)
+      ? racketSlug.slice(prefix.length)
+      : racketSlug;
+    const equivalentSlugs = [...new Set([
+      racketSlug,
+      modelSlug,
+      `${brandSlug}-${modelSlug}`,
+    ])];
+
+    const selectRackets = (select: string) =>
+      supabase
+        .from("rackets")
+        .select(select)
+        .eq("brand_id", brand.id)
+        .in("slug", equivalentSlugs);
+
+    let { data, error } = await selectRackets(RACKET_SELECT);
+    if (error && isMissingColumnError(error.message)) {
+      ({ data, error } = await selectRackets(RACKET_SELECT_NO_THUMBS));
+    }
+    if (error) throw new Error(error.message);
+
+    const rackets = mergeEquivalentRacketGalleries((data ?? []).map(mapRacket));
+    const racket = rackets.find((candidate) => candidate.slug === racketSlug);
+    if (!racket) return { status: "missing" };
+
+    const variantIds = racket.variants.map((variant) => variant.id);
+    const historyRead = variantIds.length
+      ? selectAll((from, to) =>
+          supabase
+            .from("price_points")
+            .select("*")
+            .in("variant_id", variantIds)
+            .order("observed_on")
+            .order("id")
+            .range(from, to),
+        )
+      : Promise.resolve({ data: [], error: null });
+
+    const [offerRows, reviewRows, historyRows] = await Promise.all([
+      selectAll((from, to) =>
+        supabase
+          .from("offers")
+          .select("*")
+          .eq("racket_id", racket.id)
+          .eq("status", "live")
+          .order("id")
+          .range(from, to),
+      ),
+      selectAll((from, to) =>
+        supabase
+          .from("reviews")
+          .select("*")
+          .eq("racket_id", racket.id)
+          .eq("status", "published")
+          .order("id")
+          .range(from, to),
+      ),
+      historyRead,
+    ]);
+    const failed = [offerRows, reviewRows, historyRows].find((result) => result.error);
+    if (failed?.error) throw new Error(failed.error.message);
+
+    return {
+      status: "found",
+      racket: enrichRacket(
+        racket,
+        (offerRows.data ?? []).map(mapOffer),
+        (reviewRows.data ?? []).map(mapReview),
+        (historyRows.data ?? []).map(mapPricePoint),
+      ),
+    };
+  } catch (error) {
+    console.warn(
+      `[repository] direct racket lookup failed for ${brandSlug}/${racketSlug}: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return { status: "unavailable" };
+  }
+}
+
 export async function getRacket(
   brandSlug: string,
   racketSlug: string,
 ): Promise<RacketWithMarket | null> {
+  const direct = await readRacketByPath(brandSlug, racketSlug);
+  if (direct.status === "found") return direct.racket;
+  if (direct.status === "missing") return null;
+
+  // An unconfigured or temporarily unavailable database still gets the seeded
+  // fallback, preserving the repository's single public read contract.
   const index = await loadIndex();
   return index.enrichedByPath.get(`${brandSlug}/${racketSlug}`) ?? null;
 }
