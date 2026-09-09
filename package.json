@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node --max-old-space-size=6144 ./node_modules/next/dist/bin/next build",
     "start": "next start",
     "seed:sql": "tsx scripts/generate-seed.ts",
     "seed:db": "tsx scripts/seed-db.ts",
@@ -33,6 +33,8 @@
     "test:string-scraper": "tsx --test scripts/string-scraper/*.test.ts",
     "migrate": "tsx scripts/migrate.ts",
     "migrate:dry": "tsx scripts/migrate.ts --dry-run",
+    "supabase:migrate": "tsx scripts/migrate-supabase-project.ts",
+    "test:supabase-migration": "tsx --test scripts/migrate-supabase-project.test.ts",
     "scrape:images": "tsx scripts/scraper/images/index.ts",
     "scrape:images:dry": "tsx scripts/scraper/images/index.ts --dry-run --from-file",
     "test:image-scraper": "tsx --test scripts/scraper/images/*.test.ts",
@@ -59,6 +61,7 @@
     "pg": "^8.23.0",
     "playwright": "^1.62.1",
     "sharp": "^0.35.3",
+    "supabase": "2.117.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
     "typescript": "^5"

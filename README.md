@@ -67,6 +67,11 @@ used against the Management API) or **`SUPABASE_DB_URL`** (a direct `postgres://
 A service-role key is deliberately refused: it authenticates against PostgREST, which
 executes no DDL, so it can insert catalogue rows but cannot create a table.
 
+Moving the complete hosted project—including Auth users and Storage objects—is a
+different operation. Use the phased helper and checklist in
+[`docs/supabase-instance-migration.md`](docs/supabase-instance-migration.md); the
+catalogue-only `backup`/`restore` scripts are not a full Supabase migration.
+
 `supabase/seed.sql` is generated, never hand-edited:
 
 ```bash

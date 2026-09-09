@@ -76,9 +76,10 @@ import type { Review, SellerTier } from "@/lib/types";
  * taking a thirtieth of the pages, 475 builds fine — which is exactly why this
  * passed here and failed there.
  *
- * Raising `NODE_OPTIONS=--max-old-space-size` does **not** help: it does not
- * reach the static-generation worker. A 6 GB parent heap crashed at the same
- * page count as the default.
+ * Static child processes strip `--max-old-space-size`, so `next.config.ts`
+ * opts into worker threads. That lets the build script's 6 GB heap reach this
+ * phase, while low per-worker concurrency and this route's page cap prevent
+ * the larger heap from becoming the only line of defence.
  *
  * Nothing is lost from the catalogue by this. Under Cache Components a path not
  * listed here still serves an App Shell instantly and upgrades in the

@@ -107,7 +107,9 @@ jobs:
           asked="${{ inputs.prerendered_rackets }}"
 
           # Next.js creates static workers with `isolatedMemory: true`, which
-          # deletes --max-old-space-size from worker processes' NODE_OPTIONS.
+          # deletes --max-old-space-size from child-process NODE_OPTIONS. The
+          # app therefore opts into worker threads so its build-script heap
+          # limit reaches static generation too.
           # By default Next calculates workers as `os.cpus().length - 1` (1 worker on 2-core runners),
           # causing a single worker to attempt processing all pages and run out of V8 heap near ~70 pages.
           #
@@ -151,9 +153,9 @@ jobs:
 
       - name: Build with production settings
         env:
-          # NODE_OPTIONS increases heap size for parent Node process (Turbopack & TypeScript).
-          # NEXT_BUILD_CPUS forces Next static generation to use multiple workers.
-          NODE_OPTIONS: "--max-old-space-size=8192"
+          # The build script gives Node a 6 GB heap; workerThreads makes that
+          # limit apply to static generation. NEXT_BUILD_CPUS splits the page
+          # set across workers, while next.config bounds concurrency per worker.
           NEXT_BUILD_CPUS: ${{ env.NEXT_BUILD_CPUS }}
           PRERENDERED_RACKETS: ${{ env.PRERENDERED_RACKETS }}
         run: vercel build --prod
