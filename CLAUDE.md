@@ -290,11 +290,12 @@ localStorage is read — move the call behind that check instead, and no boundar
 at all.
 
 **Prerendered page count is capped by the builder, not by taste.** Static generation
-retains roughly 15–25 MB per page. Next creates static workers with `isolatedMemory: true`,
-which *deletes* `--max-old-space-size` from worker `NODE_OPTIONS` — so `NODE_OPTIONS` only covers
-the parent orchestrator/Turbopack process, while static page workers run with default ~2GB V8 heap limits.
-**Pages per worker and worker count are the levers that bind**: we configure `experimental.cpus` via `NEXT_BUILD_CPUS=4`
-so CI spawns 4 static workers, keeping pages per worker under ~55–65.
+retains roughly 15–25 MB per page. Next creates static child processes with
+`isolatedMemory: true`, which *deletes* `--max-old-space-size` from worker `NODE_OPTIONS`.
+The production build therefore uses `experimental.workerThreads: true`; those workers
+inherit the build script's 6 GB heap. **Pages per worker, worker count, and render
+concurrency are still the levers that bind**: `experimental.cpus` comes from
+`NEXT_BUILD_CPUS=4`, and each worker renders at most two pages concurrently.
 Count what a route multiplies: `generateStaticParams` entries times locales. Under Cache
 Components an unlisted path still serves an App Shell instantly, so prerendering fewer is
 a latency trade, not a missing page.

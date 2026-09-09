@@ -570,9 +570,11 @@ FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out o
 offers, 6.519 price points. Nowhere near 1.8 GB. Phase 6's memory argument is real, but
 it is not this.
 
-**Not something more heap fixes.** `NODE_OPTIONS=--max-old-space-size=6144`, on a machine
-with 8 GB, crashed at *the same page count* as the default 1.85 GB — the setting does not
-reach the static-generation worker. Do not reach for it.
+**Not something more parent heap alone fixes.** `NODE_OPTIONS=--max-old-space-size=6144`,
+on a machine with 8 GB, crashed at *the same page count* as the default 1.85 GB because
+the setting did not reach a child-process static-generation worker. The current build
+uses worker threads so the heap setting reaches that phase, while still bounding pages
+and per-worker concurrency because a larger ceiling does not fix per-page retention.
 
 **Not a WeakMap away.** Memoising the index on the snapshot object was tried and reverted:
 `use cache` hands back a fresh snapshot per render, so the memo never hit. Reverted rather
@@ -605,7 +607,7 @@ a missing one.
 total. That number is not accounted for, and until it is, page count is the only lever.
 Raising the prerender count needs either more workers or an explanation for that 12 MB.
 
-### `--max-old-space-size` cannot raise the static-generation heap
+### `--max-old-space-size` does not reach child-process static workers
 
 Worth writing down, because it looks like it should work and quietly does not.
 
@@ -630,11 +632,14 @@ during a build: with `NODE_OPTIONS=--max-old-space-size=8192` on the parent, the
 reports `NODE_OPTIONS=--enable-source-maps` and a limit of **4144 MB** — the machine
 default. The flag is not ignored, it is deleted.
 
-**The one way to make it apply** is `experimental.workerThreads: true`, which turns the
-workers into threads sharing the parent's V8 settings. Probed: the worker then reports
+**The way to make it apply** is `experimental.workerThreads: true`, which turns the
+workers into threads inheriting the parent's V8 settings. Probed: the worker then reports
 **7216 MB** under `--max-old-space-size=7168`. But it does not solve the problem — 475
 pages in a single worker still died at 7 GB, because the per-page cost is ~15 MB and
 475 × 15 MB ≈ 7 GB. Raising the ceiling buys a little room, not a different shape.
+
+The current build combines a 6 GB heap with worker threads, limits each static worker to
+two concurrent pages, disables build/prerender source maps, and keeps the prerender cap.
 
 **Pages per worker is the lever that binds.** Measured, at default heap:
 

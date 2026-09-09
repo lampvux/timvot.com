@@ -18,6 +18,26 @@ const nextConfig: NextConfig = {
   typedRoutes: false,
 
   /**
+   * Keep every production source-map layer off. Browser and server maps are
+   * already opt-in, but prerender and Turbopack maps default to on and add
+   * avoidable memory pressure during this catalogue-heavy build.
+   */
+  productionBrowserSourceMaps: false,
+  enablePrerenderSourceMaps: false,
+
+  /**
+   * `next build` uses Turbopack by default. This empty block also makes the
+   * Webpack fallback below explicitly intentional to Next.js 16.
+   */
+  turbopack: {},
+
+  /** Disable the production cache if a build explicitly opts into Webpack. */
+  webpack(config, { dev }) {
+    if (!dev) config.cache = false;
+    return config;
+  },
+
+  /**
    * A cached catalogue fill can briefly exceed Next's 60 second default when
    * four static workers share a two-core GitHub runner. The data is bounded
    * and cached, so restarting the same page three times only adds load. Give a
@@ -57,6 +77,26 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react"],
     cpus: process.env.NEXT_BUILD_CPUS ? Number(process.env.NEXT_BUILD_CPUS) : undefined,
+    /**
+     * Static child processes discard `--max-old-space-size`. Worker threads
+     * inherit the 6 GB limit from the build script, so the setting reaches the
+     * phase that previously aborted near the default 2 GB ceiling.
+     */
+    workerThreads: true,
+    /** Bound each worker's transient render fan-out (the default is eight). */
+    staticGenerationMaxConcurrency: 2,
+    /**
+     * CI builds from a clean checkout and does not restore `.next/cache`, so
+     * writing Turbopack's build cache only spends memory and I/O.
+     */
+    turbopackFileSystemCacheForBuild: false,
+    turbopackSourceMaps: false,
+    turbopackInputSourceMaps: false,
+    serverSourceMaps: false,
+    preloadEntriesOnStart: false,
+    /** Keep the lower-memory Webpack path healthy for explicit --webpack runs. */
+    webpackBuildWorker: true,
+    webpackMemoryOptimizations: true,
   },
   images: {
     /**
