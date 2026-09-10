@@ -4,6 +4,11 @@ import { Link } from "@/i18n/navigation";
 import { Icon } from "@/components/ds/primitives";
 import { AccountMenu } from "@/components/account-menu";
 import { createClient, getUser } from "@/lib/supabase/server";
+import {
+  finishFunctionProfile,
+  profileFunction,
+  startFunctionProfile,
+} from "@/lib/racket-detail-profile";
 
 /**
  * The one piece of the chrome that knows who is looking.
@@ -26,8 +31,11 @@ import { createClient, getUser } from "@/lib/supabase/server";
 /** Rendered identically by the fallback and the resolved state, so the 44px
  *  target never moves — only the destination changes. */
 async function AccountLink({ signedIn }: { signedIn: boolean }) {
+  const started = startFunctionProfile();
   const t = await getTranslations("nav");
   const tc = await getTranslations("common");
+
+  finishFunctionProfile("component.AccountLink", started, { signedIn });
 
   return (
     <Link
@@ -42,8 +50,14 @@ async function AccountLink({ signedIn }: { signedIn: boolean }) {
 }
 
 async function ResolvedAccountLink() {
-  const user = await getUser();
-  if (!user) return <AccountLink signedIn={false} />;
+  const started = startFunctionProfile();
+  const user = await profileFunction("supabase.getUser.accountSlot", () => getUser());
+  if (!user) {
+    finishFunctionProfile("component.ResolvedAccountLink", started, {
+      signedIn: false,
+    });
+    return <AccountLink signedIn={false} />;
+  }
 
   const supabase = await createClient();
   const { data: profile } = supabase
@@ -60,6 +74,9 @@ async function ResolvedAccountLink() {
     String(user.user_metadata?.display_name ?? "").trim() ||
     email;
 
+  finishFunctionProfile("component.ResolvedAccountLink", started, {
+    signedIn: true,
+  });
   return <AccountMenu email={email} displayName={displayName} />;
 }
 

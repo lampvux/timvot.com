@@ -1,6 +1,11 @@
 import { Suspense } from "react";
 import { WatchPriceButton } from "@/components/watch-price";
 import { getUser } from "@/lib/supabase/server";
+import {
+  finishFunctionProfile,
+  profileFunction,
+  startFunctionProfile,
+} from "@/lib/racket-detail-profile";
 
 /**
  * The racket page's other `getUser()` — kept off the page's critical path for
@@ -17,7 +22,11 @@ import { getUser } from "@/lib/supabase/server";
  */
 
 async function ResolvedWatchPrice({ variantId }: { variantId: string }) {
-  const user = await getUser();
+  const started = startFunctionProfile();
+  const user = await profileFunction("supabase.getUser.watchPrice", () => getUser(), {
+    variantId,
+  });
+  finishFunctionProfile("component.ResolvedWatchPrice", started, { variantId });
   return <WatchPriceButton variantId={variantId} signedIn={Boolean(user)} />;
 }
 

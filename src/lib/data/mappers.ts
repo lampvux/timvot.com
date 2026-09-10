@@ -74,7 +74,7 @@ export function mapBrand(row: Row): Brand {
   };
 }
 
-function mapVariant(row: Row): RacketVariant {
+export function mapVariant(row: Row): RacketVariant {
   return {
     id: row.id,
     racketId: row.racket_id,
@@ -90,11 +90,11 @@ export function mapRacketImage(row: Row): RacketImage {
   return {
     id: row.id,
     racketId: row.racket_id,
-    provider: row.provider,
-    sourceUrl: row.source_url,
-    sourcePageUrl: row.source_page_url,
-    storageBucket: row.storage_bucket,
-    storagePath: row.storage_path,
+    provider: row.provider ?? "",
+    sourceUrl: row.source_url ?? "",
+    sourcePageUrl: row.source_page_url ?? "",
+    storageBucket: row.storage_bucket ?? "",
+    storagePath: row.storage_path ?? "",
     publicUrl: row.public_url ?? null,
     thumbUrl: row.thumb_url ?? null,
     position: row.position ?? 0,
@@ -103,7 +103,7 @@ export function mapRacketImage(row: Row): RacketImage {
     bytes: row.bytes ?? null,
     width: row.width ?? null,
     height: row.height ?? null,
-    checksum: row.checksum,
+    checksum: row.checksum ?? "",
     colourway: row.colourway ?? null,
   };
 }

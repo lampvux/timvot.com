@@ -10,6 +10,11 @@ import { AccountSlot } from "@/components/auth-slot";
 import { CompareProvider, CompareTray } from "@/components/compare-tray";
 import { MobileTabBar, SiteFooter, TopBar } from "@/components/site-chrome";
 import { NavigationProgress } from "@/components/navigation-progress";
+import {
+  finishFunctionProfile,
+  profileFunction,
+  startFunctionProfile,
+} from "@/lib/racket-detail-profile";
 import "@/app/globals.css";
 
 export function generateStaticParams() {
@@ -21,10 +26,13 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: string }>;
 }): Promise<Metadata> {
+  const started = startFunctionProfile();
   const { locale } = await params;
-  const t = await getTranslations({ locale, namespace: "brand" });
+  const t = await profileFunction("i18n.getTranslations.layoutBrand", () =>
+    getTranslations({ locale, namespace: "brand" }),
+  );
 
-  return {
+  const metadata = {
     title: {
       default: `${t("name")} — ${t("tagline")}`,
       template: `%s · ${t("name")}`,
@@ -36,6 +44,8 @@ export async function generateMetadata({
       ),
     },
   };
+  finishFunctionProfile("layout.generateMetadata", started, { locale });
+  return metadata;
 }
 
 export default async function LocaleLayout({
@@ -45,6 +55,7 @@ export default async function LocaleLayout({
   children: React.ReactNode;
   params: Promise<{ locale: string }>;
 }) {
+  const started = startFunctionProfile();
   const { locale } = await params;
   if (!hasLocale(routing.locales, locale)) notFound();
 
@@ -54,6 +65,8 @@ export default async function LocaleLayout({
   // single `cookies()` read in it opts the whole app out of prerendering —
   // see components/auth-slot.tsx, which owns that read behind a Suspense
   // boundary instead.
+
+  finishFunctionProfile("layout.LocaleLayout", started, { locale });
 
   return (
     <html lang={locale} className={fontVariables}>

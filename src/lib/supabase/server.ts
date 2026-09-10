@@ -7,14 +7,17 @@ import {
   REMEMBER_SESSION_COOKIE,
   cookieOptionsForPersistence,
 } from "./cookies";
+import { profiledSupabaseFetch } from "@/lib/racket-detail-profile";
 
 /**
  * Static Supabase client (no cookies required).
  * Used for reading public RLS data in static contexts like `generateStaticParams` or SSG.
  */
-export function createStaticClient(): SupabaseClient | null {
+export function createStaticClient(source = "static-client"): SupabaseClient | null {
   if (!isSupabaseConfigured) return null;
-  return createSupabaseClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  return createSupabaseClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    global: { fetch: profiledSupabaseFetch(source) },
+  });
 }
 
 /**
@@ -38,6 +41,7 @@ export async function createClient({
       rememberSession ?? cookieStore.get(REMEMBER_SESSION_COOKIE)?.value === "1";
 
     return createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      global: { fetch: profiledSupabaseFetch("server-client") },
       cookies: {
         getAll() {
           return cookieStore.getAll();
