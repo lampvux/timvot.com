@@ -25,16 +25,10 @@ import { CompareToggle } from "@/components/compare-tray";
 import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
 import { StringRecommender } from "@/components/string-recommender";
-import {
-  getHeadlineVariantPrice,
-  getOffersForRacket,
-  getRacket,
-  getRackets,
-  getReviewsForRacket,
-} from "@/lib/data/repository";
+import { LazySimilarRackets } from "@/components/lazy-similar-rackets";
+import { getRacketCore, getRacketDetail, getRackets } from "@/lib/data/repository";
 import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
 import { ReviewDate } from "@/components/review-date";
-import { RacketCard } from "@/components/racket-card";
 import {
   BALANCE_MESSAGE_KEY,
   CONDITION_MESSAGE_KEY,
@@ -44,6 +38,11 @@ import {
 } from "@/lib/format";
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
 import type { Review, SellerTier } from "@/lib/types";
+import {
+  finishFunctionProfile,
+  profileFunction,
+  startFunctionProfile,
+} from "@/lib/racket-detail-profile";
 
 /**
  * Prerender the rackets people actually open, and let ISR fill in the rest.
@@ -107,8 +106,11 @@ const PRERENDERED_RACKETS = (() => {
 })();
 
 export async function generateStaticParams() {
-  const rackets = await getRackets();
-  return [...rackets]
+  const started = startFunctionProfile();
+  const rackets = await profileFunction("repository.getRackets.generateStaticParams", () =>
+    getRackets(),
+  );
+  const generated = [...rackets]
     .sort(
       (a, b) =>
         (b.courtScore ?? -1) - (a.courtScore ?? -1) || b.specScore - a.specScore,
@@ -118,6 +120,11 @@ export async function generateStaticParams() {
       brand: racket.brandSlug,
       model: racket.slug,
     }));
+  finishFunctionProfile("page.generateStaticParams", started, {
+    racketCount: rackets.length,
+    generatedPathCount: generated.length,
+  });
+  return generated;
 }
 
 export async function generateMetadata({
@@ -125,13 +132,31 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: Locale; brand: string; model: string }>;
 }): Promise<Metadata> {
+  const started = startFunctionProfile();
   const { locale, brand, model } = await params;
-  const racket = await getRacket(brand, model);
-  if (!racket) return {};
-  return {
+  const racket = await profileFunction("repository.getRacketCore.metadata", () =>
+    getRacketCore(brand, model),
+  );
+  if (!racket) {
+    finishFunctionProfile("page.generateMetadata", started, {
+      locale,
+      brand,
+      model,
+      found: false,
+    });
+    return {};
+  }
+  const metadata = {
     title: `${racket.name} — ${racket.brandName}`,
     description: racket.summary[locale],
   };
+  finishFunctionProfile("page.generateMetadata", started, {
+    locale,
+    brand,
+    model,
+    found: true,
+  });
+  return metadata;
 }
 
 const TIER_STATE: Record<SellerTier, "verified" | "authorised" | "unverified"> = {
@@ -145,28 +170,40 @@ export default async function RacketPage({
 }: {
   params: Promise<{ locale: Locale; brand: string; model: string }>;
 }) {
+  const started = startFunctionProfile();
   const { locale, brand, model } = await params;
   setRequestLocale(locale);
 
-  const racket = await getRacket(brand, model);
-  if (!racket) notFound();
+  const detail = await profileFunction("repository.getRacketDetail.page", () =>
+    getRacketDetail(brand, model),
+  );
+  if (!detail) notFound();
+  const { racket, offers, reviews, price } = detail;
 
-  const t = await getTranslations("racket");
-  const tc = await getTranslations("common");
-  const ts = await getTranslations("specs");
-  const te = await getTranslations("enums");
-  const tk = await getTranslations("stock");
-  const tsel = await getTranslations("sellers");
-  const tn = await getTranslations("nav");
+  const t = await profileFunction("i18n.getTranslations.racket", () =>
+    getTranslations("racket"),
+  );
+  const tc = await profileFunction("i18n.getTranslations.common", () =>
+    getTranslations("common"),
+  );
+  const ts = await profileFunction("i18n.getTranslations.specs", () =>
+    getTranslations("specs"),
+  );
+  const te = await profileFunction("i18n.getTranslations.enums", () =>
+    getTranslations("enums"),
+  );
+  const tk = await profileFunction("i18n.getTranslations.stock", () =>
+    getTranslations("stock"),
+  );
+  const tsel = await profileFunction("i18n.getTranslations.sellers", () =>
+    getTranslations("sellers"),
+  );
+  const tn = await profileFunction("i18n.getTranslations.nav", () =>
+    getTranslations("nav"),
+  );
 
   // `getUser()` used to be in here, which made a spec sheet wait on a Supabase
   // Auth round-trip. It lives in <WatchPriceSlot /> now, behind Suspense.
-  const [offers, reviews, price, allRackets] = await Promise.all([
-    getOffersForRacket(racket.id),
-    getReviewsForRacket(racket.id),
-    getHeadlineVariantPrice(racket),
-    getRackets(),
-  ]);
 
   const inStock = offers.filter((offer) => offer.qtyAvailable > 0);
   const lowestOffer = inStock[0];
@@ -289,19 +326,6 @@ export default async function RacketPage({
           })
         : t("balanceReadingEven", { mm: racket.balancePointMm });
 
-  const similar = allRackets
-    .filter((other) => other.id !== racket.id)
-    .map((other) => ({
-      racket: other,
-      distance:
-        Math.abs(other.balancePointMm - racket.balancePointMm) +
-        Math.abs((other.lowestPrice ?? other.msrp) - (racket.lowestPrice ?? racket.msrp)) /
-          200_000,
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 3)
-    .map((entry) => entry.racket);
-
   const marketNote = price
     ? price.latest < price.median30
       ? t("belowMarket", {
@@ -315,6 +339,14 @@ export default async function RacketPage({
           })
         : t("atMarket", { amount: "₫0", variant: variantCode })
     : null;
+
+  finishFunctionProfile("page.RacketPage", started, {
+    locale,
+    brand,
+    model,
+    offerCount: offers.length,
+    reviewCount: reviews.length,
+  });
 
   return (
     <div className="page-shell max-w-[1160px] pb-[152px] pt-4 lg:pb-12 lg:pt-5">
@@ -588,16 +620,7 @@ export default async function RacketPage({
         </aside>
       </div>
 
-      <section className="mt-10" aria-labelledby="similar">
-        <h2 id="similar" className="font-display text-h3 font-bold text-primary">
-          {t("similar")}
-        </h2>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {similar.map((other) => (
-            <RacketCard key={other.id} racket={other} compact />
-          ))}
-        </div>
-      </section>
+      <LazySimilarRackets racketId={racket.id} />
 
       <StringRecommender
         racketName={racket.name}

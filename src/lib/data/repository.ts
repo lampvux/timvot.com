@@ -10,6 +10,7 @@ import { comparePopularBrandTiers } from "@/lib/catalog-ranking";
 import type {
   Brand,
   CatalogFilters,
+  RacketCardData,
   Guide,
   Offer,
   OfferWithSeller,
@@ -37,6 +38,7 @@ import {
   mergeEquivalentRacketGalleries,
   mapReview,
   mapSeller,
+  mapVariant,
   RACKET_SELECT,
   RACKET_SELECT_NO_THUMBS,
   isMissingColumnError,
@@ -182,7 +184,7 @@ async function readSnapshot(): Promise<Snapshot> {
     TAG.guides,
   );
 
-  const supabase = createStaticClient();
+  const supabase = createStaticClient("snapshot-client");
   if (!supabase) return seedSnapshot();
 
   try {
@@ -428,140 +430,163 @@ export const getGuides = cache(async (): Promise<Guide[]> => {
   return (await loadSnapshot()).guides;
 });
 
-type DirectRacketRead =
-  | { status: "found"; racket: RacketWithMarket }
+type RpcRow = Record<string, unknown>;
+
+type RacketCoreRead =
+  | { status: "found"; racket: Racket }
   | { status: "missing" | "unavailable" };
 
+interface RacketMarketData {
+  racketId: string;
+  offers: OfferWithSeller[];
+  reviews: Review[];
+  history: PricePoint[];
+}
+
+type RacketMarketRead =
+  | { status: "found"; market: RacketMarketData }
+  | { status: "missing" | "unavailable" };
+
+export interface RacketDetail {
+  racket: RacketWithMarket;
+  offers: OfferWithSeller[];
+  reviews: Review[];
+  price: VariantPrice | null;
+}
+
+function rpcRecord(value: unknown): RpcRow | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as RpcRow)
+    : null;
+}
+
+function rpcRows(value: unknown): RpcRow[] {
+  return Array.isArray(value)
+    ? value.filter((row): row is RpcRow => Boolean(rpcRecord(row)))
+    : [];
+}
+
 /**
- * Read the one row a detail URL names.
+ * Read stable catalogue data for the one row a detail URL names.
  *
- * The catalogue listing is intentionally query-shaped, while the historical
- * detail lookup used `loadIndex()` and therefore inherited the lifetime of the
- * full catalogue snapshot. After a catalogue import, a fresh listing could
- * link to a racket that the older snapshot did not contain; `getRacket` then
- * turned that cache disagreement into a 404. Reading the named row directly
- * keeps the detail route bounded and makes a newly listed racket readable on
- * the same cache generation.
- *
- * The two slug variants preserve the gallery merge for older duplicate rows:
- * some catalogue entries repeat the brand in the slug and some do not.
+ * The RPC joins brand and racket in one indexed statement, removing the old
+ * brand -> racket network waterfall. It returns every image for both legacy
+ * equivalent slug rows, but only the fields the gallery renders or needs for
+ * deterministic merging. Specifications and galleries use the long catalogue
+ * cache and therefore stay warm when only prices change.
  */
-async function readRacketByPath(
+async function readRacketCoreByPath(
   brandSlug: string,
   racketSlug: string,
-): Promise<DirectRacketRead> {
+): Promise<RacketCoreRead> {
   "use cache";
-  cacheLife("prices");
-  cacheTag(
-    TAG.brands,
-    TAG.rackets,
-    TAG.offers,
-    TAG.pricePoints,
-    TAG.reviews,
-  );
+  cacheLife("catalogue");
+  cacheTag(TAG.brands, TAG.rackets);
 
-  const supabase = createStaticClient();
+  const supabase = createStaticClient("detail-core-client");
   if (!supabase) return { status: "unavailable" };
 
   try {
-    const { data: brand, error: brandError } = await supabase
-      .from("brands")
-      .select("id")
-      .eq("slug", brandSlug)
-      .maybeSingle();
-    if (brandError) throw new Error(brandError.message);
-    // A project with no catalogue at all uses the seed snapshot, so let the
-    // caller take that fallback rather than turning every seeded route into a
-    // 404 merely because Supabase is configured but not provisioned yet.
-    if (!brand) return { status: "unavailable" };
-
-    const prefix = `${brandSlug}-`;
-    const modelSlug = racketSlug.startsWith(prefix)
-      ? racketSlug.slice(prefix.length)
-      : racketSlug;
-    const equivalentSlugs = [...new Set([
-      racketSlug,
-      modelSlug,
-      `${brandSlug}-${modelSlug}`,
-    ])];
-
-    const selectRackets = (select: string) =>
-      supabase
-        .from("rackets")
-        .select(select)
-        .eq("brand_id", brand.id)
-        .in("slug", equivalentSlugs);
-
-    let { data, error } = await selectRackets(RACKET_SELECT);
-    if (error && isMissingColumnError(error.message)) {
-      ({ data, error } = await selectRackets(RACKET_SELECT_NO_THUMBS));
-    }
+    const { data, error } = await supabase.rpc("get_racket_detail_core", {
+      p_brand_slug: brandSlug,
+      p_racket_slug: racketSlug,
+    });
     if (error) throw new Error(error.message);
 
-    const rackets = mergeEquivalentRacketGalleries((data ?? []).map(mapRacket));
+    const payload = rpcRecord(data);
+    const status = payload?.status;
+    if (status === "unavailable") return { status: "unavailable" };
+    if (status === "missing") return { status: "missing" };
+    if (!payload || status !== "found") throw new Error("malformed core RPC response");
+
+    const rackets = mergeEquivalentRacketGalleries(
+      rpcRows(payload.rackets).map((row) => mapRacket(row as never)),
+    );
     const racket = rackets.find((candidate) => candidate.slug === racketSlug);
-    if (!racket) return { status: "missing" };
-
-    const variantIds = racket.variants.map((variant) => variant.id);
-    const historyRead = variantIds.length
-      ? selectAll((from, to) =>
-          supabase
-            .from("price_points")
-            .select("*")
-            .in("variant_id", variantIds)
-            .order("observed_on")
-            .order("id")
-            .range(from, to),
-        )
-      : Promise.resolve({ data: [], error: null });
-
-    const [offerRows, reviewRows, historyRows] = await Promise.all([
-      selectAll((from, to) =>
-        supabase
-          .from("offers")
-          .select("*")
-          .eq("racket_id", racket.id)
-          .eq("status", "live")
-          .order("id")
-          .range(from, to),
-      ),
-      selectAll((from, to) =>
-        supabase
-          .from("reviews")
-          .select("*")
-          .eq("racket_id", racket.id)
-          .eq("status", "published")
-          .order("id")
-          .range(from, to),
-      ),
-      historyRead,
-    ]);
-    const failed = [offerRows, reviewRows, historyRows].find((result) => result.error);
-    if (failed?.error) throw new Error(failed.error.message);
-
-    return {
-      status: "found",
-      racket: enrichRacket(
-        racket,
-        (offerRows.data ?? []).map(mapOffer),
-        (reviewRows.data ?? []).map(mapReview),
-        (historyRows.data ?? []).map(mapPricePoint),
-      ),
-    };
+    if (!racket) throw new Error("core RPC omitted the requested racket");
+    return { status: "found", racket };
   } catch (error) {
     console.warn(
-      `[repository] direct racket lookup failed for ${brandSlug}/${racketSlug}: ` +
+      `[repository] racket detail core RPC failed for ${brandSlug}/${racketSlug}: ` +
         `${error instanceof Error ? error.message : "unknown error"}`,
     );
     return { status: "unavailable" };
   }
 }
 
-export async function getRacket(
+/**
+ * Read the volatile half of a detail page independently of its gallery.
+ *
+ * Resolving the id inside the RPC means this starts at the same time as the
+ * core RPC. One result contains live offers with their seller and variant,
+ * published reviews, and the narrow price series the chart consumes.
+ */
+async function readRacketMarketByPath(
   brandSlug: string,
   racketSlug: string,
-): Promise<RacketWithMarket | null> {
-  const direct = await readRacketByPath(brandSlug, racketSlug);
+): Promise<RacketMarketRead> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.sellers, TAG.offers, TAG.pricePoints, TAG.reviews);
+
+  const supabase = createStaticClient("detail-market-client");
+  if (!supabase) return { status: "unavailable" };
+
+  try {
+    const { data, error } = await supabase.rpc("get_racket_detail_market", {
+      p_brand_slug: brandSlug,
+      p_racket_slug: racketSlug,
+    });
+    if (error) throw new Error(error.message);
+
+    const payload = rpcRecord(data);
+    if (!payload) return { status: "missing" };
+    const racketId = payload.racket_id;
+    if (typeof racketId !== "string") throw new Error("malformed market RPC response");
+
+    const offers = rpcRows(payload.offers)
+      .map((row): OfferWithSeller | null => {
+        const seller = rpcRecord(row.seller);
+        const variant = rpcRecord(row.variant);
+        if (!seller || !variant) return null;
+        return {
+          ...mapOffer(row as never),
+          seller: mapSeller(seller as never),
+          variant: mapVariant(variant as never),
+        };
+      })
+      .filter((offer): offer is OfferWithSeller => Boolean(offer))
+      .sort((a, b) => a.price - b.price);
+
+    const reviews = rpcRows(payload.reviews)
+      .map((row) => mapReview(row as never))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const history = rpcRows(payload.price_points)
+      .map((row) => mapPricePoint(row as never))
+      .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+    return {
+      status: "found",
+      market: { racketId, offers, reviews, history },
+    };
+  } catch (error) {
+    console.warn(
+      `[repository] racket detail market RPC failed for ${brandSlug}/${racketSlug}: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return { status: "unavailable" };
+  }
+}
+
+const readRacketCore = cache(readRacketCoreByPath);
+const readRacketMarket = cache(readRacketMarketByPath);
+
+/** Stable detail data for metadata and other callers that need no prices. */
+export async function getRacketCore(
+  brandSlug: string,
+  racketSlug: string,
+): Promise<Racket | null> {
+  const direct = await readRacketCore(brandSlug, racketSlug);
   if (direct.status === "found") return direct.racket;
   if (direct.status === "missing") return null;
 
@@ -569,6 +594,188 @@ export async function getRacket(
   // fallback, preserving the repository's single public read contract.
   const index = await loadIndex();
   return index.enrichedByPath.get(`${brandSlug}/${racketSlug}`) ?? null;
+}
+
+/**
+ * The complete initial detail payload. The two cache generations are
+ * independent but begin together, so a cold page pays one parallel round-trip
+ * window and a price invalidation does not evict specifications or images.
+ */
+export const getRacketDetail = cache(
+  async (brandSlug: string, racketSlug: string): Promise<RacketDetail | null> => {
+    const [core, market] = await Promise.all([
+      readRacketCore(brandSlug, racketSlug),
+      readRacketMarket(brandSlug, racketSlug),
+    ]);
+
+    if (
+      core.status === "missing" ||
+      (core.status === "found" && market.status === "missing")
+    ) {
+      return null;
+    }
+
+    if (
+      core.status === "found" &&
+      market.status === "found" &&
+      core.racket.id === market.market.racketId
+    ) {
+      const { offers, reviews, history } = market.market;
+      const racket = enrichRacket(core.racket, offers, reviews, history);
+      return {
+        racket,
+        offers,
+        reviews,
+        price: headlineVariantPriceFromRows(racket, offers, history),
+      };
+    }
+
+    // The fallback is intentionally the old full index. It is expensive, but
+    // only runs when the RPC migration is absent, Supabase is unconfigured, or
+    // an upstream request fails; normal detail traffic never builds it.
+    const index = await loadIndex();
+    const racket = index.enrichedByPath.get(`${brandSlug}/${racketSlug}`);
+    if (!racket) return null;
+
+    const [offers, reviews, price] = await Promise.all([
+      getOffersForRacket(racket.id),
+      getReviewsForRacket(racket.id),
+      getHeadlineVariantPrice(racket),
+    ]);
+    return { racket, offers, reviews, price };
+  },
+);
+
+/** Backwards-compatible rich racket read for repository consumers. */
+export async function getRacket(
+  brandSlug: string,
+  racketSlug: string,
+): Promise<RacketWithMarket | null> {
+  return (await getRacketDetail(brandSlug, racketSlug))?.racket ?? null;
+}
+
+function mapRacketCardRow(row: RpcRow): RacketCardData | null {
+  if (
+    typeof row.id !== "string" ||
+    typeof row.slug !== "string" ||
+    typeof row.brand_slug !== "string" ||
+    typeof row.brand_name !== "string" ||
+    typeof row.name !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    slug: row.slug,
+    brandSlug: row.brand_slug,
+    brandName: row.brand_name,
+    name: row.name,
+    releaseYear: Number(row.release_year),
+    balancePointMm: Number(row.balance_point_mm),
+    shaftFlex: row.shaft_flex as RacketCardData["shaftFlex"],
+    msrp: Number(row.msrp),
+    playStyleTags: (Array.isArray(row.play_style_tags)
+      ? row.play_style_tags
+      : []) as RacketCardData["playStyleTags"],
+    heroImageUrl: typeof row.hero_image_url === "string" ? row.hero_image_url : null,
+    heroThumbUrl: typeof row.hero_thumb_url === "string" ? row.hero_thumb_url : null,
+    balanceType: row.balance_type as RacketCardData["balanceType"],
+    lowestPrice: row.lowest_price === null ? null : Number(row.lowest_price),
+    sellerCount: Number(row.seller_count ?? 0),
+    variants: rpcRows(row.variants).map((variant) => ({
+      weightClass: variant.weight_class as RacketVariant["weightClass"],
+      weightGrams: Number(variant.weight_grams),
+    })),
+  };
+}
+
+async function readSimilarRackets(
+  racketId: string,
+  limit: number,
+): Promise<RacketCardData[] | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.rackets, TAG.offers);
+
+  const supabase = createStaticClient("similar-rackets-client");
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.rpc("get_similar_rackets", {
+      p_racket_id: racketId,
+      p_limit: limit,
+    });
+    if (error) throw new Error(error.message);
+    if (!Array.isArray(data)) throw new Error("malformed similar-rackets RPC response");
+    return rpcRows(data)
+      .map(mapRacketCardRow)
+      .filter((racket): racket is RacketCardData => Boolean(racket));
+  } catch (error) {
+    console.warn(
+      `[repository] similar rackets RPC failed for ${racketId}: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
+}
+
+const readSimilarRacketsCached = cache(readSimilarRackets);
+
+function toRacketCardData(racket: RacketWithMarket): RacketCardData {
+  return {
+    id: racket.id,
+    slug: racket.slug,
+    brandSlug: racket.brandSlug,
+    brandName: racket.brandName,
+    name: racket.name,
+    releaseYear: racket.releaseYear,
+    balancePointMm: racket.balancePointMm,
+    shaftFlex: racket.shaftFlex,
+    msrp: racket.msrp,
+    playStyleTags: racket.playStyleTags,
+    heroImageUrl: racket.heroImageUrl,
+    heroThumbUrl: racket.heroThumbUrl,
+    balanceType: racket.balanceType,
+    lowestPrice: racket.lowestPrice,
+    sellerCount: racket.sellerCount,
+    variants: racket.variants.map((variant) => ({
+      weightClass: variant.weightClass,
+      weightGrams: variant.weightGrams,
+    })),
+  };
+}
+
+/** Three card-shaped recommendations. Normal traffic uses the bounded RPC;
+ *  the full-index calculation remains only as an unmigrated-project fallback. */
+export async function getSimilarRackets(
+  racketId: string,
+  requestedLimit = 3,
+): Promise<RacketCardData[]> {
+  const finiteLimit = Number.isFinite(requestedLimit) ? requestedLimit : 3;
+  const limit = Math.min(Math.max(Math.floor(finiteLimit), 1), 12);
+  const direct = await readSimilarRacketsCached(racketId, limit);
+  if (direct) return direct;
+
+  const index = await loadIndex();
+  const target = index.enriched.find((racket) => racket.id === racketId);
+  if (!target) return [];
+
+  return index.enriched
+    .filter((racket) => racket.id !== target.id)
+    .map((racket) => ({
+      racket,
+      distance:
+        Math.abs(racket.balancePointMm - target.balancePointMm) +
+        Math.abs(
+          (racket.lowestPrice ?? racket.msrp) -
+            (target.lowestPrice ?? target.msrp),
+        ) /
+          200_000,
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit)
+    .map(({ racket }) => toRacketCardData(racket));
 }
 
 export async function getRacketsBySlugs(
@@ -643,6 +850,25 @@ export interface VariantPrice {
   points: PricePoint[];
 }
 
+function variantPriceFromPoints(
+  variantId: string,
+  points: PricePoint[],
+): VariantPrice | null {
+  if (points.length === 0) return null;
+
+  const latest = points[points.length - 1].price;
+  const lastThird = points.slice(Math.floor((points.length * 2) / 3));
+
+  return {
+    variantId,
+    latest,
+    median30: median(lastThird.map((point) => point.price)),
+    delta90: latest - points[0].price,
+    delta30: latest - lastThird[0].price,
+    points,
+  };
+}
+
 /**
  * Shape one variant's price series. The points arrive already sorted from the
  * index, which is why there is no `.sort()` here — `getDeals` calls this once
@@ -651,19 +877,39 @@ export interface VariantPrice {
  */
 function variantPrice(index: Index, variantId: string): VariantPrice | null {
   const points = index.historyByVariant.get(variantId);
-  if (!points || points.length === 0) return null;
+  return points ? variantPriceFromPoints(variantId, points) : null;
+}
 
-  const latest = points[points.length - 1].price;
-  const lastThird = points.slice(Math.floor((points.length * 2) / 3));
+/** The detail RPC already returned these bounded rows, so do not consult the
+ *  full catalogue index merely to choose one variant's line series. */
+function headlineVariantPriceFromRows(
+  racket: RacketWithMarket,
+  offers: readonly Offer[],
+  history: PricePoint[],
+): VariantPrice | null {
+  const offerCounts = new Map<string, number>();
+  for (const offer of offers) {
+    if (offer.status !== "live") continue;
+    offerCounts.set(offer.variantId, (offerCounts.get(offer.variantId) ?? 0) + 1);
+  }
 
-  return {
-    variantId,
-    latest,
-    median30: median(lastThird.map((p) => p.price)),
-    delta90: latest - points[0].price,
-    delta30: latest - lastThird[0].price,
-    points,
-  };
+  const historyByVariant = new Map<string, PricePoint[]>();
+  for (const point of history) push(historyByVariant, point.variantId, point);
+  for (const points of historyByVariant.values())
+    points.sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+  const candidates = racket.variants.filter((variant) =>
+    historyByVariant.has(variant.id),
+  );
+  if (candidates.length === 0) return null;
+
+  const headline = [...candidates].sort(
+    (a, b) =>
+      (offerCounts.get(b.id) ?? 0) - (offerCounts.get(a.id) ?? 0) ||
+      a.weightGrams - b.weightGrams,
+  )[0];
+
+  return variantPriceFromPoints(headline.id, historyByVariant.get(headline.id) ?? []);
 }
 
 export async function getVariantPrice(

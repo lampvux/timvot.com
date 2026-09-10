@@ -212,6 +212,35 @@ export interface RacketWithMarket extends Racket {
  */
 export type CatalogRacket = Omit<RacketWithMarket, "spec" | "player" | "history">;
 
+/**
+ * The exact data a catalogue card renders.
+ *
+ * Detail-page recommendations cross a Route Handler boundary after they enter
+ * the viewport. Keeping this shape separate prevents the client response from
+ * carrying the full specification sheet, gallery, scores and price history for
+ * three cards that use none of them.
+ */
+export type RacketCardData = Pick<
+  CatalogRacket,
+  | "id"
+  | "slug"
+  | "brandSlug"
+  | "brandName"
+  | "name"
+  | "releaseYear"
+  | "balancePointMm"
+  | "shaftFlex"
+  | "msrp"
+  | "playStyleTags"
+  | "heroImageUrl"
+  | "heroThumbUrl"
+  | "balanceType"
+  | "lowestPrice"
+  | "sellerCount"
+> & {
+  variants: Pick<RacketVariant, "weightClass" | "weightGrams">[];
+};
+
 export interface AxisScores {
   power: number;
   speed: number;

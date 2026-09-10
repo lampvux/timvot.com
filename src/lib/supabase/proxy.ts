@@ -5,6 +5,11 @@ import {
   REMEMBER_SESSION_COOKIE,
   cookieOptionsForPersistence,
 } from "./cookies";
+import {
+  finishFunctionProfile,
+  profiledSupabaseFetch,
+  startFunctionProfile,
+} from "@/lib/racket-detail-profile";
 
 /**
  * Refreshes the Supabase session on every request and copies the rotated
@@ -15,11 +20,21 @@ export async function refreshSession(
   request: NextRequest,
   response: NextResponse,
 ): Promise<NextResponse> {
-  if (!isSupabaseConfigured) return response;
+  const started = startFunctionProfile();
+  if (!isSupabaseConfigured) {
+    finishFunctionProfile("proxy.refreshSession", started, {
+      path: request.nextUrl.pathname,
+      configured: false,
+    });
+    return response;
+  }
   const rememberSession =
     request.cookies.get(REMEMBER_SESSION_COOKIE)?.value === "1";
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    global: {
+      fetch: profiledSupabaseFetch("proxy-client", request.nextUrl.pathname),
+    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -40,5 +55,9 @@ export async function refreshSession(
   });
 
   await supabase.auth.getUser();
+  finishFunctionProfile("proxy.refreshSession", started, {
+    path: request.nextUrl.pathname,
+    configured: true,
+  });
   return response;
 }
