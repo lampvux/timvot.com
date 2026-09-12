@@ -20,12 +20,15 @@
     "backup": "tsx scripts/backup.ts",
     "restore": "tsx scripts/restore.ts",
     "typecheck": "tsc --noEmit",
+    "test:lib": "tsx --test src/lib/*.test.ts src/lib/**/*.test.ts src/i18n/*.test.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "scrape:quick": "tsx scripts/scraper/index.ts --pages=3 --no-verify",
     "scrape:verify": "tsx scripts/scraper/index.ts --sample=8",
     "scrape:sync": "tsx scripts/scraper/index.ts --sync-db",
     "scrape:refresh": "tsx scripts/scraper/index.ts --no-verify --sync-db",
     "market:refresh": "tsx scripts/refresh-market.ts",
+    "warm": "tsx scripts/warm-routes.ts",
+    "audit:glyphs": "tsx scripts/audit-font-glyphs.ts",
     "scrape:sql": "tsx scripts/scraper/generate-sql.ts",
     "test:scraper": "tsx --test scripts/scraper/*.test.ts scripts/scraper/sites/*.test.ts",
     "scrape:strings": "tsx scripts/string-scraper/index.ts",
@@ -39,7 +42,8 @@
     "scrape:images:dry": "tsx scripts/scraper/images/index.ts --dry-run --from-file",
     "test:image-scraper": "tsx --test scripts/scraper/images/*.test.ts",
     "images:audit": "tsx scripts/scraper/images/audit.ts",
-    "images:thumbs": "tsx scripts/scraper/images/backfill-thumbnails.ts"
+    "images:thumbs": "tsx scripts/scraper/images/backfill-thumbnails.ts",
+    "images:cache-repair": "tsx scripts/scraper/images/repair-cache-control.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

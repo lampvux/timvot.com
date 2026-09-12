@@ -20,6 +20,34 @@ export const isSupabaseConfigured = Boolean(
   SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY,
 );
 
+/**
+ * The origin product images come from, for a connection hint in the document
+ * head.
+ *
+ * Card thumbnails are rendered `unoptimized`, which is deliberate — the
+ * crawler already produced them and Vercel Hobby allows 5.000 image
+ * transformations a month against 3.010 heroes. The cost of that choice is
+ * that the browser meets a *third* origin, and it does not meet it until it
+ * has parsed the first `<img>`: DNS, TCP and TLS to Singapore, 200–300 ms on
+ * mobile, inserted directly in front of the LCP image.
+ *
+ * A `preconnect` in the head starts that handshake while the HTML is still
+ * arriving, so the image request finds an open connection. `crossOrigin` has
+ * to be set and has to match how the images are actually fetched, or the
+ * browser opens a second connection and the hint buys nothing.
+ *
+ * Null when the project is not provisioned — there is no origin to warm, and a
+ * hint to nowhere is a wasted socket.
+ */
+export const SUPABASE_ORIGIN = (() => {
+  if (!SUPABASE_URL) return null;
+  try {
+    return new URL(SUPABASE_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+
 /* ------------------------------------------------------- OAuth providers */
 
 /**

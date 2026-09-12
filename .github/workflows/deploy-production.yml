@@ -198,6 +198,29 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed: $url"
 
+      - name: Warm the public routes
+        if: ${{ !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          WARM_BASE_URL: ${{ steps.deploy.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          # The `use cache` entries are keyed on the build ID, so this deploy
+          # starts with an empty cache and the first visitor to each route pays
+          # the fill. That is not a small number: the production spot check
+          # measured a seller page at 0,89 s warm and 18,57 s cold.
+          #
+          # These requests are off every visitor's critical path, and the table
+          # they print is the cold TTFB per route — the only measurement that
+          # can prove the latency budget, since a warm one cannot.
+          #
+          # continue-on-error: warming is an optimisation. A deploy that is
+          # otherwise healthy must not be failed by a slow warm-up request, so
+          # `--strict` is deliberately not passed here.
+          npx tsx scripts/warm-routes.ts --details=20 --markdown \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Tag the release
         if: ${{ !inputs.dry_run }}
         env:

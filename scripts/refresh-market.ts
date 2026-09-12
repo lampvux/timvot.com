@@ -1,5 +1,5 @@
 /**
- * Recompute `racket_scores` from the catalogue.
+ * Recompute `racket_scores` and `deal_watch` from the catalogue.
  *
  *   npx tsx scripts/refresh-market.ts              # write
  *   npx tsx scripts/refresh-market.ts --dry-run    # report, write nothing
@@ -16,17 +16,37 @@
  * only the *result* is stored. A coefficient change still happens in one file;
  * this script is what carries it to the database.
  *
- * Needs SUPABASE_SERVICE_ROLE_KEY: `racket_scores` is admin-write, and this is
- * a script rather than a person. Run it after `scrape:sync` (reviews and the
- * catalogue both move) — see the `scrape:refresh` chain in package.json.
+ * `deal_watch` is the same arrangement for a different reason. A price drop is
+ * "below its own recent median and still falling", and both halves of that are
+ * measured over the last third of whatever the scraper has observed — a
+ * definition that lives in `src/lib/price-window.ts`. Answering it per request
+ * meant reading every price point there is: 3,3 MB across 35 paged round trips,
+ * growing by ~3.265 rows every night, to render three rows on the homepage. The
+ * whole table gets read exactly once here instead, on the schedule the data
+ * actually moves on.
+ *
+ * Needs SUPABASE_SERVICE_ROLE_KEY: both tables are admin-write, and this is
+ * a script rather than a person. Run it after `scrape:sync` (reviews, prices
+ * and the catalogue all move) — see the `scrape:refresh` chain in package.json.
  */
 
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadEnv } from "./scraper/env";
 import { courtScore } from "../src/lib/court-score";
 import { POPULAR_BRAND_SLUGS } from "../src/lib/catalog-ranking";
-import { mapRacket, mapReview, RACKET_SELECT } from "../src/lib/data/mappers";
-import type { Racket, Review } from "../src/lib/types";
+import {
+  DEAL_WINDOW_POINTS,
+  isPriceDrop,
+  variantPriceFromPoints,
+} from "../src/lib/price-window";
+import {
+  mapPricePoint,
+  mapRacket,
+  mapReview,
+  RACKET_SELECT,
+} from "../src/lib/data/mappers";
+import type { PricePoint, Racket, Review } from "../src/lib/types";
 
 const PAGE = 1000;
 const CHUNK = 500;
@@ -165,7 +185,146 @@ async function main() {
       console.log(`  ${Math.min(i + CHUNK, rows.length)}/${rows.length}`);
   }
 
+  await refreshDealWatch(supabase, rackets, options);
+
   console.log("Done.");
+}
+
+/* ----------------------------------------------------------- deal_watch */
+
+/** One row as `deal_watch` stores it. */
+interface DealRow {
+  variant_id: string;
+  racket_id: string;
+  latest: number;
+  delta_30: number;
+  median_30: number;
+  delta_90: number;
+  recent_points: { d: string; p: number }[];
+  computed_at: string;
+}
+
+async function refreshDealWatch(
+  supabase: SupabaseClient,
+  rackets: Racket[],
+  options: Options,
+): Promise<void> {
+  console.log("Reading price history…");
+
+  const pointRows = await selectAll((from, to) =>
+    supabase
+      .from("price_points")
+      .select("*")
+      // `observed_on` is what the series is ordered by and is not unique;
+      // `id` breaks the ties so the page boundaries are stable. Paging an
+      // order that is not total silently duplicates and drops rows.
+      .order("observed_on")
+      .order("id")
+      .range(from, to),
+  );
+
+  const points: PricePoint[] = pointRows.map((row) => mapPricePoint(row as never));
+
+  // Which racket each variant belongs to. `RACKET_SELECT` already brought the
+  // variants along, so this needs no second read.
+  const racketByVariant = new Map<string, string>();
+  for (const racket of rackets)
+    for (const variant of racket.variants) racketByVariant.set(variant.id, racket.id);
+
+  // Group once rather than scanning the price table per variant — the same
+  // shape the repository's index exists to avoid, and no cheaper here.
+  const byVariant = new Map<string, PricePoint[]>();
+  for (const point of points) {
+    const list = byVariant.get(point.variantId);
+    if (list) list.push(point);
+    else byVariant.set(point.variantId, [point]);
+  }
+  // Supabase already ordered by `observed_on`, but `variantPriceFromPoints`
+  // reads the last element as "latest" and cannot check.
+  for (const series of byVariant.values())
+    series.sort((a, b) => a.observedOn.localeCompare(b.observedOn));
+
+  const computedAt = new Date().toISOString();
+  const drops: DealRow[] = [];
+
+  for (const [variantId, series] of byVariant) {
+    const racketId = racketByVariant.get(variantId);
+    // A price point for a variant that is no longer in the catalogue. The
+    // foreign key would reject it, and it is not a deal anyone can buy.
+    if (!racketId) continue;
+
+    const price = variantPriceFromPoints(variantId, series);
+    if (!price || !isPriceDrop(price)) continue;
+
+    drops.push({
+      variant_id: variantId,
+      racket_id: racketId,
+      latest: price.latest,
+      delta_30: price.delta30,
+      median_30: price.median30,
+      delta_90: price.delta90,
+      recent_points: price.points
+        .slice(-DEAL_WINDOW_POINTS)
+        .map((point) => ({ d: point.observedOn, p: point.price })),
+      computed_at: computedAt,
+    });
+  }
+
+  // Only the --verbose listing below reads this order. What a page sees is
+  // decided by `deal_watch_delta_idx` at read time, which orders by the same
+  // key — see `bySteepestDrop`, the one definition of "steepest first".
+  drops.sort((a, b) => a.delta_30 - b.delta_30);
+
+  console.log(
+    `${points.length} price points · ${byVariant.size} variants with history · ` +
+      `${drops.length} below their own median and still falling`,
+  );
+
+  if (options.verbose) {
+    for (const row of drops.slice(0, 10))
+      console.log(
+        `  ${String(row.delta_30).padStart(9)}  ${row.variant_id}`,
+      );
+  }
+
+  if (options.dryRun) {
+    console.log("--dry-run: deal_watch not written.");
+    return;
+  }
+
+  console.log(`Writing ${drops.length} rows to deal_watch…`);
+  for (let i = 0; i < drops.length; i += CHUNK) {
+    const chunk = drops.slice(i, i + CHUNK);
+    const { error } = await supabase
+      .from("deal_watch")
+      .upsert(chunk, { onConflict: "variant_id" });
+    if (error) {
+      console.error(`deal_watch upsert failed: ${error.message}`);
+      if (/does not exist|schema cache/i.test(error.message)) {
+        console.error(
+          "Apply supabase/migrations/20260912000000_deal_watch.sql first " +
+            "(npm run migrate).",
+        );
+      }
+      process.exitCode = 1;
+      return;
+    }
+    if (options.verbose)
+      console.log(`  ${Math.min(i + CHUNK, drops.length)}/${drops.length}`);
+  }
+
+  // Yesterday's deals that stopped being deals. Every row written above
+  // carries this run's timestamp, so anything older is a variant that no
+  // longer qualifies — deleting by age needs no id list and therefore no
+  // bound on how many there are.
+  const { error: staleError } = await supabase
+    .from("deal_watch")
+    .delete()
+    .lt("computed_at", computedAt);
+  if (staleError) {
+    console.error(`deal_watch cleanup failed: ${staleError.message}`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {

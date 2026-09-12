@@ -448,3 +448,156 @@ export async function readCatalogPageFromView(
     return null;
   }
 }
+
+/* ------------------------------------------------- rackets by id, enriched */
+
+/**
+ * The card-shaped rackets behind a set of ids, in one round trip pair.
+ *
+ * Two callers need this and neither is a catalogue page: `getDeals` has a list
+ * of racket ids from `deal_watch`, and the homepage has four from the view's
+ * own ordering. Both used to reach it by building the whole enriched index,
+ * which is the 9,4 MB read this module exists to avoid — and both want exactly
+ * what the view already resolves: balance type, seller count, lowest price and
+ * the two scores, joined to the racket's own columns.
+ *
+ * Batched for the same reason as `readRacketsByIds` in the repository:
+ * PostgREST puts `in()` in the query string, and a full page of deals is more
+ * ids than an 8 KB request line holds.
+ *
+ * Returns `null` when the view cannot answer, so the caller falls back rather
+ * than renders a page with rackets missing.
+ */
+const BY_ID_BATCH = 100;
+
+export async function readMarketRacketsByIds(
+  supabase: SupabaseClient,
+  ids: readonly string[],
+): Promise<Map<string, CatalogRacket> | null> {
+  if (ids.length === 0) return new Map();
+
+  assertBalanceBands();
+
+  const byId = new Map<string, CatalogRacket>();
+
+  for (let from = 0; from < ids.length; from += BY_ID_BATCH) {
+    const batch = ids.slice(from, from + BY_ID_BATCH);
+
+    const [market, full] = await Promise.all([
+      supabase.from("racket_market").select(MARKET_COLUMNS).in("id", batch),
+      hydrate(supabase, [...batch]),
+    ]);
+
+    if (market.error) {
+      if (/racket_market|schema cache|does not exist/i.test(market.error.message)) {
+        console.warn(
+          "[repository] racket_market is missing, so this read fell back to " +
+            "the snapshot. Apply supabase/migrations/" +
+            "20260906000000_catalogue_pagination.sql and run " +
+            "`npx tsx scripts/refresh-market.ts`.",
+        );
+      } else {
+        console.warn(`[repository] racket lookup failed: ${market.error.message}`);
+      }
+      return null;
+    }
+
+    for (const row of (market.data ?? []) as unknown as MarketRow[]) {
+      const racket = full.get(row.id);
+      if (!racket) continue;
+      byId.set(row.id, {
+        ...racket,
+        balanceType: row.balance_type,
+        reviewCount: row.review_count,
+        courtScore: row.court_score,
+        specScore: row.spec_score,
+        lowestPrice: row.lowest_price,
+        sellerCount: row.seller_count,
+      });
+    }
+  }
+
+  return byId;
+}
+
+/* ------------------------------------------------------------- trending */
+
+/**
+ * The highest-scoring rackets, in Court Score order.
+ *
+ * The homepage's four cards. It used to get them by enriching all 3.010
+ * rackets in memory and sorting the result, which is the whole snapshot — 9,4
+ * MB to render four cards and three counts.
+ *
+ * `racket_scores` already holds Court Score, so the view can order by it and
+ * Postgres can stop after four. `nullsFirst: false` is what keeps a racket
+ * with no player half out of the trending set without a separate predicate:
+ * under five verified reviews `court_score` is null, and null sorts last.
+ * That is the same rule the old `filter(courtScore !== null)` applied.
+ */
+export async function readTopRacketsByScore(
+  limit: number,
+): Promise<CatalogRacket[] | null> {
+  "use cache";
+  // The ordering reads a score, but the cards render a price.
+  cacheLife("prices");
+  cacheTag(TAG.rackets, TAG.offers, TAG.sellers);
+
+  assertBalanceBands();
+
+  const supabase = createStaticClient();
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("racket_market")
+      .select(MARKET_COLUMNS)
+      .order("court_score", { ascending: false, nullsFirst: false })
+      .order("spec_score", { ascending: false })
+      .order("id")
+      .limit(limit);
+
+    if (error) {
+      if (/racket_market|schema cache|does not exist/i.test(error.message)) {
+        console.warn(
+          "[repository] racket_market is missing, so trending is being read " +
+            "from the snapshot. Apply supabase/migrations/" +
+            "20260906000000_catalogue_pagination.sql and run " +
+            "`npx tsx scripts/refresh-market.ts`.",
+        );
+      } else {
+        console.warn(`[repository] trending query failed: ${error.message}`);
+      }
+      return null;
+    }
+
+    const market = (data ?? []) as unknown as MarketRow[];
+    // Before `refresh-market` has run there are no scores to rank by, and four
+    // arbitrary rackets under a "trending" heading is worse than falling back.
+    if (market.length === 0 || market[0].court_score === null) return null;
+
+    const full = await hydrate(supabase, market.map((row) => row.id));
+
+    const rackets: CatalogRacket[] = [];
+    for (const row of market) {
+      const racket = full.get(row.id);
+      if (!racket) continue;
+      rackets.push({
+        ...racket,
+        balanceType: row.balance_type,
+        reviewCount: row.review_count,
+        courtScore: row.court_score,
+        specScore: row.spec_score,
+        lowestPrice: row.lowest_price,
+        sellerCount: row.seller_count,
+      });
+    }
+    return rackets;
+  } catch (error) {
+    console.warn(
+      `[repository] trending fell back to the snapshot: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
+}

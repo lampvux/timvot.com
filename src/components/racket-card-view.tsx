@@ -21,7 +21,23 @@ export interface RacketCardProps {
   compact?: boolean;
   density?: "default" | "catalog";
   mobileLayout?: "stacked" | "horizontal";
-  priority?: boolean;
+  /**
+   * This card holds the LCP image, so start it immediately instead of waiting
+   * for the lazy-loading threshold.
+   *
+   * At most one card per page may set it. `priority` used to be set on the
+   * first four home cards and the first six catalogue cards, which inserted
+   * four and six `<link rel="preload">` into the head — and preloading six
+   * images is not an LCP strategy, it is six images competing at the same
+   * priority so that none of them wins. On the homepage the measured LCP is
+   * text, so nothing there should preload at all.
+   *
+   * `loading="eager"` + `fetchPriority="high"` rather than `preload`: the
+   * Next.js 16 documentation's own guidance, and `priority` is deprecated in
+   * favour of `preload` regardless. Eager is what removes the lazy threshold;
+   * high is what puts it ahead of the fonts in the queue.
+   */
+  eager?: boolean;
 }
 
 /** Shared by server-rendered catalogue cards and client-fetched recommendations. */
@@ -30,7 +46,7 @@ export function RacketCardView({
   compact,
   density = "default",
   mobileLayout = "stacked",
-  priority = false,
+  eager = false,
   labels,
 }: RacketCardProps & { labels: RacketCardLabels }) {
   const price = racket.lowestPrice ?? racket.msrp;
@@ -69,7 +85,8 @@ export function RacketCardView({
               src={src}
               alt=""
               fill
-              priority={priority}
+              loading={eager ? "eager" : "lazy"}
+              fetchPriority={eager ? "high" : undefined}
               unoptimized={hasThumb}
               sizes={
                 catalogDense

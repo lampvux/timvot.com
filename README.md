@@ -1438,6 +1438,21 @@ site does cooperate is a config entry in `providers.ts`, not new code — declar
 as well, so a card render needs no join; `racket_images` is the gallery behind it. Nothing
 in the app reads the gallery yet — that is a UI change, not part of the crawl.
 
+## The function region is part of the read path
+
+`vercel.json` pins the functions to `sin1` (Singapore) and that line is load-bearing.
+Supabase runs in `ap-southeast-1`, so every PostgREST query, every Auth call and every
+`selectAll` page is a round trip between the two. From Singapore that is single-digit
+milliseconds; from Vercel's `iad1` default it is ~250 ms, and the reads that page — the
+price history alone is 35 round trips — multiply it. The catalogue closed in 23 s in
+production while the same read benchmarked at 6.6 s from a laptop in Vietnam, and the
+distance between those two numbers is the region.
+
+Hobby allows exactly one region, so this is a choice rather than a list: it goes where
+the database is, which is also the region nearest the audience. Change the database's
+region and this has to move with it. `export const preferredRegion` is not the way to do
+that — it is deprecated in Next.js 16 and on Vercel only accepts `auto`/`global`/`home`.
+
 ## Releasing from GitHub Actions
 
 `.github/workflows/deploy-production.yml` builds on a GitHub runner and ships the output
