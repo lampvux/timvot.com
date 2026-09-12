@@ -286,34 +286,3 @@ export function MobileTabBar() {
     </nav>
   );
 }
-
-/** One inverse court-green band per page: the hero and the footer read as the
- *  same band, and nothing between them is tinted. */
-export function SiteFooter() {
-  const t = useTranslations("nav");
-
-  return (
-    <footer
-      data-theme="inverse"
-      className="bg-green-900 px-4 py-7 lg:px-10"
-    >
-      <div className="mx-auto flex max-w-[var(--page-max)] flex-wrap items-center gap-x-6 gap-y-3">
-        <span className="display text-[15px] text-white">Shuttlecraft</span>
-        <div className="flex flex-wrap gap-x-6 text-body-sm">
-          {(["methodology", "sellers", "guides"] as const).map((key) => (
-            <Link
-              key={key}
-              href={key === "methodology" ? "/methodology" : `/${key}`}
-              className="inline-flex min-h-11 items-center text-secondary no-underline hover:text-white lg:min-h-0"
-            >
-              {t(key)}
-            </Link>
-          ))}
-        </div>
-        <span className="ml-auto font-mono text-[11px] text-tertiary">
-          Tiếng Việt · English
-        </span>
-      </div>
-    </footer>
-  );
-}

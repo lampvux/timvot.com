@@ -76,6 +76,21 @@ const nextConfig: NextConfig = {
 
   experimental: {
     optimizePackageImports: ["lucide-react"],
+    /**
+     * How long the client router may reuse a page segment it already has.
+     *
+     * The `dynamic` default is 0, so going back to `/rackets` from a detail
+     * page refetched the whole filtered result even when the visitor had been
+     * looking at it two seconds earlier — the commonest movement on the site,
+     * and the one that felt slowest. Thirty seconds of reuse makes the back
+     * step instant.
+     *
+     * The freshness cost is bounded by what the data does: prices move when
+     * the scraper runs overnight, not while somebody is browsing, and
+     * `scrape:sync` invalidates the server's cache tags regardless. Reversible
+     * in one line if a page ever does need per-navigation freshness.
+     */
+    staleTimes: { dynamic: 30 },
     cpus: process.env.NEXT_BUILD_CPUS ? Number(process.env.NEXT_BUILD_CPUS) : undefined,
     /**
      * Static child processes discard `--max-old-space-size`. Worker threads

@@ -199,11 +199,15 @@ async function CatalogResults({
               id="racket-grid-top"
               className="scroll-mt-20 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 min-[1081px]:!grid-cols-6"
             >
+              {/* `eager` on the first card only. The grid is the first thing
+                  on this route, so its leading image is the LCP candidate —
+                  and six competing preloads is why none of them arrived
+                  first. Everything after it stays lazy. */}
               {pageResults.map((racket, index) => (
                 <RacketCard
                   key={racket.id}
                   racket={racket}
-                  priority={index < 6}
+                  eager={index === 0}
                   density="catalog"
                   mobileLayout="horizontal"
                 />

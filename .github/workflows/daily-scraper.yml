@@ -169,6 +169,33 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run market:refresh -- --verbose
 
+      # `scrape:sync` already called /api/revalidate, so the cached reads are
+      # invalidated by the time this runs — which means the next request to
+      # each route is the one that refills them. Left alone that is the first
+      # visitor of the morning, on the route whose cold fill was measured at
+      # 18,57 s. This spends those requests here instead.
+      #
+      # Runs after Court Scores and `deal_watch` are written, or it would warm
+      # the caches with the previous day's ranking and immediately invalidate
+      # them again.
+      - name: Warm the public routes
+        id: warm
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          WARM_BASE_URL: ${{ secrets.WARM_BASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          # Optional, like REVALIDATE_URL above: without WARM_BASE_URL there is
+          # no site to warm and the script says so rather than failing.
+          if [ -z "$WARM_BASE_URL" ]; then
+            echo "WARM_BASE_URL is not set — skipping. Add it to warm the cache after a scrape."
+            exit 0
+          fi
+          npm run warm -- --details=20 --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+
       # The three steps below read the catalogue rather than the scrape's
       # output, so they are worth running even when the walk went badly.
       #

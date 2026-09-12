@@ -4,7 +4,7 @@ import type { Locale } from "@/i18n/routing";
 import { ButtonLinkStyle, Card, Eyebrow, Icon } from "@/components/ds/primitives";
 import { PriceDelta, PriceHistory } from "@/components/ds/data";
 import { RacketCard } from "@/components/racket-card";
-import { getDeals, getGuides, getRackets, loadSnapshot } from "@/lib/data/repository";
+import { getHomepageData } from "@/lib/data/repository";
 import { formatDong } from "@/lib/format";
 
 export default async function HomePage({
@@ -19,20 +19,11 @@ export default async function HomePage({
   const tc = await getTranslations("common");
   const tn = await getTranslations("nav");
 
-  const [rackets, deals, guides, snapshot] = await Promise.all([
-    getRackets(),
-    getDeals(),
-    getGuides(),
-    loadSnapshot(),
-  ]);
-
-  // Trending is Court Score order, and a racket without a player half is not
-  // in the running for it.
-  const trending = rackets
-    .filter((racket) => racket.courtScore !== null)
-    .sort((a, b) => (b.courtScore ?? 0) - (a.courtScore ?? 0))
-    .slice(0, 4);
-  const topDeals = deals.slice(0, 3);
+  // One read, bounded by what this page renders: four cards, three drops,
+  // three guides and three counts. Trending is Court Score order, and a racket
+  // without a player half is not in the running for it — `racket_market`
+  // applies that rule as `nulls last` rather than by loading the catalogue.
+  const { trending, deals: topDeals, guides, counts } = await getHomepageData();
 
   return (
     <>
@@ -48,13 +39,9 @@ export default async function HomePage({
               {t("heroBody")}
             </p>
             <div className="mt-6 flex flex-col gap-1 font-mono text-[12px] tabular-nums text-secondary lg:mt-7 lg:flex-row lg:gap-7 lg:text-[13px]">
-              <span>{t("statRackets", { count: rackets.length })}</span>
-              <span>{t("statListings", { count: snapshot.offers.length })}</span>
-              <span>
-                {t("statSellers", {
-                  count: snapshot.sellers.filter((s) => s.tier !== "new").length,
-                })}
-              </span>
+              <span>{t("statRackets", { count: counts.rackets })}</span>
+              <span>{t("statListings", { count: counts.liveOffers })}</span>
+              <span>{t("statSellers", { count: counts.verifiedSellers })}</span>
             </div>
             <div className="mt-6 lg:hidden">
               <Link
@@ -123,9 +110,13 @@ export default async function HomePage({
           {/* 4 up on desktop, 2 up on tablet, a scroll rail on mobile where
               the clipped second card signals scroll without a chevron. */}
           <div className="rail -mx-4 px-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:gap-5 sm:overflow-visible sm:px-0 lg:grid-cols-4">
-            {trending.map((racket, index) => (
+            {/* No `eager` here on purpose. The measured LCP on this page is
+                the headline, not a card — these sit below a full-height hero
+                band — and the four preloads this used to emit competed with
+                it rather than helping. Lazy is the correct default. */}
+            {trending.map((racket) => (
               <div key={racket.id} className="w-[208px] shrink-0 sm:w-auto">
-                <RacketCard racket={racket} priority={index < 4} compact />
+                <RacketCard racket={racket} compact />
               </div>
             ))}
           </div>

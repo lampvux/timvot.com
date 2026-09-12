@@ -19,7 +19,7 @@ export async function RacketCard({
   compact,
   density = "default",
   mobileLayout = "stacked",
-  priority = false,
+  eager = false,
 }: RacketCardProps) {
   const [t, te, tr] = await Promise.all([
     getTranslations("common"),
@@ -33,7 +33,7 @@ export async function RacketCard({
       compact={compact}
       density={density}
       mobileLayout={mobileLayout}
-      priority={priority}
+      eager={eager}
       labels={{
         belowList: t("belowList"),
         sellers: t("sellers", { count: racket.sellerCount }),

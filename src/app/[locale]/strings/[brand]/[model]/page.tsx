@@ -8,6 +8,14 @@ import { Badge, Eyebrow, TrustBadge } from "@/components/ds/primitives";
 import { formatDong } from "@/lib/format";
 import { getString, getStringOffers, getStrings } from "@/lib/data/string-repository";
 
+/**
+ * One shared App Shell for this route instead of one prefetch per link. The
+ * directory and the catalogue both render many links here, and the shell is
+ * reused across all of them — see the note on the racket detail route, which
+ * is where the 2,53 MB of speculative gallery downloads was measured.
+ */
+export const prefetch = "partial";
+
 export async function generateStaticParams() {
   return (await getStrings()).map((string) => ({
     brand: string.brandSlug,

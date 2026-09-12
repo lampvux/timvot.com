@@ -5,11 +5,18 @@ import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { courtScore } from "@/lib/court-score";
-import { balanceTypeOf, median } from "@/lib/format";
+import { balanceTypeOf } from "@/lib/format";
+import {
+  bySteepestDrop,
+  isPriceDrop,
+  variantPriceFromPoints,
+  type VariantPrice,
+} from "@/lib/price-window";
 import { comparePopularBrandTiers } from "@/lib/catalog-ranking";
 import type {
   Brand,
   CatalogFilters,
+  CatalogRacket,
   RacketCardData,
   Guide,
   Offer,
@@ -26,6 +33,8 @@ import { TAG } from "./tags";
 import {
   countCatalogMatchesInView,
   readCatalogPageFromView,
+  readMarketRacketsByIds,
+  readTopRacketsByScore,
   type CatalogPage,
 } from "./catalog-page";
 export type { CatalogPage, CatalogFacets } from "./catalog-page";
@@ -418,17 +427,113 @@ export const getRackets = cache(async (): Promise<RacketWithMarket[]> => {
   return (await loadIndex()).enriched;
 });
 
-export const getBrands = cache(async (): Promise<Brand[]> => {
-  return (await loadSnapshot()).brands;
-});
+/**
+ * The brand list, read as the brand list.
+ *
+ * This is thirty-six rows of four columns and it used to arrive by loading the
+ * entire catalogue — 9,4 MB across seven tables, the price history alone
+ * thirty-five paged round trips — because it came off the snapshot. On
+ * `/rackets` that is the *dynamic* half of the route, so it ran per request
+ * against an in-memory cache that is per-instance and dies with every deploy.
+ * The listing's own reads were already query-shaped and answered in ~126 ms;
+ * this one call behind them is what closed the page at 23 s.
+ *
+ * `readCatalogBrands` is the whole task: one table, one round trip, one tag.
+ * Nothing here reads rackets, offers or price points, and nothing may start.
+ * `repository.test.ts` fails if it does.
+ */
+async function readCatalogBrands(): Promise<Brand[]> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.brands);
 
-export const getSellers = cache(async (): Promise<Seller[]> => {
-  return (await loadSnapshot()).sellers;
-});
+  const supabase = createStaticClient("brands-client");
+  if (!supabase) return seed.brands;
 
-export const getGuides = cache(async (): Promise<Guide[]> => {
-  return (await loadSnapshot()).guides;
-});
+  try {
+    // `name` is the order the snapshot used, kept so the two sources still
+    // answer identically; `id` breaks ties, because paging an order that is
+    // not unique is what silently drops rows. Thirty-six brands make this one
+    // round trip, and `selectAll` stops as soon as a short page arrives.
+    const { data, error } = await selectAll((from, to) =>
+      supabase.from("brands").select("*").order("name").order("id").range(from, to),
+    );
+
+    // An unmigrated project is the common case on a first run, and an empty
+    // brand filter reads as a broken page rather than an unprovisioned one.
+    if (error || !data?.length) return seed.brands;
+
+    return data.map(mapBrand);
+  } catch {
+    return seed.brands;
+  }
+}
+
+export const getBrands = cache(readCatalogBrands);
+
+/**
+ * The seller directory, and the guide list, read the same way as the brands
+ * above and for the same reason.
+ *
+ * `/sellers`, `/guides` and every seller detail page's `generateStaticParams`
+ * each needed one small table and each loaded all seven. Their document
+ * timings — 3,09 s, 3,17 s — are that read, not their own work: `/methodology`
+ * renders comparable markup from no database at all in 1,36 s.
+ *
+ * Both tables are well under PostgREST's 1000-row cap, so `selectAll` makes
+ * exactly one round trip; it is here because the cap is silent when it is
+ * reached and a directory that grows past it would otherwise truncate with no
+ * error. The seed fallback answers an unprovisioned or unmigrated project, so
+ * callers still cannot tell which source replied.
+ *
+ * Both now order by their primary key, which the snapshot did not. Neither
+ * page sorts what it is given, so until now Supabase decided the running order
+ * and was free to change it after any UPDATE — two renders of `/guides` could
+ * disagree, and the homepage's `slice(0, 3)` could pick a different three.
+ * Ordering by the key is what `selectAll` requires anyway, and it makes that
+ * arbitrary order at least a stable one.
+ */
+async function readSellers(): Promise<Seller[]> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.sellers);
+
+  const supabase = createStaticClient("sellers-client");
+  if (!supabase) return seed.sellers;
+
+  try {
+    const { data, error } = await selectAll((from, to) =>
+      supabase.from("sellers").select("*").order("id").range(from, to),
+    );
+    if (error || !data?.length) return seed.sellers;
+    return data.map(mapSeller);
+  } catch {
+    return seed.sellers;
+  }
+}
+
+export const getSellers = cache(readSellers);
+
+async function readGuides(): Promise<Guide[]> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.guides);
+
+  const supabase = createStaticClient("guides-client");
+  if (!supabase) return seed.guides;
+
+  try {
+    const { data, error } = await selectAll((from, to) =>
+      supabase.from("guides").select("*").order("slug").range(from, to),
+    );
+    if (error || !data?.length) return seed.guides;
+    return data.map(mapGuide);
+  } catch {
+    return seed.guides;
+  }
+}
+
+export const getGuides = cache(readGuides);
 
 type RpcRow = Record<string, unknown>;
 
@@ -807,9 +912,69 @@ export async function getOffersForRacket(
     .sort((a, b) => a.price - b.price);
 }
 
+/**
+ * Read the rackets behind a set of offers, in bounded batches.
+ *
+ * `RACKET_SELECT` already brings the variants along, so one read answers both
+ * "which racket is this offer on" and "which variant". The batching is not
+ * about rows: PostgREST takes `in()` as a query string, and one seller can
+ * carry several hundred offers, which puts a single `in()` past the 8 KB
+ * request line most proxies accept. A hundred ids is comfortably inside it.
+ *
+ * Same missing-column retry as `readRackets`: a deployment ahead of the
+ * thumbnail migration degrades to "no thumbnails", never to "no listings".
+ */
+const HYDRATE_BATCH = 100;
+
+async function readRacketsByIds(
+  supabase: SupabaseClient,
+  ids: readonly string[],
+): Promise<Map<string, Racket>> {
+  const byId = new Map<string, Racket>();
+
+  for (let from = 0; from < ids.length; from += HYDRATE_BATCH) {
+    const batch = ids.slice(from, from + HYDRATE_BATCH);
+    const read = (select: string) =>
+      supabase.from("rackets").select(select).in("id", batch);
+
+    let { data, error } = await read(RACKET_SELECT);
+    if (error && isMissingColumnError(error.message)) {
+      ({ data, error } = await read(RACKET_SELECT_NO_THUMBS));
+    }
+    if (error) throw new Error(error.message);
+
+    for (const row of data ?? []) {
+      const racket = mapRacket(row as never);
+      byId.set(racket.id, racket);
+    }
+  }
+
+  return byId;
+}
+
+/**
+ * One seller's listings, read as one seller's listings.
+ *
+ * This is the read behind the worst number in the baseline: `/vi/sellers/vnb`
+ * answered in 0,89 s warm and **18,57 s cold**, because `loadIndex()` builds
+ * the entire catalogue — every racket, every offer, every price point, every
+ * review — to find the two hundred or so offers belonging to one shop. Warm
+ * hid it, and `use cache` is per-instance in-memory, so cold is not the rare
+ * case it looks like: every deploy changes the build ID and empties it.
+ *
+ * Now it reads the offers that name this seller, then the rackets those offers
+ * name. Both are bounded by the shop, not by the catalogue.
+ *
+ * The snapshot path stays as the degraded mode for an unprovisioned or
+ * unmigrated project, which is the same shape `getCatalogPage` uses and for
+ * the same reason: the code has to deploy before the data is ready.
+ */
 export async function getOffersForSeller(
   sellerId: string,
 ): Promise<(OfferWithSeller & { racket: Racket })[]> {
+  const direct = await readOffersForSeller(sellerId);
+  if (direct) return direct;
+
   const index = await loadIndex();
   const seller = index.sellersById.get(sellerId);
   if (!seller) return [];
@@ -827,6 +992,64 @@ export async function getOffersForSeller(
     .sort((a, b) => a.racket.name.localeCompare(b.racket.name));
 }
 
+async function readOffersForSeller(
+  sellerId: string,
+): Promise<(OfferWithSeller & { racket: Racket })[] | null> {
+  "use cache";
+  // Offers carry the prices, so they move on the scraper's schedule rather
+  // than the catalogue's.
+  cacheLife("prices");
+  cacheTag(TAG.offers, TAG.sellers, TAG.rackets);
+
+  const supabase = createStaticClient("seller-offers-client");
+  if (!supabase) return null;
+
+  try {
+    // Every status, because the caller decides what "live" means for its own
+    // page — the old index-backed read returned them all too.
+    const { data: offerRows, error } = await selectAll((from, to) =>
+      supabase
+        .from("offers")
+        .select("*")
+        .eq("seller_id", sellerId)
+        .order("id")
+        .range(from, to),
+    );
+    if (error) throw new Error(error.message);
+
+    // `readSellers` rather than `getSellers`: this is already inside a cached
+    // scope, which has no request for React `cache` to dedupe against.
+    const seller = (await readSellers()).find((s) => s.id === sellerId);
+    if (!seller) return [];
+    if (!offerRows?.length) return [];
+
+    const offers = offerRows.map(mapOffer);
+    const rackets = await readRacketsByIds(supabase, [
+      ...new Set(offers.map((offer) => offer.racketId)),
+    ]);
+
+    const variantsById = new Map<string, RacketVariant>();
+    for (const racket of rackets.values())
+      for (const variant of racket.variants) variantsById.set(variant.id, variant);
+
+    return offers
+      .map((offer) => {
+        const racket = rackets.get(offer.racketId);
+        const variant = variantsById.get(offer.variantId);
+        if (!racket || !variant) return null;
+        return { ...offer, seller, variant, racket };
+      })
+      .filter((o): o is OfferWithSeller & { racket: Racket } => Boolean(o))
+      .sort((a, b) => a.racket.name.localeCompare(b.racket.name));
+  } catch (error) {
+    console.warn(
+      `[repository] seller offers fell back to the snapshot: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
+}
+
 export async function getSeller(slug: string): Promise<Seller | null> {
   const sellers = await getSellers();
   return sellers.find((s) => s.slug === slug) ?? null;
@@ -841,33 +1064,10 @@ export async function getReviewsForRacket(racketId: string): Promise<Review[]> {
 
 /* ------------------------------------------------------------ price data */
 
-export interface VariantPrice {
-  variantId: string;
-  latest: number;
-  median30: number;
-  delta90: number;
-  delta30: number;
-  points: PricePoint[];
-}
-
-function variantPriceFromPoints(
-  variantId: string,
-  points: PricePoint[],
-): VariantPrice | null {
-  if (points.length === 0) return null;
-
-  const latest = points[points.length - 1].price;
-  const lastThird = points.slice(Math.floor((points.length * 2) / 3));
-
-  return {
-    variantId,
-    latest,
-    median30: median(lastThird.map((point) => point.price)),
-    delta90: latest - points[0].price,
-    delta30: latest - lastThird[0].price,
-    points,
-  };
-}
+/** Re-exported so callers keep importing the price shape from the repository,
+ *  while the arithmetic stays in a module `scripts/refresh-market.ts` can also
+ *  import — `repository.ts` is `server-only`. */
+export type { VariantPrice };
 
 /**
  * Shape one variant's price series. The points arrive already sorted from the
@@ -945,13 +1145,41 @@ export async function getHeadlineVariantPrice(
 
 /* -------------------------------------------------------------- deals */
 
+/**
+ * `racket` is card-shaped, not the full enriched racket.
+ *
+ * Neither deal surface renders a spec profile, a player half or a price
+ * history — they render a name, a brand, a balance, a price and a delta. The
+ * narrower type is what lets `deal_watch` be answered from the `racket_market`
+ * view instead of from the enriched index, and tsc is the thing that keeps the
+ * claim true: widen a usage and this stops compiling.
+ */
 export interface Deal {
-  racket: RacketWithMarket;
+  racket: CatalogRacket;
   variantId: string;
   price: VariantPrice;
 }
 
-export async function getDeals(): Promise<Deal[]> {
+/**
+ * Price drops, steepest first.
+ *
+ * The in-memory version below is the definition and it reads every price point
+ * there is — 3,3 MB across 35 paged round trips, growing by ~3.265 rows on
+ * every scrape — to answer a question the homepage asks for three rows of.
+ * `deal_watch` holds the answer, written by `scripts/refresh-market.ts` with
+ * the same `variantPriceFromPoints` this file uses, so there is one formula.
+ *
+ * `limit` is what makes the projection worth having: the homepage asks for
+ * three and gets three rows and three rackets, not a catalogue.
+ *
+ * The snapshot path stays as the degraded mode — an unprovisioned project, a
+ * database behind the migration, a `refresh-market` that has not run yet. Same
+ * shape as `getCatalogPage`, and the same reason: the code deploys first.
+ */
+export async function getDeals(limit?: number): Promise<Deal[]> {
+  const projected = await readDealWatch(limit);
+  if (projected) return projected;
+
   const index = await loadIndex();
   const deals: Deal[] = [];
 
@@ -959,13 +1187,111 @@ export async function getDeals(): Promise<Deal[]> {
     for (const variant of racket.variants) {
       const price = variantPrice(index, variant.id);
       if (!price) continue;
-      if (price.latest < price.median30 && price.delta30 < 0) {
+      if (isPriceDrop(price)) {
         deals.push({ racket, variantId: variant.id, price });
       }
     }
   }
 
-  return deals.sort((a, b) => a.price.delta30 - b.price.delta30);
+  deals.sort((a, b) => bySteepestDrop(a.price, b.price));
+  return limit === undefined ? deals : deals.slice(0, limit);
+}
+
+/** One stored row of `deal_watch`. `recent_points` is the bounded trailing
+ *  window the sparkline draws — see the migration's comment on the column. */
+interface DealWatchRow {
+  variant_id: string;
+  racket_id: string;
+  latest: number;
+  delta_30: number;
+  median_30: number;
+  delta_90: number;
+  recent_points: { d: string; p: number }[] | null;
+}
+
+async function readDealWatch(limit?: number): Promise<Deal[] | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.pricePoints, TAG.rackets, TAG.offers);
+
+  const supabase = createStaticClient("deals-client");
+  if (!supabase) return null;
+
+  try {
+    // Ordered in Postgres by the index this migration adds, and cut there too
+    // when the caller said how many it wants. `variant_id` breaks ties on
+    // `delta_30`, because paging an order that is not total is what puts one
+    // row on two pages and another on none.
+    const page = (from: number, to: number) =>
+      supabase
+        .from("deal_watch")
+        .select("*")
+        .order("delta_30", { ascending: true })
+        .order("variant_id", { ascending: true })
+        .range(from, to);
+
+    const { data, error } =
+      limit === undefined
+        ? await selectAll<DealWatchRow>(page)
+        : await page(0, limit - 1);
+
+    if (error) {
+      if (/deal_watch|schema cache|does not exist/i.test(error.message)) {
+        console.warn(
+          "[repository] deal_watch is missing, so price drops are being " +
+            "computed from the whole price table. Apply supabase/migrations/" +
+            "20260912000000_deal_watch.sql and run " +
+            "`npx tsx scripts/refresh-market.ts`.",
+        );
+      } else {
+        console.warn(`[repository] deal_watch query failed: ${error.message}`);
+      }
+      return null;
+    }
+
+    const rows = (data ?? []) as DealWatchRow[];
+    // An empty table is indistinguishable from one `refresh-market` has not
+    // filled yet, and "no deals today" is a plausible answer that would hide a
+    // missing job. Fall back rather than publish an empty page from a guess.
+    if (rows.length === 0) return null;
+
+    const rackets = await readMarketRacketsByIds(supabase, [
+      ...new Set(rows.map((row) => row.racket_id)),
+    ]);
+    // The view could not answer, so neither can this. Falling back keeps the
+    // page whole instead of dropping the rackets the lookup missed.
+    if (!rackets) return null;
+
+    const deals: Deal[] = [];
+    for (const row of rows) {
+      const racket = rackets.get(row.racket_id);
+      if (!racket) continue;
+      deals.push({
+        racket,
+        variantId: row.variant_id,
+        price: {
+          variantId: row.variant_id,
+          latest: row.latest,
+          median30: row.median_30,
+          delta30: row.delta_30,
+          delta90: row.delta_90,
+          points: (row.recent_points ?? []).map((point) => ({
+            variantId: row.variant_id,
+            observedOn: point.d,
+            price: point.p,
+          })),
+        },
+      });
+    }
+
+    return deals;
+  } catch (error) {
+    console.warn(
+      `[repository] deals fell back to the snapshot: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------ filtering */
@@ -1163,4 +1489,125 @@ export function facetCounts(
     balanceTypes: count(without("balanceTypes"), (r) => [r.balanceType]),
     flexes: count(without("flexes"), (r) => [r.shaftFlex]),
   };
+}
+
+/* --------------------------------------------------------------- homepage */
+
+export interface HomepageData {
+  /** Court Score order, highest first. */
+  trending: CatalogRacket[];
+  /** Steepest price drops, steepest first. */
+  deals: Deal[];
+  guides: Guide[];
+  counts: {
+    rackets: number;
+    liveOffers: number;
+    verifiedSellers: number;
+  };
+}
+
+/** How many of each the homepage renders. Here rather than in the page so the
+ *  read is bounded by the same numbers the layout is. */
+const HOME_TRENDING = 4;
+const HOME_DEALS = 3;
+const HOME_GUIDES = 3;
+
+/**
+ * Everything the homepage renders, and nothing else.
+ *
+ * It used to call `getRackets()`, `getDeals()`, `getGuides()` and
+ * `loadSnapshot()` — four calls that are one read, the whole catalogue: 3.010
+ * rackets with their variants and galleries, every offer, every review and the
+ * entire price table. 9,4 MB and ~6,6 s from a laptop in the database's own
+ * region, to render four cards, three rows, three links and three numbers.
+ *
+ * Three of the four now have a bounded source — `racket_market` for trending,
+ * `deal_watch` for the drops, the guides table for the guides — and the three
+ * statistics are three `head: true` counts, which return a number and no rows
+ * at all.
+ *
+ * Every part falls back independently. A missing view costs the trending set
+ * its fast path, not the homepage its counts.
+ */
+async function readHomepageData(): Promise<HomepageData> {
+  const [trending, deals, guides, counts] = await Promise.all([
+    readTopRacketsByScore(HOME_TRENDING),
+    getDeals(HOME_DEALS),
+    readGuides(),
+    readHomepageCounts(),
+  ]);
+
+  return {
+    trending: trending ?? (await trendingFromSnapshot()),
+    deals,
+    guides: guides.slice(0, HOME_GUIDES),
+    counts,
+  };
+}
+
+export const getHomepageData = cache(readHomepageData);
+
+/** The degraded path for an unprovisioned project or a database behind the
+ *  catalogue migration — the same ranking, computed in memory. */
+async function trendingFromSnapshot(): Promise<CatalogRacket[]> {
+  const rackets = await getRackets();
+  return rackets
+    .filter((racket) => racket.courtScore !== null)
+    .sort((a, b) => (b.courtScore ?? 0) - (a.courtScore ?? 0))
+    .slice(0, HOME_TRENDING);
+}
+
+/**
+ * The three numbers in the hero, as three counts.
+ *
+ * `head: true` asks PostgREST for the count and no rows, so each of these is a
+ * number over the wire rather than a table. The predicates match what the
+ * snapshot filtered on: live offers, and sellers past the `new` tier.
+ */
+async function readHomepageCounts(): Promise<HomepageData["counts"]> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.rackets, TAG.offers, TAG.sellers);
+
+  const supabase = createStaticClient("home-counts-client");
+  if (!supabase) {
+    return {
+      rackets: seed.rackets.length,
+      liveOffers: seed.offers.filter((offer) => offer.status === "live").length,
+      verifiedSellers: seed.sellers.filter((seller) => seller.tier !== "new").length,
+    };
+  }
+
+  try {
+    const [rackets, liveOffers, verifiedSellers] = await Promise.all([
+      supabase.from("rackets").select("id", { count: "exact", head: true }),
+      supabase
+        .from("offers")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "live"),
+      supabase
+        .from("sellers")
+        .select("id", { count: "exact", head: true })
+        .neq("tier", "new"),
+    ]);
+
+    const failure = [rackets, liveOffers, verifiedSellers].find((r) => r.error);
+    if (failure?.error) throw new Error(failure.error.message);
+
+    return {
+      rackets: rackets.count ?? 0,
+      liveOffers: liveOffers.count ?? 0,
+      verifiedSellers: verifiedSellers.count ?? 0,
+    };
+  } catch (error) {
+    console.warn(
+      `[repository] homepage counts fell back to the seed: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return {
+      rackets: seed.rackets.length,
+      liveOffers: seed.offers.filter((offer) => offer.status === "live").length,
+      verifiedSellers: seed.sellers.filter((seller) => seller.tier !== "new").length,
+    };
+  }
 }

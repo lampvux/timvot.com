@@ -95,6 +95,30 @@ import {
  * it is what Vercel's own git integration can survive, and that build must keep
  * working whether or not anyone uses the workflow.
  */
+/**
+ * Every catalogue card links here, and each of those links used to prefetch
+ * this route *separately*.
+ *
+ * A prefetched detail route emits its gallery's image preloads, so three cards
+ * in the catalogue's viewport pulled **2,53 MB of full-resolution product
+ * photography** before the visitor expressed interest in any of them, plus the
+ * detail-only client chunk — which Lighthouse then reported as unused, because
+ * on the catalogue it is.
+ *
+ * `prefetch = 'partial'` moves that to one App Shell per *route*, shared by
+ * every link that points here regardless of which racket it names. The shell
+ * carries this route's static and cached content and none of its URL data, so
+ * the gallery preloads are not in it. The click still lands on prefetched
+ * markup: this is a cheaper prefetch, not a disabled one, and `prefetch={false}`
+ * on the cards — which is what would disable it — is deliberately not what is
+ * done here.
+ *
+ * Set on the destination, not on the link. Once `/sellers/[slug]` and
+ * `/strings/[brand]/[model]` carry it too, `partialPrefetching: true` in
+ * next.config.ts replaces all three and these exports come out.
+ */
+export const prefetch = "partial";
+
 const DEFAULT_PRERENDERED_RACKETS = 30;
 
 const PRERENDERED_RACKETS = (() => {
