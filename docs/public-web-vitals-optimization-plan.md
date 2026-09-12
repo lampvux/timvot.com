@@ -29,7 +29,7 @@ place.
 | 3D — cold-cache survival | **shipped** | `npm run warm` after deploy and after the nightly scrape, both `continue-on-error`. |
 | 4 — fonts | **shipped** | 24 files / 432 KB → **12 / 245 KB**. Dropping `latin-ext` proved safe against the *live* catalogue, not just the seed. |
 | 5 — prefetch and priority | **shipped** | `prefetch = 'partial'` on all three detail routes; `preconnect` verified in emitted HTML; `priority` on 4+6 cards → exactly one `eager`. |
-| 6 — responsive card images | **diagnosed, repair ready** | `npm run images:cache-repair` confirms **3.188 of 6.383 objects serve `Cache-Control: no-cache`**. Rewrite needs `--apply`. Rendition generation still outstanding — it needs a crawler run. |
+| 6 — responsive card images | **run; the diagnosis was wrong** | 3.188 thumbnails rewritten, metadata now correct — **and the served header did not change.** See below. Rendition generation still outstanding; it needs a crawler run. |
 | 7 — client JS floor | **partly shipped** | i18n payload −29% (server-only namespaces no longer reach the browser, verified in the RSC segment); `SiteFooter` moved to a Server Component; `staleTimes.dynamic: 30`. The rest of the floor measured as framework — see below. |
 | 8 — lazy-load inventory | **partly shipped** | Similar-rackets already deferred; sparklines already server-rendered SVG. |
 | 9 — CSS | **dropped, per its own exit criterion** | Measured at **19 KB gzipped** for the entire design system, one file, cached across all routes, Tailwind already tree-shaken. Not worth churning a design system for a fraction of that. |
@@ -57,16 +57,49 @@ rather than quietly dropped:
   are used — already tight, exactly as `CLAUDE.md` claims. Route-specific
   deltas are 14–24 KB. There is no large safe win left here.
 
+### Image caching: the plan was wrong, and here is what is actually true
+
+Revision 2 said the `Cache-Control: no-cache` on every stored image was stale
+metadata, fixable by backfilling or re-uploading. That diagnosis has been
+tested and it is wrong.
+
+`npm run images:cache-repair -- --apply` rewrote all 3.188 thumbnails. The
+stored metadata now reads exactly `max-age=31536000` — confirmed through the
+storage list API. **The served header is unchanged.** It is still `no-cache`
+on the CDN, on a cache-busted `MISS`, *and* on the authenticated endpoint that
+does not go through the CDN at all.
+
+So this project's storage tier does not honour per-object `cacheControl`;
+honouring it is a Smart CDN feature. **No change in this repository can fix
+that header.** It is a hosting decision, and it should be re-tested the day the
+project changes tier — at which point every object already carries the right
+metadata and nothing needs re-uploading.
+
+The run did surface a real bug. Objects moved by
+`scripts/migrate-supabase-project.ts` carry `max-age=max-age=31536000`:
+Supabase stores the rendered header but `upload()` prepends `max-age=` itself,
+so copying the stored value straight back doubled it. That value is not
+parseable, so those objects would stay uncached *even on a tier that honours
+the header*. The script is fixed; the pre-migration originals still hold the
+bad value and `npm run images:cache-repair -- --apply --all` clears them.
+
+Until the tier changes, the way to cut image bytes is the other half of Phase 6
+— smaller renditions and a real `srcset` — not cache lifetime.
+
 ### Needs a decision
 
-1. **Apply `supabase/migrations/20260912000000_deal_watch.sql`**, then
-   `npm run market:refresh`. Until then `getDeals()` logs its fallback and
-   reads the whole price table — today's behaviour, so deferring is safe.
-2. **Confirm the `sin1` region** on a preview deploy before promoting.
-3. **`npm run images:cache-repair -- --apply`** rewrites 3.188 thumbnails with
-   a one-year cache. Same bytes, same keys, metadata only; safe because every
-   path carries a content hash. It is 3.188 writes against production storage,
-   so it is yours to start.
+1. **Confirm the `sin1` region** on a preview deploy before promoting. If Hobby
+   rejects the `regions` key the deploy fails fast and production is untouched;
+   the fallback is the project's region setting.
+2. **Decide whether the storage tier is worth changing.** It is the only thing
+   standing between the catalogue and a one-year browser cache on ~220 KB of
+   card images per page view.
+
+Already applied to production: both pending migrations
+(`20260908000000_admin_racket_image_remapping.sql`, which had never been
+applied, and `20260912000000_deal_watch.sql`), `npm run market:refresh`
+(3.136 Court Scores; 22 price drops from 34.370 price points), and the
+thumbnail metadata repair.
 
 ### Found, not fixed
 

@@ -898,6 +898,21 @@ async function listStorageFilesFromDatabase(
   });
 }
 
+/**
+ * Supabase stores `cacheControl` as the *rendered* header — `max-age=31536000`
+ * — but `upload()` takes the seconds and prepends `max-age=` itself. Copying
+ * the stored value straight back therefore produced
+ *
+ *     cacheControl: "max-age=max-age=31536000"
+ *
+ * on every object this script moved, which is not a parseable header value.
+ * The live project still holds it on the pre-migration originals. Strip the
+ * prefix on the way through so a round trip is idempotent.
+ */
+function cacheControlSeconds(value: string | number): string {
+  return String(value).replace(/^\s*max-age\s*=\s*/i, "");
+}
+
 function uploadMetadata(file: StorageFile): {
   upsert: true;
   contentType?: string;
@@ -910,7 +925,7 @@ function uploadMetadata(file: StorageFile): {
     upsert: true,
     ...(typeof mimetype === "string" ? { contentType: mimetype } : {}),
     ...(typeof cacheControl === "string" || typeof cacheControl === "number"
-      ? { cacheControl: String(cacheControl) }
+      ? { cacheControl: cacheControlSeconds(cacheControl) }
       : {}),
   };
 }

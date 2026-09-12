@@ -6,22 +6,33 @@
  *   npx tsx scripts/scraper/images/repair-cache-control.ts --apply --all
  *   npx tsx scripts/scraper/images/repair-cache-control.ts --apply --limit=200
  *
- * The problem. `storage.ts` asks for `cacheControl: "31536000"` on every
- * upload, and the live public response says:
+ * READ THIS BEFORE EXPECTING IT TO CHANGE A RESPONSE HEADER.
  *
- *     Cache-Control: no-cache
- *     CF-Cache-Status: MISS
+ * Every object in this bucket is served `Cache-Control: no-cache`, so a
+ * catalogue page re-fetches its 24 card thumbnails from Singapore on every
+ * view. The obvious diagnosis — that the objects predate `storage.ts` asking
+ * for `cacheControl: "31536000"`, and that Supabase writes cache metadata at
+ * upload time — is wrong, and this script is what proved it wrong.
  *
- * on every object sampled, anywhere in the bucket. The objects predate that
- * setting, and Supabase writes cache metadata at upload time — so asking for
- * it now does nothing for what is already there.
+ * After a full run the stored metadata reads exactly `max-age=31536000`, and
+ * the response still says `no-cache` — on the CDN, on a cache-busted MISS, and
+ * on the authenticated endpoint that does not go through the CDN at all. The
+ * project's storage tier does not honour per-object `cacheControl`; honouring
+ * it is a Smart CDN feature. **No change in this repository can fix the served
+ * header.** That is a plan decision, not a code one.
  *
- * What it costs. A catalogue page renders 24 cards from this bucket, and the
- * card thumbnails are served `unoptimized` straight from it. At ~9 KB each
- * that is ~220 KB re-fetched from the Singapore origin on every page view, by
- * every visitor, on every visit — never served from the CDN edge, never read
- * from the browser cache. It is the single largest repeat-visit cost on the
- * site and it is metadata, not bytes.
+ * What running this still buys:
+ *
+ *   - The metadata becomes correct, so the day the project moves to a tier
+ *     that honours it, every object already carries a one-year lifetime and
+ *     nothing has to be re-uploaded to get one.
+ *   - It repairs `max-age=max-age=31536000`, which is what
+ *     `migrate-supabase-project.ts` wrote on everything it moved between
+ *     projects — Supabase stores the rendered header but `upload()` prepends
+ *     `max-age=` itself, so copying the stored value back doubled it. That
+ *     value is not parseable, so those objects would stay uncached even on a
+ *     tier that honours the header. `--all` includes them; the default
+ *     thumbnail scope does not.
  *
  * Why a long TTL is safe here rather than merely convenient: every path
  * carries a content hash (`00-34d533a5-thumb.webp`). A changed image is a
@@ -213,13 +224,25 @@ async function main() {
   console.log(`\n${results.length - failed.length} repaired · ${failed.length} failed`);
   for (const f of failed.slice(0, 20)) console.error(`  ${f.path}: ${f.error}`);
 
-  // The CDN still holds the old response until its own entry expires, so the
-  // check below can legitimately disagree for a while.
-  const after = await fetch(publicUrl, { method: "HEAD", cache: "no-store" });
+  const after = await fetch(`${publicUrl}?cb=${Date.now()}`, { method: "HEAD" });
+  const served = after.headers.get("cache-control") ?? "(none)";
   console.log(
-    `\nSample now answers: Cache-Control: ${after.headers.get("cache-control") ?? "(none)"} ` +
+    `\nSample now answers: Cache-Control: ${served} ` +
       `· CF-Cache-Status: ${after.headers.get("cf-cache-status") ?? "(none)"}`,
   );
+
+  if (!served.includes(ONE_YEAR)) {
+    // Expected on a tier that does not honour per-object cacheControl. Say so
+    // plainly rather than leaving a successful-looking run that changed no
+    // response — the metadata is right and the platform is what is left.
+    console.log(
+      "\nThe stored metadata is now correct, but this project's storage tier " +
+        "does not honour it: the response is unchanged. Verify with\n" +
+        "  curl -sI '<public url>?cb=1' | grep -i cache-control\n" +
+        "Honouring per-object cacheControl is a Smart CDN feature. Nothing in " +
+        "this repository can change that header.",
+    );
+  }
 
   if (failed.length > 0) process.exitCode = 1;
 }
