@@ -30,21 +30,9 @@
  * already walked. Forty-two product details, two requests, and the numbers are
  * the shop's own rather than something recovered from rendered HTML.
  *
- * What the description publishes per racket, where it publishes anything:
- *
- *   Trọng lượng : 4U (82 ± 2g)   → weight_class, and weight_grams from the
- *                                  gram figure where there is one
- *   Điểm cân bằng : 300 ± 3mm    → balance_point_mm, the centre of the tolerance
- *   Mức căng : 24 – 28 Lbs       → max_tension_min_lbs / max_tension_max_lbs;
- *                                  a listing that quotes only kilos is converted
- *   Độ cứng : Cứng               → shaft_flex, through `extractFlex`
- *   Chất liệu : Japan Ultra High Modulus Carbon Graphite → frame_material
- *   Chu vi cán cầm : G5          → the variant's grip_size
- *   Độ dài : 675 mm              → length_mm
- *   Số lỗ gen : 72               → read and reported; there is no column for it,
- *                                  and `string_pattern` is a pattern rather than
- *                                  a count, so inventing one from the other
- *                                  would be a guess dressed as a measurement
+ * What the description publishes per racket, and how each line is read, is in
+ * `vs-specs.ts` — the same block appears on vssports.vn in the same vocabulary,
+ * so the reading is shared rather than copied.
  *
  * Nineteen of the 42 publish no specification block at all, and those take the
  * placeholders every other scraped racket in this catalogue already carries from
@@ -78,7 +66,8 @@ import { createClient } from "@supabase/supabase-js";
 
 import { loadEnv } from "./env";
 import { cleanText, fetchWithRetry, JSON_HEADERS, sleep } from "./http";
-import { extractFlex, slugify } from "./normalizer";
+import { slugify } from "./normalizer";
+import { parseSpecs, VIETNAMESE } from "./vs-specs";
 import { discoverCandidates } from "./images/discover";
 import { bestMatch, type MatchCandidate } from "./images/match";
 import { providerById, type CatalogueSource } from "./images/providers";
@@ -88,9 +77,6 @@ const PROVIDER_ID = "venson-vn";
 const OUTPUT = "scripts/scraper/output/venson-rackets.json";
 const USER_AGENT =
   "ShuttlecraftImageBot/1.0 (+https://github.com/shuttlecraft; catalogue image crawler)";
-
-/** A Vietnamese letter. Prose, wherever it survives into a reduced name. */
-const VIETNAMESE = /[^\u0000-\u007F]/;
 
 export interface VensonRacket {
   url: string;
@@ -109,253 +95,14 @@ export interface VensonRacket {
   gripSize: GripSize;
   balancePointMm: number | null;
   tensionLbs: [number, number] | null;
+  /** Null unless the listing published a "Độ dày đũa vợt" line. */
+  shaftDiameterMm: number | null;
   holes: number | null;
   lengthMm: number | null;
   materials: string[];
   shaftFlex: ShaftFlex;
   /** Spec lines the description carried that this script does not understand. */
   unparsed: string[];
-}
-
-/* ------------------------------------------------------------ the spec block */
-
-/**
- * The description, as lines.
- *
- * WooCommerce stores it as HTML with the entities already encoded, so the tags
- * become line breaks and `cleanText` decodes what is left. The spec block is a
- * run of `label: value` lines, each usually opened with an en dash the shop uses
- * as a bullet.
- */
-function descriptionLines(html: string): string[] {
-  return html
-    .replace(/<[^>]+>/g, "\n")
-    .split("\n")
-    .map((line) => cleanText(line).replace(/^[-–—•]\s*/, ""))
-    .filter(Boolean);
-}
-
-/** `4U (82 ± 2g)`, `82±2 (4U)`, `82 ± 2g`, `4U (80 – 85g)`, `4U`. */
-function parseWeight(value: string): { weightClass: WeightClass | null; grams: number | null } {
-  const grade = /(?:^|[^A-Z0-9])([2-7])U(?:[^A-Z0-9]|$)/i.exec(value);
-  // 6U is a real Venson grade and the schema's enum stops at 5U, so a lighter
-  // frame lands in the lightest band there is. Naming it in the report is the
-  // closest the schema can come; inventing a band would not be.
-  const weightClass = grade
-    ? ((grade[1] === "6" || grade[1] === "7" ? "5U" : `${grade[1]}U`) as WeightClass)
-    : null;
-
-  // The gram figure, which is a tolerance ("82 ± 2g") or a range ("80 – 85g").
-  // A grade in parentheses looks like neither, so the digits are only accepted
-  // where they land in the range a racket can actually weigh.
-  let grams: number | null = null;
-  const range = /(\d{2,3})\s*(?:g\b|[±+]\s*-?\s*\d+\s*g?|[-–~]\s*(\d{2,3})\s*g?)/i.exec(value);
-  if (range) {
-    const low = parseInt(range[1], 10);
-    const high = range[2] ? parseInt(range[2], 10) : low;
-    const mid = Math.round((low + high) / 2);
-    if (mid >= 60 && mid <= 120) grams = mid;
-  }
-
-  return { weightClass, grams };
-}
-
-/** The weight bands the rest of the pipeline uses (see `generate-sql.ts`). */
-function weightClassOf(grams: number): WeightClass {
-  if (grams >= 90) return "2U";
-  if (grams >= 85) return "3U";
-  if (grams >= 80) return "4U";
-  return "5U";
-}
-
-/** `300 ± 3mm`, `295+-3mm`, `Khoảng 292mm`, `305 - 310 mm`. */
-function parseBalanceMm(value: string): number | null {
-  const range = /(\d{3})\s*(?:[-–]\s*(\d{3}))?/.exec(value);
-  if (!range) return null;
-  const low = parseInt(range[1], 10);
-  const high = range[2] ? parseInt(range[2], 10) : low;
-  const mid = Math.round((low + high) / 2);
-  return mid >= 250 && mid <= 340 ? mid : null;
-}
-
-/**
- * `24 – 28 Lbs`, `22-30LBS`, `28LBS ~ 12.5kg`, `13.5 kg`.
- *
- * Pounds win wherever the line quotes both, because that is the unit the columns
- * are in and converting a rounded kilo figure back loses a pound either way. A
- * line that quotes only kilos is converted, and a single figure is read as the
- * maximum with the six-pound window `normalizer.extractMaxTension` uses.
- */
-function parseTension(value: string): [number, number] | null {
-  const lbs = /(\d{2})\s*(?:[-–~]\s*(\d{2})\s*)?lbs?/i.exec(value);
-  if (lbs) {
-    const low = parseInt(lbs[1], 10);
-    const high = lbs[2] ? parseInt(lbs[2], 10) : low;
-    if (low >= 12 && high <= 40 && high >= low) {
-      return lbs[2] ? [low, high] : [Math.max(12, high - 6), high];
-    }
-  }
-
-  const kg = /(\d{1,2}(?:[.,]\d)?)\s*kg/i.exec(value);
-  if (kg) {
-    const max = Math.round(parseFloat(kg[1].replace(",", ".")) * 2.20462);
-    if (max >= 18 && max <= 40) return [Math.max(12, max - 6), max];
-  }
-
-  return null;
-}
-
-/**
- * The materials out of a "Chất liệu" line, and nothing else.
- *
- * The line is either a lay-up in Latin script — "Japan Ultra High Modulus Carbon
- * Graphite", "30T MITSUBISHI CARBON SHEET+HEXAGON BLADE FRAME" — or a Vietnamese
- * sentence describing one, "Sợi carbon chịu nhiệt cao". A segment carrying a
- * Vietnamese letter is prose and is dropped, which is the same test
- * `fleet-catalogue.ts` makes on the same kind of line; what is left is what the
- * frame is made of. A long segment is a sentence written without diacritics.
- */
-function parseMaterials(value: string): string[] {
-  const out = new Set<string>();
-  for (const raw of value.split(/[,;+/]|\.(?:\s|$)/)) {
-    const segment = cleanText(raw).replace(/^\(|\)$/g, "").trim();
-    if (!segment || segment.length > 48) continue;
-    if (!/[A-Za-z]/.test(segment)) continue;
-    if (VIETNAMESE.test(segment)) continue;
-    out.add(segment);
-  }
-  return [...out];
-}
-
-interface ParsedSpecs {
-  weightClass: WeightClass | null;
-  weightGrams: number | null;
-  gripSize: GripSize | null;
-  balancePointMm: number | null;
-  tensionLbs: [number, number] | null;
-  holes: number | null;
-  lengthMm: number | null;
-  materials: string[];
-  shaftFlex: ShaftFlex | null;
-  unparsed: string[];
-}
-
-/**
- * Labels this shop publishes that are read and deliberately not used.
- *
- * They are listed rather than ignored so that `unparsed` stays a signal about
- * the shop changing its template, instead of a list of the same twenty lines
- * every run.
- *
- * The brand is this provider by definition. The colour and the product name are
- * things the catalogue keeps elsewhere — on the variant, and in the row's own
- * name. And the rest are the shop's own editorial about how a frame plays
- * ("Loại vợt: Thiên công", "Đối tượng: Người chơi tấn công", every named
- * technology) which would have to be read through a vocabulary of marketing
- * phrases to become `play_style_tags` or `skill_level` — a guess wearing a
- * regex, and the same call `fleet-catalogue.ts` makes about the same copy.
- */
-const IGNORED_LABELS =
-  /thương hiệu|màu (?:sắc|gỗ)|tên sản phẩm|^sản phẩm|mẫu mã|^loại|phong cách|đối tượng|công nghệ|ưu điểm|đặc điểm|điểm (?:nổi bật|swing)|độ (?:ổn định|bền)|chuyển giao|hiệu suất|chi phí|đổi 1|bảo hành|khuyến mãi/;
-
-/**
- * Read the specification out of one product description.
- *
- * Every label on this shop is written three or four ways, because half the
- * descriptions carry a second spec table machine-translated from the
- * manufacturer's Chinese: weight is "Trọng lượng", "Trọng lượng vợt (không
- * dây)", "Khối lượng" or "Cân nặng"; tension is "Mức căng", "Mức căng dây",
- * "Mức căng lưới tối đa", "Sức căng tối đa", "Lực căng tối đa", "Độ căng" or
- * "Xâu chuỗi"; balance is "Điểm cân bằng", "Độ cân bằng" or "Cân bằng"; the grip
- * is "Chu vi cán cầm", "Chu vi cán vợt", "Kích thước cán" or "Tay cầm". So each
- * fact is matched on the phrase that identifies it rather than on a whole label,
- * and every spelling below was read off a real listing.
- *
- * Balance is tested before tension on purpose: "độ cân bằng" and "độ căng" are
- * one diacritic apart.
- *
- * The first reading of a fact wins, and each is bounded by what it can possibly
- * be — which is what makes the shop's own mislabelling harmless. Windsoul
- * Fengling publishes "Cân nặng: 22-30 lbs", its string tension under the weight
- * label; 22 is not a mass a racket can have, so `parseWeight` returns nothing
- * and the row keeps no weight rather than a wrong one.
- *
- * A `label: value` line that is none of these and none of `IGNORED_LABELS` is
- * kept in `unparsed` and reported, which is how the next spelling gets noticed.
- * Only a short value is: a colon on this shop introduces a paragraph about as
- * often as it introduces a measurement.
- */
-function parseSpecs(descriptionHtml: string): ParsedSpecs {
-  const specs: ParsedSpecs = {
-    weightClass: null,
-    weightGrams: null,
-    gripSize: null,
-    balancePointMm: null,
-    tensionLbs: null,
-    holes: null,
-    lengthMm: null,
-    materials: [],
-    shaftFlex: null,
-    unparsed: [],
-  };
-
-  for (const line of descriptionLines(descriptionHtml)) {
-    // "Hệ thống 76 lỗ gen" is the one fact stated as a sentence rather than as a
-    // label, and "Số lỗ gen: 72" is the same fact with a label.
-    const holes = /(?:hệ thống|số lỗ)\D{0,12}?(\d{2,3})\s*lỗ|số\s+lỗ[^:]*:\s*(\d{2,3})/i.exec(line);
-    if (holes) {
-      specs.holes ??= parseInt(holes[1] ?? holes[2], 10);
-      continue;
-    }
-
-    const row = /^([^:]{1,48}?)\s*:\s*(.*)$/.exec(line);
-    if (!row) continue;
-    const label = row[1].toLowerCase();
-    const value = cleanText(row[2]);
-    if (!value) continue;
-
-    if (/trọng lượng|khối lượng|cân nặng/.test(label)) {
-      const weight = parseWeight(value);
-      specs.weightClass ??= weight.weightClass;
-      specs.weightGrams ??= weight.grams;
-    } else if (/cân bằng/.test(label)) {
-      specs.balancePointMm ??= parseBalanceMm(value);
-    } else if (/(?:mức|sức|lực|độ)\s+căng|căng\s+tối\s+đa|xâu\s+chuỗi/.test(label)) {
-      specs.tensionLbs ??= parseTension(value);
-    } else if (/độ cứng/.test(label)) {
-      specs.shaftFlex ??= extractFlex(value);
-    } else if (/chất liệu|vật liệu/.test(label)) {
-      if (specs.materials.length === 0) specs.materials = parseMaterials(value);
-    } else if (/khung vợt|thân vợt/.test(label)) {
-      // The frame and the shaft, each named with its own lay-up: "Khung vợt:
-      // 6.8mm Slim Tube + Narrow Fluid Frame". That is the same kind of fact as
-      // "Chất liệu", so it lands in the same column — and where the value is a
-      // Vietnamese description of the shape rather than a material ("Khung vợt
-      // dạng hộp") `parseMaterials` drops it.
-      for (const material of parseMaterials(value)) {
-        if (!specs.materials.includes(material)) specs.materials.push(material);
-      }
-    } else if (/chu vi cán|cỡ cán|kích thước cán|tay cầm/.test(label)) {
-      const grip = /G([456])/i.exec(value);
-      if (grip) specs.gripSize ??= `G${grip[1]}` as GripSize;
-    } else if (/độ dài|chiều dài/.test(label)) {
-      const mm = /(\d{3})\s*mm/i.exec(value);
-      if (mm) specs.lengthMm ??= parseInt(mm[1], 10);
-    } else if (IGNORED_LABELS.test(label)) {
-      // Read and dropped deliberately. See IGNORED_LABELS.
-    } else if (label.length <= 28 && value.length <= 48) {
-      specs.unparsed.push(`${row[1]}: ${value}`);
-    }
-  }
-
-  // A grade is the shop's own answer and always wins; a listing that published
-  // only grams gets the band those grams fall in, which is the same reading
-  // `generate-sql.ts` makes of every scraped racket.
-  if (!specs.weightClass && specs.weightGrams !== null) {
-    specs.weightClass = weightClassOf(specs.weightGrams);
-  }
-
-  return specs;
 }
 
 /* ---------------------------------------------------------------- the shop */
@@ -431,6 +178,7 @@ function racketOf(candidate: MatchCandidate, product: StoreProduct): VensonRacke
     gripSize: specs.gripSize ?? "G5",
     balancePointMm: specs.balancePointMm,
     tensionLbs: specs.tensionLbs,
+    shaftDiameterMm: specs.shaftDiameterMm,
     holes: specs.holes,
     lengthMm: specs.lengthMm,
     materials: specs.materials,
@@ -449,7 +197,7 @@ function racketRow(racket: VensonRacket, releaseYear: number) {
     release_year: releaseYear,
     balance_point_mm: racket.balancePointMm ?? 295,
     shaft_flex: racket.shaftFlex,
-    shaft_diameter_mm: 6.8,
+    shaft_diameter_mm: racket.shaftDiameterMm ?? 6.8,
     frame_shape: "isometric",
     frame_material: racket.materials.length > 0 ? racket.materials : ["HM Graphite"],
     max_tension_min_lbs: racket.tensionLbs?.[0] ?? 20,

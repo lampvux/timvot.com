@@ -34,6 +34,8 @@
  *                                     the only Adidas one
  *                        felet        a SiteGiant store whose grid is rendered
  *                                     even though its product record is not
+ *                        vssports-vn  a Bizweb store with every JSON endpoint
+ *                                     the platform normally exposes turned off
  *   yonex-jp-api         yonex-jp     yonex.co.jp's own product JSON, keyed by model code
  *   sitemap              victor       the long tail of discontinued models
  *                        forza        a WordPress page sitemap; the site is not a shop
@@ -135,11 +137,20 @@
  * over 8 listing pages, with a specification table `fleet-catalogue.ts` reads
  * the same way `forza-catalogue.ts` reads FZ's.
  *
- * And VS, which is the odd one out: venson.vn was alive, complete and readable
- * the whole time, and the brand's 114 rackets carried no photograph because
+ * And VS, which is the odd one out twice over. venson.vn was alive, complete and
+ * readable the whole time, and the brand's rackets carried no photograph because
  * nothing here could read what its listings are called. Every title is a
  * paragraph of Vietnamese sales copy with the model at the front — see
  * `vensonTitle`, which is the whole of the work in that entry.
+ *
+ * It is also the one brand with two properties that are not two regions. The
+ * brand's own site publishes 42 rackets; VS Sports, the store at vssports.vn,
+ * publishes 121 — the licensed Kimetsu and One Piece frames, the full Challenger
+ * and Blade numbering, the Titan line — over seven pages of one category. This
+ * catalogue holds 134 VS rows, so one source was never going to be enough, and
+ * `vssports-vn` is declared last for the usual reason: `index.ts` takes the
+ * first provider that matches and stops, so the brand's own property leads and
+ * the store fills the gap behind it.
  *
  * And Kamito and Adidas, neither of which has a racket site — no Kamito domain
  * resolves, and Adidas badminton is a licensed line adidas.com does not carry —
@@ -192,6 +203,7 @@ import {
   structuredDataGallery,
   woocommerceHtmlGallery,
   wpUploadsGallery,
+  vssportsGallery,
 } from "./gallery";
 
 export type ProviderPlatform =
@@ -805,41 +817,35 @@ function feletTitle(title: string): string {
 const VIETNAMESE = /[^\u0000-\u007F]/;
 
 /**
- * A venson.vn listing name, reduced to the frame it is a page for.
+ * A VS listing name, cut where the model ends and the Vietnamese begins.
  *
- * This shop writes a paragraph where the other providers write a name: "Vợt cầu
- * lông VS Thunder 100 chính hãng dạ quang phát sáng, sợi carbon bền nhẹ 4U dành
- * cho mọi người chơi" is one product, and the catalogue holds it as "Thunder
- * 100". `titleNoise` takes off what is on every listing — the category, the
- * brand in both its spellings, "chính hãng", the weight grade, the lay-up — and
- * what is left is still the model followed by a sentence of prose.
+ * Both VS properties write a model name followed by prose: venson.vn writes a
+ * whole paragraph ("Vợt cầu lông VS Thunder 100 chính hãng dạ quang phát sáng,
+ * sợi carbon bền nhẹ 4U dành cho mọi người chơi") and vssports.vn writes a
+ * shorter tail ("Vợt cầu lông VS Youlong Pink Rồng Hồng"). `titleNoise` takes
+ * off what is on every listing — the category, the brand in both its spellings,
+ * "chính hãng", the weight grade, the lay-up — and what is left is still the
+ * model followed by Vietnamese.
  *
  * The prose is separable from the name because of the script it is written in.
  * VS names its frames in Latin letters (Thunder 100, Kriss Sword XP, HC990P,
- * Kirin 80) and describes them in Vietnamese, so the model ends at the first
- * diacritic. That is the rule, and it is the shop's own typography rather than a
- * vocabulary of marketing phrases fitted to these 42 listings.
+ * Kirin 80, Youlong Pink) and describes them in Vietnamese, so the model ends at
+ * the first diacritic. That is the rule, and it is the brand's own typography
+ * rather than a vocabulary of marketing phrases fitted to one shop's listings.
  *
- * Two details make it hold on the real pages:
- *
- *   * A leading Vietnamese run is kept. Two listings open in Vietnamese — "Dây
- *     cước vợt cầu lông VENSON VS Kirin …", which is a *string* mis-filed in the
- *     racket category, and "Vợt cầu lông Venson Rồng văn trắng, VS ACE Power 11
- *     Max Dragon …" — and cutting at the first diacritic would leave "Dây",
- *     while skipping to the first Latin word would leave "Kirin" and make a
- *     reel of string look like the Kirin 80. Keeping the run means `excludeTitle`
- *     can still read what the shop said it was selling.
- *   * The head stops at a spaced dash. One listing gives both spellings of one
- *     name — "VS AP77 – Ace Power 77" — and the matcher forgives nothing that
- *     trails a model but a SKU fragment, so the second spelling has to go. The
- *     dash has to be spaced: "V-Dragon" is a model name.
+ * A leading Vietnamese run is kept. Two venson.vn listings open in Vietnamese —
+ * "Dây cước vợt cầu lông VENSON VS Kirin …", which is a *string* mis-filed in
+ * the racket category, and "Vợt cầu lông Venson Rồng văn trắng, VS ACE Power 11
+ * Max Dragon …" — and cutting at the first diacritic would leave "Dây", while
+ * skipping to the first Latin word would leave "Kirin" and make a reel of string
+ * look like the Kirin 80. Keeping the run means `excludeTitle` can still read
+ * what the shop said it was selling.
  */
-function vensonTitle(title: string): string {
-  const head = title.split(/\s+[–—-]\s+/)[0];
+function vsLatinHead(title: string): string {
   const words: string[] = [];
   let latin = false;
 
-  for (const word of head.split(/\s+/)) {
+  for (const word of title.split(/\s+/)) {
     if (VIETNAMESE.test(word)) {
       if (latin) break;
     } else if (/[A-Za-z0-9]/.test(word)) {
@@ -849,6 +855,97 @@ function vensonTitle(title: string): string {
   }
 
   return words.join(" ").replace(/[,:;.]+$/, "").trim();
+}
+
+/**
+ * A venson.vn listing name, reduced to the frame it is a page for.
+ *
+ * `vsLatinHead`, plus one rule this shop needs and vssports.vn does not: the
+ * head stops at a spaced dash. One listing gives both spellings of one name —
+ * "VS AP77 – Ace Power 77" — and the matcher forgives nothing that trails a
+ * model but a SKU fragment, so the second spelling has to go. The dash has to be
+ * spaced: "V-Dragon" is a model name.
+ */
+function vensonTitle(title: string): string {
+  return vsLatinHead(title.split(/\s+[–—-]\s+/)[0]);
+}
+
+/**
+ * A vssports.vn listing name, reduced to the frame it is a page for.
+ *
+ * The same cut as venson.vn's, and deliberately *without* the spaced-dash rule.
+ * The only titles on this shop that carry a spaced dash are the four Kimetsu no
+ * Yaiba frames — "VS Kimetsu no Yaiba 30 - Hashibira Inosuke" — where what
+ * follows the dash is the character the frame is named after, not a second
+ * spelling of the model. The catalogue holds all four with that tail, so cutting
+ * at the dash would collapse four rackets into one name and hand the contest to
+ * `resolvePageOwnership` for no reason.
+ *
+ * `splitColourway` is not run either, and that is the other deliberate
+ * difference from the shops that publish one page per colour. VS's colours are
+ * part of the model here — the catalogue holds "Youlong Pink" and "Youlong
+ * Silver" as their own rows, because the retailers it was built from do — so
+ * stripping the colour would leave three pages named "Youlong" and no way for
+ * either row to reach its own photography. The Vietnamese tail comes off and the
+ * English colour stays: "Youlong Pink Rồng Hồng" is "Youlong Pink".
+ */
+function vssportsTitle(title: string): string {
+  return vsLatinHead(title);
+}
+
+/**
+ * The product slug a vssports.vn permalink is really about.
+ *
+ * The default — the url's last segment — reads
+ * `/vot-cau-long-vs-blade-9200.html` as the identity `vot-cau-long-vs-blade-
+ * 9200-html`, which names no racket: the category is Vietnamese and so invisible
+ * to `FURNITURE`, the brand sits in the middle where `filterFurniture` will not
+ * take it, and `html` trails the model as a word rather than as a SKU fragment,
+ * which the matcher refuses. Every candidate would then match on its title
+ * alone.
+ *
+ * So the category, the brand and the extension come off, and what is left is the
+ * model as the shop slugified it. The four shapes the shop uses are all here:
+ * `vot-cau-long-vs-<model>`, `set-vot-cau-long-vs-<model>` (a racket sold with a
+ * bag and a grip — still one frame, and the catalogue holds the frame),
+ * `vot-cau-long-venson-vs-<model>`, and `vot-cau-long-venson-<model>` for the
+ * five Challenger frames the shop files under the company name. `-chinh-hang`
+ * ("genuine") is the shop's own badge and trails a quarter of them.
+ */
+function vssportsSlug(url: string): string {
+  const last = new URL(url).pathname.replace(/\/+$/, "").split("/").pop() ?? "";
+  return last
+    .replace(/\.html$/i, "")
+    .replace(/^set-/, "")
+    .replace(/^vot-cau-long-/, "")
+    .replace(/^venson-/, "")
+    .replace(/^vs-/, "")
+    .replace(/-chinh-hang$/, "");
+}
+
+/**
+ * The catalogue's name for a VS racket, with the retailer's sales pitch off it.
+ *
+ * Eight of the 134 VS rows carry a Vietnamese clause after a dash, because the
+ * Vietnamese retailer the row came from titled its listing that way and the
+ * scrape kept it: "Blade 7000 – Vợt cầu lông giá rẻ", "CHALLENGER 750 – Tự tin
+ * phạt cầu", "Turbo125I – Giá cả cực chất bất ngờ". VS Sports publishes every
+ * one of those frames under the model name alone, and the matcher forgives no
+ * extra token on the model's side, so without this the clause blocks the match.
+ *
+ * The tail is only dropped when it is Vietnamese, which is what keeps the four
+ * Kimetsu rows ("Kimetsu no Yaiba 10 – Kamado Tanjiro") whole — their tail is
+ * the frame's name, and the shop prints it too.
+ *
+ * It is an alias like every other here: offered only after the name as written
+ * has matched nothing, put through the same strict comparison, and unable to
+ * displace a direct match.
+ */
+function vssportsModelAliases(name: string): string[] {
+  const match = /^(.*?)\s+[–—-]\s+(.+)$/.exec(name);
+  if (!match || !VIETNAMESE.test(match[2])) return [];
+  const head = match[1].trim();
+  return head && head !== name ? [head] : [];
 }
 
 /**
@@ -1764,6 +1861,78 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
     // Shared hosting behind an edge cache, and the whole crawl is two JSON
     // requests plus the images. The usual gap is plenty.
+    politenessMs: 400,
+  },
+  {
+    // VS Sports, and the second source for the same brand.
+    //
+    // venson.vn above publishes 42 rackets. vssports.vn publishes 121 — the
+    // Kimetsu and One Piece licensed frames, the whole Challenger and Blade
+    // numbering, the Titan line, the Youlong colours — over seven pages of a
+    // single category, and this catalogue holds 134 VS rows of which 102 had no
+    // photograph at all. It is declared *after* venson-vn because `index.ts`
+    // takes the first provider that matches a racket and stops: the brand's own
+    // property leads, and this one fills the gap behind it.
+    //
+    // No shop API. It is a Bizweb store on a custom theme, and every JSON
+    // endpoint the platform normally exposes (`/products.json`,
+    // `/collections/<handle>/products.json`) answers 404 here, so the listing is
+    // walked as rendered HTML — 20 cards a page, seven pages, and the card's
+    // heading anchor carries the product name, which is what the match is made
+    // on. The gallery is read from the product page afterwards; see
+    // `vssportsGallery` for why the structured data on it is not enough.
+    id: "vssports-vn",
+    name: "VS Sports",
+    origin: "https://vssports.vn",
+    brandSlugs: ["vs"],
+    platform: "structured-data",
+    catalogue: {
+      kind: "category-pagination",
+      url: "https://vssports.vn/vot-cau-long.html",
+      pageParam: "page",
+      // The card's heading anchor. The thumbnail above it links to the same url
+      // with no text, and picking that one would leave every candidate nameless.
+      linkSelector: ".product-name a",
+      // Seven pages today, and the walk stops when a page adds nothing new, so
+      // this only bounds a shop that grows.
+      maxPages: 12,
+      // The permalink is the whole title slugified, category and all. See
+      // `vssportsSlug`.
+      slugFromUrl: vssportsSlug,
+    },
+    // Everything that is on every listing rather than on this frame. The same
+    // vocabulary as venson.vn's, minus the lay-up rules: this shop keeps its
+    // specification in the description rather than in the title.
+    titleNoise: [
+      // "Set" — a frame sold with a bag and a grip. The bundle is the shop's,
+      // the frame is the catalogue's.
+      /^\s*set\s+/gi,
+      // The category, then the bare word "vợt" (racket) wherever it appears.
+      /\s*v[ơợ]t\s+c[aâầ]u\s+l[oôộ]ng\s*/gi,
+      /(?:^|\s)v[ơợ]t(?=\s|$)/gi,
+      // "chính hãng" (genuine), the shop's badge, on a quarter of the listings.
+      /\s*chính\s+hãng\s*/gi,
+      // The brand, in both spellings. `filterFurniture` takes a brand only at an
+      // edge of the token run, and this shop puts it in the middle:
+      // "Vợt Cầu Lông Venson Challenger VS630". `vs` is required to stand alone
+      // so that the model codes VS630…VS830 keep theirs.
+      /(?:^|\s)venson(?=\s|$)/gi,
+      /(?:^|\s)vs(?=\s|$)/gi,
+      // The weight grade and grip, spaced or run together.
+      /(?:^|\s)[2-7]U(?:\s*G[3-6])?(?=\s|$)/gi,
+      /(?:^|\s)G[3-6](?=\s|$)/gi,
+    ],
+    titleTransform: (title) => vssportsTitle(title),
+    // The retailer sales pitch some catalogue rows carry after a dash. See
+    // vssportsModelAliases.
+    modelAliases: vssportsModelAliases,
+    // Nothing to refuse. Every one of the 121 listings is a page for exactly one
+    // frame — the shop publishes no variation axis at all, which is the one real
+    // advantage it has over venson.vn, where `Phân loại` hides four models
+    // behind one product and one group photograph.
+    extractors: [vssportsGallery],
+    // A small shop on shared hosting, and the crawl is 7 listing pages plus one
+    // page per matched racket.
     politenessMs: 400,
   },
 ];
