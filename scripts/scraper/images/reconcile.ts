@@ -3,8 +3,9 @@
  * supposed to own them, and report which rackets a stored photograph could
  * legitimately be given to.
  *
- *   npm run images:reconcile             # report only
- *   npm run images:reconcile -- --apply  # link what is safe to link
+ *   npm run images:reconcile                     # report only
+ *   npm run images:reconcile -- --apply          # link what is safe to link
+ *   npm run images:reconcile -- --apply --adopt-copies
  *
  * `images:audit` answers "does what the database claims still exist?" — it
  * walks from the rows outwards. This walks the other way: from the bytes in the
@@ -57,6 +58,30 @@
  * bytes, so the two rows can be compared before anyone decides whether they are
  * the same frame under two names; `relayout.ts --prune-orphans` is what removes
  * objects once that decision is made.
+ *
+ * ------------------------------------------------------------------
+ * --adopt-copies
+ *
+ * After `duplicate-rackets.ts` merged the rows that were one racket written
+ * twice, what is left in the `owned-elsewhere` pile is different: a base model
+ * whose folder holds a copy of a *suffixed sibling's* gallery. Astrox 22's
+ * folder holds Astrox 22 RX's photographs; Thruster Ryuga II's holds the TD's.
+ * Those are genuinely different frames, so the September repair was right to
+ * take the rows away — and the base model has no manufacturer gallery of its
+ * own, because the manufacturer no longer publishes a page for it.
+ *
+ * `--adopt-copies` gives the base model the sibling's photographs anyway. It is
+ * a deliberate editorial trade, not a repair: an empty product page is worse
+ * than one showing a frame from the same family in a slightly different paint,
+ * and these frames are usually identical but for the finish. It stays behind
+ * its own flag because it is the one thing here that knowingly shows a racket a
+ * photograph that is not of it.
+ *
+ * The invariant the September migration installed is not touched. That trigger
+ * forbids two rackets claiming one *manufacturer page*, and an adopted row does
+ * not claim one: its provenance is the Storage folder, as `storage-recovered`,
+ * which is both true and unique to the folder. A later crawl that finds a real
+ * page for the base model replaces these rows with the genuine gallery.
  */
 
 import { createHash } from "node:crypto";
@@ -266,6 +291,7 @@ export function reconcile(input: ReconcileInput): Finding[] {
 
 interface Options {
   apply: boolean;
+  adoptCopies: boolean;
   bucket: string | null;
 }
 
@@ -278,6 +304,7 @@ function parseArgs(): Options {
   }
   return {
     apply: Boolean(flags.apply),
+    adoptCopies: Boolean(flags["adopt-copies"]),
     bucket: typeof flags.bucket === "string" ? flags.bucket : null,
   };
 }
@@ -545,16 +572,33 @@ async function main(): Promise<void> {
   }
 
   const linkable = findings.filter((finding) => finding.verdict === "linkable");
+  // A copy is adoptable only when the folder still names a racket that has no
+  // gallery; once `duplicate-rackets.ts` has merged the rows that were one
+  // racket written twice, what is left is a base model beside a suffixed
+  // sibling's photographs.
+  const adoptable = options.adoptCopies
+    ? findings.filter((finding) => finding.verdict === "owned-elsewhere" && finding.target)
+    : [];
+
   if (!options.apply) {
+    console.log(`\nReport only. ${linkable.length} folder(s) can be linked.`);
+    const copies = findings.filter(
+      (finding) => finding.verdict === "owned-elsewhere" && finding.target,
+    ).length;
     console.log(
-      `\nReport only. ${linkable.length} folder(s) can be linked; re-run with --apply to write them.`,
+      `Re-run with --apply to write them` +
+        (copies
+          ? `, or --apply --adopt-copies to additionally give ${copies} gallery-less racket(s) ` +
+            "a sibling's photographs."
+          : "."),
     );
     return;
   }
 
   let written = 0;
-  for (const finding of linkable) {
-    console.log(`\nLinking ${finding.folder} → ${finding.target!.id}`);
+  for (const finding of [...linkable, ...adoptable]) {
+    const how = finding.verdict === "linkable" ? "Linking" : "Adopting a copy for";
+    console.log(`\n${how} ${finding.folder} → ${finding.target!.id}`);
     const bucket = bucketOf.get(finding.objects[0])!;
     written += await link(supabase, bucket, finding, objectPaths);
   }

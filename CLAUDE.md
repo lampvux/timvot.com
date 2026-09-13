@@ -31,6 +31,7 @@ npm run seed:sql       # regenerate supabase/seed.sql from src/lib/data/seed.ts
 npm run seed:db        # push the seed straight into Postgres
 npm run backup         # dump tables to backups/*.json ; npm run restore [file] [--dry-run]
 npm run market:refresh # recompute racket_scores (Court Score) from the catalogue
+npm run catalogue:dupes # rows that are one racket written twice; --apply merges them
 npx tsx scripts/score-report.ts   # Court Score for every seeded racket
 ```
 
@@ -224,7 +225,16 @@ unreferenced objects today are byte-identical copies of galleries other rackets 
 behind on purpose by `20260903000000_enforce_racket_image_ownership.sql` and by
 best-effort re-crawl cleanup. Attaching them to the racket the folder names puts the
 Thruster Ryuga II TD's photographs on the Thruster Ryuga II's page. Anything that links
-stored bytes to a racket checks the hash first. Verification
+stored bytes to a racket checks the hash first. `--adopt-copies` does exactly that
+attaching, on purpose, for the 13 base models the manufacturer no longer publishes a page
+for; those rows carry provider `storage-recovered` and are replaced by any later crawl.
+
+**A racket written twice is the usual reason a page looks broken.** `catalogue:dupes`
+expands the series code (`ARS`→Auraspeed, `TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
+and then drops separators only — a trailing token is a product, so `Astrox 22` is not
+`Astrox 22 RX` and `Windstorm 78` is not `Windstorm 78+`. The survivor is whichever row
+holds the gallery, because the ownership trigger pins each object's path to its owner's
+slug and the rows cannot move the other way. Verification
 (`verify.ts`) runs after the scrape is already written to disk, so a flaky Chromium
 launch cannot cost a multi-minute walk. A price a source publishes as "liên hệ" is
 counted and reported, never invented.
