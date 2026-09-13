@@ -57,6 +57,7 @@ npm run scrape         # full walk + Playwright verification
 npm run scrape:sync    # also upsert into Postgres (needs SUPABASE_SERVICE_ROLE_KEY)
 npm run scrape:sql     # emit supabase/scraped-catalogue.sql instead (no key needed)
 npm run scrape:images:dry   # manufacturer gallery crawl, match-only, no credentials
+npm run images:reconcile    # bucket → catalogue: which stored bytes no gallery owns
 npx tsx scripts/scraper/forza-catalogue.ts   # manufacturer pages as catalogue rows,
 npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
 npx tsx scripts/scraper/fleet-catalogue.ts   #   fleet.vn, the same shape
@@ -214,7 +215,16 @@ Walkthrough: `docs/auth-setup.md`.
 Colourways are variants, not models (`colourway.ts`): strip only a *trailing* run of
 known colour words, and only while a model identifier remains — `Ryuga CLS C` and
 `CLS J` are different rackets. Matching in `images/match.ts` is prefix-based and
-*refuses* rather than guessing; an ambiguous match is reported, not taken. Verification
+*refuses* rather than guessing; an ambiguous match is reported, not taken.
+
+**An unreferenced object in the image bucket is not a lost gallery.** The storage key is
+`<brand>/<model-slug>/<nn>-<sha8>.<ext>`, so a folder looks like it names its racket — but
+`images/reconcile.ts` trusts the hash in the key over the folder name, because all 346
+unreferenced objects today are byte-identical copies of galleries other rackets own, left
+behind on purpose by `20260903000000_enforce_racket_image_ownership.sql` and by
+best-effort re-crawl cleanup. Attaching them to the racket the folder names puts the
+Thruster Ryuga II TD's photographs on the Thruster Ryuga II's page. Anything that links
+stored bytes to a racket checks the hash first. Verification
 (`verify.ts`) runs after the scrape is already written to disk, so a flaky Chromium
 launch cannot cost a multi-minute walk. A price a source publishes as "liên hệ" is
 counted and reported, never invented.
