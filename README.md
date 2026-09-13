@@ -457,7 +457,7 @@ npm run scrape:images -- --bucket-strategy=per-provider
 
 | Flag | Default | What it does |
 | ---- | ------- | ------------ |
-| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet`, `fleet-vn`, `lining-vn`, `venson-vn` |
+| `--provider=` | `all` | `yonex`, `yonex-uk`, `yonex-jp`, `victor`, `apacs`, `pro-kennex`, `mizuno-asia`, `mizuno`, `mizuno-vn`, `hundred-vn`, `kumpoo-vn`, `gosen-vn`, `forza`, `meta-vn`, `felet`, `fleet-vn`, `lining-vn`, `venson-vn`, `vssports-vn` |
 | `--limit=` | all | Cap the rackets crawled this run |
 | `--max-images=` | `12` | Distinct photographs stored per racket, across all its colourway pages |
 | `--max-pages=` | `6` | Colourway pages read per racket |
@@ -482,7 +482,7 @@ tried richest-first and merged by URL. The ladder, cheapest and most precise fir
 | `woocommerce-store` | apacs, kumpoo-vn, venson-vn | Name + full gallery from the shop's Store API. For Apacs this adds 12 still-live older rackets hidden from the rendered category cards, bringing discovery to 453. |
 | `shopify-collection` | mizuno, mizuno-vn, yonex-uk, hundred-vn, lining-vn | Name + full gallery from `products.json`. Haravan speaks it too, and caps a page at 50 however large a `limit` is asked for. |
 | `2beasy-category` | victor | Victor's storefront API. 245 current rackets in 2 requests. |
-| `category-pagination` | yonex, gosen-vn, meta-vn, felet, fleet-vn | The rendered "all racquets" listing, walked `?p=1…N` — or `…/89/page=2`, where the pager writes the number into a path segment. The only way in when a site has no API and no sitemap. |
+| `category-pagination` | yonex, gosen-vn, meta-vn, felet, fleet-vn, vssports-vn | The rendered "all racquets" listing, walked `?p=1…N` — or `…/89/page=2`, where the pager writes the number into a path segment. The only way in when a site has no API and no sitemap. |
 | `yonex-jp-api` | yonex-jp | yonex.co.jp’s own product JSON, keyed by the model code stamped on the frame. |
 | `sitemap` | victor, mizuno-asia, forza | The long tail — discontinued models with no catalogue entry left. Carries no names, so `titleFromHead` reads them from the pages. |
 
@@ -1340,6 +1340,99 @@ A few are a thinner or fuller spelling of a page the import just added ("Pofang"
 Fang", "Razor X" beside "Razor", "FengLing" beside "Windsoul Fengling"); which of those are
 the same frame is not knowable from either side, so the run names them rather than merging
 them.
+
+### VS Sports, the second source for the same brand
+
+venson.vn is the brand's own property and publishes 42 rackets. That was never going to
+cover 134 catalogue rows, and [vssports.vn](https://vssports.vn/vot-cau-long.html) — the VS
+Sports store — publishes **121**: the licensed Kimetsu no Yaiba and One Piece frames, the
+whole Challenger and Blade numbering, the Titan line, the Youlong colours, over seven pages
+of one category.
+
+```bash
+npm run scrape:images -- --provider=vssports-vn            # the photographs
+npx tsx scripts/scraper/vssports-catalogue.ts              # the rackets — report only
+npx tsx scripts/scraper/vssports-catalogue.ts --sync-db    # …and upsert what is missing
+```
+
+`vssports-vn` is declared **after** `venson-vn` in `providers.ts`, because `images/index.ts`
+takes the first provider that matches a racket and stops. The brand's own property leads;
+the store fills the gap behind it.
+
+**No shop API, and not for want of asking.** It is a Bizweb store on a custom theme, and
+every JSON endpoint the platform normally exposes — `/products.json`,
+`/collections/<handle>/products.json` — answers 404. So discovery walks the rendered listing
+(20 cards a page, `?page=1…7`, stopping when a page adds nothing new) and the importer opens
+each product page once for its price, its SKU and its description.
+
+**The titles are the easy half, for once.** "Vợt Cầu Lông VS Hunter Chính Hãng" is a name
+with a category and a badge around it, not a paragraph, so `titleNoise` and the same
+Latin-head cut venson.vn uses are enough. Two rules are deliberately *not* shared:
+
+- **The spaced dash is kept.** venson.vn needs it gone — "VS AP77 – Ace Power 77" is one
+  frame named twice — but the only dashes here introduce the character a licensed frame is
+  named after, and the catalogue holds all four Kimetsu rows with that tail.
+- **The colour is kept.** The shops that publish one page per colour get `splitColourway`;
+  this one must not, because the catalogue holds "Youlong Pink" and "Youlong Silver" as
+  their own rows. The Vietnamese tail comes off and the English colour stays: "Youlong Pink
+  Rồng Hồng" is "Youlong Pink".
+
+**The permalink needed its own reader.** Every url is the whole title slugified —
+`/vot-cau-long-vs-blade-9200.html` — and the default last-path-segment slug reads that as
+`vot-cau-long-vs-blade-9200-html`, which names no racket: the category is Vietnamese and so
+invisible to `FURNITURE`, the brand sits in the middle where `filterFurniture` will not take
+it, and `html` trails the model as a *word* rather than as a SKU fragment, which the matcher
+refuses outright. `vssportsSlug` takes off the category, the brand, the `set-` prefix, the
+`-chinh-hang` badge and the extension, and what is left is the model.
+
+**`modelAliases` runs the other way here.** It is the *catalogue* that carries the sales
+pitch: eight rows are titled "Blade 7000 – Vợt cầu lông giá rẻ", "CHALLENGER 750 – Tự tin
+phạt cầu", "Turbo125I – Giá cả cực chất bất ngờ", because the retailer they were scraped
+from titled its listing that way. The alias drops a dash-introduced tail **only when it is
+Vietnamese**, which is exactly what keeps the four Kimetsu rows whole — their tail is the
+frame's name, and the shop prints it too. Seven rows reach their page through it.
+
+**The gallery is `#lightgallery` and nothing else on the page is.** The structured data here
+carries one image — the schema.org block and the og:image are both the hero — while the
+lightbox beside them holds four to fourteen shots at 1124–1500 px, so reading the structured
+data would cost most of the photography. But the shop serves *everything* out of one
+`/uploads/` tree, and a product page carries, outside that container, the thumbnail strip,
+the related-products rail, a policy-badge row, and — the one that would actually do damage —
+a description body that embeds **another racket's photographs** beside a "xem thêm" link to
+its page. A filename pattern of the kind `wpUploadsGallery` takes cannot tell those apart.
+The container can, and the test asserts exactly that case.
+
+**A "Set" is a bundle, and its price is not the frame's.** Seven listings are a frame sold
+with a bag and a grip. The frame is what the catalogue holds, so "Set" comes off the name —
+but the price stays behind: 1.850.000 ₫ buys the Dragon *and* the bag, and writing that into
+`msrp` would quietly overstate the frame. A bundle contributes its specification and its
+photography and no price, and is named in the report. The Dragon is sold both ways, which is
+also the one case where two pages reduce to one name and therefore mint one id; the frame's
+own page wins, and the import says which page it dropped.
+
+**Every one of the 121 pages publishes a specification block**, against 19 of venson.vn's 42
+that publish none, and every page is a page for exactly one frame — the shop has no variation
+axis at all, so there is no `excludeTitle` here and no group photograph to refuse. The block
+is read by `scripts/scraper/vs-specs.ts`, shared with `venson-catalogue.ts`: the table in the
+Venson section above, plus `Độ dày đũa vợt : 6.2 mm` → `shaft_diameter_mm`. Across the 121 it
+resolves tension on 98%, balance on 93%, a weight grade on 96%, length on 86%, the grip on
+83% and a lay-up on 77%, and reports exactly one label it has not been taught.
+
+Sharing that reader with venson.vn is what surfaced the quieter of its two bugs. "This is
+Vietnamese prose" had been one test — any non-ASCII character — and it is the right test for
+a *name*, where a word is a word. It is the wrong one for a material: VS writes "Hot-Melt
+Carbon – HM Carbon", an en dash is outside ASCII without being a word in Vietnamese, and the
+test was therefore throwing away 65 of this shop's 121 lay-ups. A material is now rejected
+only on a non-ASCII **letter**, and the punctuation passes through.
+
+**31 rackets the catalogue did not hold were written**, and **94 rackets came back with a
+gallery — 346 photographs, every one of the 94 that matched.** VS went from 32 of 134 rows
+with a photograph to 126 of 165. The 40 rows that match no page are a decade of retailer
+listings beside a current-line shop — the Vicleo Power series, Arashi Wind, Grandmaster — and
+some are a thinner or fuller spelling of a page the import just added: "Challenger 800" where
+the shop says "Challenger VS800", "ARMOR POWER" where it says "ARMOR POWER 7100", "Kungfu
+Rabbit" where it says "Kongfu Rabbit". Which of those are the same frame is not knowable from
+either side, so the run names them rather than merging them.
 
 ### The one retailer, and the two brands that needed it
 

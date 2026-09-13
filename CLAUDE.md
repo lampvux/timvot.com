@@ -61,6 +61,7 @@ npx tsx scripts/scraper/forza-catalogue.ts   # manufacturer pages as catalogue r
 npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
 npx tsx scripts/scraper/fleet-catalogue.ts   #   fleet.vn, the same shape
 npx tsx scripts/scraper/venson-catalogue.ts  #   venson.vn (VS), specs from the Store API
+npx tsx scripts/scraper/vssports-catalogue.ts #  vssports.vn (VS), the second VS source
 ```
 
 `npm run scrape -- --site=vnb --pages=5 --verbose` is the shape for narrowing a run;
@@ -79,27 +80,45 @@ Browser verification never fails the run either. That policy is what keeps the n
 workflow's later steps — image crawl, ownership audit, backup — running, so do not
 reintroduce a `process.exitCode = 1` per failed source.
 
-The four `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
+The five `*-catalogue.ts` scripts are not `sites/` adapters: a `sites/` adapter reads a
 shop and yields offers, which needs a seller row, a stock state and the nightly sweep that
 retires what a shop stopped listing. They write rackets with no offers, and never touch a
 racket the catalogue already holds. Whether it *does* hold one is decided by
 `images/match.ts`, not by the row id — the id comes from the manufacturer's spelling and
 the catalogue's came from retailers, so `ASTROX 88 S PRO` and `Astrox 88S Pro` are two ids
-for one frame. `fleet-catalogue.ts` and `venson-catalogue.ts` also pass their provider's
-`titleNoise`, `titleTransform` and `modelAliases` through that match, so the importer and
-the gallery crawler cannot disagree about which pages are duplicates. Both sites *do* quote
-prices; they land in `rackets.msrp` where a distributor's list price belongs, never as an
-offer — and on venson.vn that is the `regular_price`, not the sale price half its
-listings carry.
+for one frame. `fleet-catalogue.ts`, `venson-catalogue.ts` and `vssports-catalogue.ts` also
+pass their provider's `titleNoise`, `titleTransform` and `modelAliases` through that match,
+so the importer and the gallery crawler cannot disagree about which pages are duplicates.
+Those three sites *do* quote prices; they land in `rackets.msrp` where a distributor's list
+price belongs, never as an offer — and on venson.vn that is the `regular_price`, not the
+sale price half its listings carry.
 
 `venson-catalogue.ts` is the one that reads its detail from an API rather than from 42
 product pages: venson.vn is WooCommerce with the Store API on, so the gallery, the
-description the page renders and both prices come back with the product. Its specification
-labels are written four ways each — half the descriptions carry a second spec table
-machine-translated from the manufacturer's Chinese — so every fact is matched on the phrase
-that identifies it and bounded by what it can possibly be. That bound is what makes the
-shop's own mislabelling harmless: one listing files its string tension under the weight
-label, and 22 is not a mass a racket can have.
+description the page renders and both prices come back with the product.
+
+**VS is the one brand with two sources, and they are not two regions.**
+venson.vn is the brand's own property and publishes 42 rackets; vssports.vn is the VS
+Sports store and publishes 121 over seven pages of one category. `vssports-vn` is declared
+*after* `venson-vn` in `providers.ts` for the usual reason — `images/index.ts` takes the
+first provider that matches a racket and stops — so the brand's own property leads and the
+store fills the gap behind it. It has no shop API: every JSON endpoint Bizweb normally
+exposes answers 404, so discovery walks the rendered listing and the importer opens one
+product page each. Its gallery lives in `#lightgallery` and nowhere else, which is the
+identity test `vssportsGallery` makes — the description body embeds *other* rackets'
+photographs from the same `/uploads/gallery/` folder beside a "xem thêm" link, and only the
+container tells them apart. A listing titled "Set …" is a frame sold with a bag and a grip:
+the frame is written, its price is not.
+
+`scripts/scraper/vs-specs.ts` is the one reader of the Vietnamese `label: value` spec block
+both VS sites publish, and both importers use it — the labels are written four ways each
+(half of venson.vn's descriptions carry a second spec table machine-translated from the
+manufacturer's Chinese), so every fact is matched on the phrase that identifies it and
+bounded by what it can possibly be. That bound is what makes a shop's own mislabelling
+harmless: one listing files its string tension under the weight label, and 22 is not a mass
+a racket can have. Note the two different tests for "this is Vietnamese prose": a *name* is
+reduced on any non-ASCII character, while a *material* is rejected only on a non-ASCII
+letter — VS writes "Hot-Melt Carbon – HM Carbon", and an en dash is not a word.
 
 `supabase db push` is not used — it needs an interactive password prompt.
 `scripts/migrate.ts` runs the same SQL over the Management API or a direct

@@ -833,3 +833,63 @@ export const fleetVnGallery: GalleryExtractor = (html, pageUrl) => {
 
   return dedupe(images);
 };
+
+/* -------------------------------------------------------------- vssports.vn */
+
+/**
+ * VS Sports, whose gallery is one server-rendered lightbox and whose product
+ * photographs are otherwise indistinguishable from every other racket's.
+ *
+ * The theme is a Bizweb build with its own markup rather than Sapo's, so
+ * `shopifyGallery` finds no product JSON and `structuredDataGallery` finds one
+ * image: the page's schema.org block and its og:image both carry the hero alone,
+ * while the lightbox beside them holds four to fourteen shots. Reading the
+ * structured data here would cost most of the photography.
+ *
+ * What the page does carry is `#lightgallery`, the swiper the theme renders for
+ * the zoom view, whose every slide links the full-resolution upload — not a
+ * resize, the file itself. So the container is the identity test, and it has to
+ * be: this site serves *everything* out of one `/uploads/` tree, and a product
+ * page holds, outside that container, the thumbnail strip (the same files), the
+ * "sản phẩm liên quan" rail, a policy-badge row, and — the one that would
+ * actually do damage — a description body that embeds other rackets' photographs
+ * beside a "xem thêm" link to their pages. A filename pattern of the kind
+ * `wpUploadsGallery` takes cannot tell those apart; the container can.
+ *
+ * `/uploads/gallery/` is required on top of that, because the badges and the
+ * banners live under sibling folders (`/uploads/CamKetSanPham/`,
+ * `/uploads/cau_hinh/`) and a theme change that widened the container should not
+ * quietly start storing them.
+ */
+const VSSPORTS_UPLOAD = /^\/uploads\/gallery\/[^/]+\.(?:jpe?g|png|webp|avif)$/i;
+
+export const vssportsGallery: GalleryExtractor = (html, pageUrl) => {
+  const $ = cheerio.load(html);
+  const lightbox = $("#lightgallery");
+  if (lightbox.length === 0) return [];
+
+  const images: GalleryImage[] = [];
+
+  // Each slide is an anchor to the full-size upload, with the same path on the
+  // `<img>` inside it. The anchor is read first and the image is the fallback,
+  // so a slide the theme renders without a link still yields its photograph.
+  lightbox.find("a.swiper-slide").each((_, el) => {
+    const slide = $(el);
+    const src =
+      slide.attr("href") ||
+      slide.find("img").first().attr("data-image") ||
+      slide.find("img").first().attr("src");
+    if (!src || src.startsWith("data:")) return;
+
+    const url = absolute(src.split("?")[0], pageUrl);
+    if (!url || NON_PRODUCT.test(url)) return;
+    try {
+      if (!VSSPORTS_UPLOAD.test(new URL(url).pathname)) return;
+    } catch {
+      return;
+    }
+    images.push({ url, position: images.length });
+  });
+
+  return dedupe(images);
+};
