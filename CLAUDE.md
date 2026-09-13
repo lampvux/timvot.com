@@ -31,6 +31,7 @@ npm run seed:sql       # regenerate supabase/seed.sql from src/lib/data/seed.ts
 npm run seed:db        # push the seed straight into Postgres
 npm run backup         # dump tables to backups/*.json ; npm run restore [file] [--dry-run]
 npm run market:refresh # recompute racket_scores (Court Score) from the catalogue
+npm run catalogue:dupes # rows that are one racket written twice; --apply merges them
 npx tsx scripts/score-report.ts   # Court Score for every seeded racket
 ```
 
@@ -57,6 +58,7 @@ npm run scrape         # full walk + Playwright verification
 npm run scrape:sync    # also upsert into Postgres (needs SUPABASE_SERVICE_ROLE_KEY)
 npm run scrape:sql     # emit supabase/scraped-catalogue.sql instead (no key needed)
 npm run scrape:images:dry   # manufacturer gallery crawl, match-only, no credentials
+npm run images:reconcile    # bucket → catalogue: which stored bytes no gallery owns
 npx tsx scripts/scraper/forza-catalogue.ts   # manufacturer pages as catalogue rows,
 npx tsx scripts/scraper/yonex-catalogue.ts   #   report-only; --sync-db to write
 npx tsx scripts/scraper/fleet-catalogue.ts   #   fleet.vn, the same shape
@@ -214,7 +216,25 @@ Walkthrough: `docs/auth-setup.md`.
 Colourways are variants, not models (`colourway.ts`): strip only a *trailing* run of
 known colour words, and only while a model identifier remains — `Ryuga CLS C` and
 `CLS J` are different rackets. Matching in `images/match.ts` is prefix-based and
-*refuses* rather than guessing; an ambiguous match is reported, not taken. Verification
+*refuses* rather than guessing; an ambiguous match is reported, not taken.
+
+**An unreferenced object in the image bucket is not a lost gallery.** The storage key is
+`<brand>/<model-slug>/<nn>-<sha8>.<ext>`, so a folder looks like it names its racket — but
+`images/reconcile.ts` trusts the hash in the key over the folder name, because all 346
+unreferenced objects today are byte-identical copies of galleries other rackets own, left
+behind on purpose by `20260903000000_enforce_racket_image_ownership.sql` and by
+best-effort re-crawl cleanup. Attaching them to the racket the folder names puts the
+Thruster Ryuga II TD's photographs on the Thruster Ryuga II's page. Anything that links
+stored bytes to a racket checks the hash first. `--adopt-copies` does exactly that
+attaching, on purpose, for the 13 base models the manufacturer no longer publishes a page
+for; those rows carry provider `storage-recovered` and are replaced by any later crawl.
+
+**A racket written twice is the usual reason a page looks broken.** `catalogue:dupes`
+expands the series code (`ARS`→Auraspeed, `TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
+and then drops separators only — a trailing token is a product, so `Astrox 22` is not
+`Astrox 22 RX` and `Windstorm 78` is not `Windstorm 78+`. The survivor is whichever row
+holds the gallery, because the ownership trigger pins each object's path to its owner's
+slug and the rows cannot move the other way. Verification
 (`verify.ts`) runs after the scrape is already written to disk, so a flaky Chromium
 launch cannot cost a multi-minute walk. A price a source publishes as "liên hệ" is
 counted and reported, never invented.

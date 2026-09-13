@@ -610,6 +610,41 @@ downloads begin, and the database rejects both multi-racket page ownership and p
 do not match the owning brand/model slug. Unreferenced objects are warnings in the audit;
 they are not deleted automatically.
 
+`npm run images:reconcile` walks the same ground in the opposite direction: from the bytes
+in the bucket back to the catalogue, which is how you find a racket showing an empty
+gallery while the folder named after it is full of photographs. The storage layout is
+`<brand>/<model-slug>/…`, so a folder names a racket without a lookup table — but the
+folder name is the weaker evidence. The content hash in the key is the stronger one: if
+another racket's row already owns an object with that hash, these bytes are a *copy* of
+that racket's gallery, whatever the folder is called, and giving them to the folder's
+racket would put one product's photography on another's page. `--apply` links only a
+folder that no gallery was ever recorded out of, whose bytes no row anywhere owns, and
+that exactly one gallery-less racket answers to.
+
+No object in the bucket has ever been linkable under that rule. All 346 unreferenced ones
+are residue of two deliberate decisions: `20260903000000_enforce_racket_image_ownership.sql`
+deleted the losing rows where one manufacturer page had been matched to two catalogue
+records and kept the objects so the repair stays reversible, and a re-crawl removes
+superseded objects best-effort so a Storage hiccup cannot fail a multi-hour walk. The
+report is the useful part: it names, for each folder, the racket that owns those bytes
+beside the racket with the empty page. That list is what `duplicate-rackets.ts` was written
+from — `victor/ars-9` against `r-victor-auraspeed-9`, `victor/tk-f` against
+`r-victor-thruster-f` were the same frame under an abbreviated name, and merging the rows
+closed 19 of the 34 folders.
+
+`--adopt-copies` handles what the merge cannot. The 13 remaining folders belong to a *base
+model* whose bucket folder holds a copy of a **suffixed sibling's** gallery — Astrox 22's
+folder holds Astrox 22 RX's photographs, Thruster Ryuga II's holds the TD's. Those are
+different frames, so the rows were rightly taken away, and the manufacturer no longer
+publishes a page for the base model, so no crawl will ever fill them. The flag gives the
+base model the sibling's photographs anyway: a deliberate editorial trade — an empty
+product page is worse than one showing the same frame in a different finish — behind its
+own flag because it is the one thing here that knowingly shows a racket a photograph that
+is not of it. The September invariant is untouched: that trigger forbids two rackets
+claiming one *manufacturer page*, and an adopted row claims none. Its provenance is the
+Storage folder, recorded as provider `storage-recovered`, and a later crawl that finds a
+real page replaces it.
+
 **A brand can have more than one provider.** Mizuno has three: `mizuno-asia`, the Wix
 badminton site covering the whole Asian line including frames long out of production, and
 the Shopify storefronts `mizuno` (Malaysia) and `mizuno-vn` (Vietnam), which list what
