@@ -44,7 +44,9 @@
     "images:audit": "tsx scripts/scraper/images/audit.ts",
     "images:thumbs": "tsx scripts/scraper/images/backfill-thumbnails.ts",
     "images:cache-repair": "tsx scripts/scraper/images/repair-cache-control.ts",
-    "images:reconcile": "tsx scripts/scraper/images/reconcile.ts"
+    "images:reconcile": "tsx scripts/scraper/images/reconcile.ts",
+    "catalogue:dupes": "tsx scripts/duplicate-rackets.ts",
+    "test:catalogue": "tsx --test scripts/duplicate-rackets.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
