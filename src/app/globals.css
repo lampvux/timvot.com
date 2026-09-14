@@ -159,8 +159,8 @@
   --touch-min: 44px;
 
   /* --- Type faces (assigned by next/font in the root layout) --- */
-  --font-display: var(--font-archivo), "Be Vietnam Pro", system-ui, sans-serif;
-  --font-ui: var(--font-be-vietnam), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-archivo), "Google Sans Flex", system-ui, sans-serif;
+  --font-ui: var(--font-google-sans-flex), "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
 
   --wdth-condensed: 78;

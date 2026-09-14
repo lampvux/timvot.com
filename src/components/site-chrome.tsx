@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   Suspense,
   useState,
@@ -197,10 +198,17 @@ export function TopBar({ accountSlot }: { accountSlot: ReactNode }) {
       <div className="flex h-[52px] items-center gap-2 px-4 lg:h-[60px] lg:gap-4 lg:px-4 xl:gap-8 xl:px-10">
         <Link
           href="/"
-          className="display flex h-11 shrink-0 items-center text-[17px] text-brand no-underline lg:h-auto lg:text-[19px]"
+          className="flex h-11 shrink-0 items-center gap-2 text-[17px] font-semibold text-brand no-underline lg:h-auto lg:text-[19px]"
           style={{ letterSpacing: "-0.03em" }}
         >
-          Shuttlecraft
+          <Image
+            src="/images/timvotlogo-transparent.png"
+            alt="Shuttlecraft"
+            width={177}
+            height={88}
+            className="h-20 w-auto lg:h-24"
+            priority
+          />
         </Link>
 
         <nav
