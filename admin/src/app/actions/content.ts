@@ -97,6 +97,7 @@ async function setRacketHero(
   imageId: string,
   publicUrl: string,
   thumbUrl: string | null,
+  adminManaged = false,
 ) {
   const supabase = await createClient();
   const clear = await supabase
@@ -108,7 +109,10 @@ async function setRacketHero(
 
   const promote = await supabase
     .from("racket_images")
-    .update({ is_hero: true })
+    .update({
+      is_hero: true,
+      ...(adminManaged ? { admin_managed: true } : {}),
+    })
     .eq("id", imageId)
     .eq("racket_id", racketId);
   if (promote.error) throw promote.error;
@@ -329,6 +333,7 @@ async function createRacketImage(
     height: metadata.height ?? null,
     checksum,
     colourway,
+    admin_managed: true,
   });
 
   if (insert.error) {
@@ -478,6 +483,24 @@ async function updateRacketImage(
     throw remap.error;
   }
 
+  // Editing this record is an explicit editorial override. If the whole
+  // source gallery moved to another racket (or its files needed relocating),
+  // protect every affected sibling as well so the crawler cannot undo that
+  // mapping on its next refresh.
+  const managedIds = plans
+    .filter((plan) => (
+      String(plan.image.id) === id
+      || String(plan.image.racket_id) !== racketId
+      || plan.image.storage_path !== plan.storagePath
+      || plan.image.thumb_path !== plan.thumbPath
+    ))
+    .map((plan) => String(plan.image.id));
+  const protect = await supabase
+    .from("racket_images")
+    .update({ admin_managed: true })
+    .in("id", managedIds);
+  if (protect.error) throw protect.error;
+
   const currentPlan = plans.find((plan) => String(plan.image.id) === id);
   if (currentPlan && (!currentPlan.thumbPath || !currentPlan.thumbUrl)) {
     const generated = await ensureRacketImageThumbnail(supabase, {
@@ -491,6 +514,175 @@ async function updateRacketImage(
   }
 
   return { fieldErrors: {} };
+}
+
+async function promoteRacketImage(racketId: string, imageId: string) {
+  const supabase = await createClient();
+  const { data: image, error } = await supabase
+    .from("racket_images")
+    .select("id, racket_id, public_url, thumb_url, storage_bucket, storage_path")
+    .eq("id", imageId)
+    .eq("racket_id", racketId)
+    .single();
+  if (error || !image?.public_url) {
+    throw new Error(error?.message ?? "That image is not mapped to this racket.");
+  }
+
+  let thumbUrl = image.thumb_url ? String(image.thumb_url) : null;
+  if (!thumbUrl) {
+    const generated = await ensureRacketImageThumbnail(supabase, {
+      id: String(image.id),
+      storage_bucket: String(image.storage_bucket),
+      storage_path: String(image.storage_path),
+    });
+    thumbUrl = generated?.thumbUrl ?? null;
+  }
+
+  await setRacketHero(racketId, imageId, String(image.public_url), thumbUrl, true);
+}
+
+async function refreshRacketGallery(racketId: string) {
+  await revalidateStorefront("racket-images");
+  revalidatePath("/content/racket-images");
+  revalidatePath(`/content/rackets/${encodeURIComponent(racketId)}`);
+}
+
+export async function uploadRacketGalleryImagesAction(
+  _previousState: ContentActionState,
+  formData: FormData,
+): Promise<ContentActionState> {
+  const staff = await assertStaff();
+  const racketId = String(formData.get("racket_id") ?? "").trim();
+  const position = Number(formData.get("position") ?? 0);
+  const files = formData
+    .getAll("image_files")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  const fieldErrors: Record<string, string> = {};
+
+  if (!racketId) fieldErrors.racket_id = "Racket is required.";
+  if (!Number.isInteger(position) || position < 0) {
+    fieldErrors.position = "Starting position must be zero or greater.";
+  }
+  if (!files.length) fieldErrors.image_files = "Choose at least one image to upload.";
+  if (files.length > 12) fieldErrors.image_files = "Upload no more than 12 images at a time.";
+  const invalidFile = files.find((file) =>
+    file.size > 15 * 1024 * 1024
+    || !["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"].includes(file.type),
+  );
+  if (invalidFile) {
+    fieldErrors.image_files = `${invalidFile.name} must be a JPEG, PNG, WebP, AVIF, or GIF no larger than 15 MB.`;
+  }
+  if (Object.keys(fieldErrors).length) {
+    return { status: "error", message: "Check the highlighted upload fields.", fieldErrors };
+  }
+
+  const uploadedIds: string[] = [];
+  try {
+    for (const [index, file] of files.entries()) {
+      const imageFormData = new FormData();
+      imageFormData.set("racket_id", racketId);
+      imageFormData.set("image_file", file);
+      imageFormData.set("position", String(position + index));
+      imageFormData.set("colourway", String(formData.get("colourway") ?? ""));
+      imageFormData.set("source_page_url", String(formData.get("source_page_url") ?? ""));
+      if (index === 0 && formData.get("make_first_hero") === "on") {
+        imageFormData.set("is_hero", "on");
+      }
+
+      const result = await createRacketImage(imageFormData);
+      if (Object.keys(result.fieldErrors).length || !result.id) {
+        if (uploadedIds.length) await refreshRacketGallery(racketId);
+        const uploadErrors = result.fieldErrors.image_file
+          ? { ...result.fieldErrors, image_files: result.fieldErrors.image_file }
+          : result.fieldErrors;
+        return {
+          status: "error",
+          message: uploadedIds.length
+            ? `${uploadedIds.length} image${uploadedIds.length === 1 ? " was" : "s were"} uploaded before the next file failed.`
+            : "The images could not be uploaded.",
+          fieldErrors: uploadErrors,
+        };
+      }
+      uploadedIds.push(result.id);
+      await recordAudit(staff, "created", "racket-images", result.id, {
+        racket_id: racketId,
+        source: "racket-editor",
+      });
+    }
+  } catch (error) {
+    if (uploadedIds.length) await refreshRacketGallery(racketId);
+    return {
+      status: "error",
+      message: error instanceof Error
+        ? `${uploadedIds.length ? `${uploadedIds.length} uploaded. ` : ""}${error.message}`
+        : "Could not upload the racket images.",
+    };
+  }
+
+  await refreshRacketGallery(racketId);
+  return {
+    status: "success",
+    message: `${uploadedIds.length} image${uploadedIds.length === 1 ? "" : "s"} uploaded and added to the gallery.`,
+  };
+}
+
+export async function updateRacketGalleryImageAction(
+  _previousState: ContentActionState,
+  formData: FormData,
+): Promise<ContentActionState> {
+  const staff = await assertStaff();
+  const racketId = String(formData.get("racket_id") ?? "").trim();
+  const imageId = String(formData.get("image_id") ?? "").trim();
+  if (!racketId || !imageId) {
+    return { status: "error", message: "The racket image mapping is incomplete." };
+  }
+
+  try {
+    const result = await updateRacketImage(imageId, formData);
+    if (Object.keys(result.fieldErrors).length) {
+      return { status: "error", message: "Check the highlighted fields.", fieldErrors: result.fieldErrors };
+    }
+  } catch (error) {
+    return {
+      status: "error",
+      message: error instanceof Error ? error.message : "Could not update the gallery image.",
+    };
+  }
+
+  await recordAudit(staff, "updated", "racket-images", imageId, {
+    racket_id: racketId,
+    source: "racket-editor",
+  });
+  await refreshRacketGallery(racketId);
+  return { status: "success", message: "Image details updated." };
+}
+
+export async function setRacketHeroFromEditorAction(
+  _previousState: ContentActionState,
+  formData: FormData,
+): Promise<ContentActionState> {
+  const staff = await assertStaff();
+  const racketId = String(formData.get("racket_id") ?? "").trim();
+  const imageId = String(formData.get("image_id") ?? "").trim();
+  if (!racketId || !imageId) {
+    return { status: "error", message: "A racket and gallery image are required." };
+  }
+
+  try {
+    await promoteRacketImage(racketId, imageId);
+  } catch (error) {
+    return {
+      status: "error",
+      message: error instanceof Error ? error.message : "Could not set the hero image.",
+    };
+  }
+
+  await recordAudit(staff, "updated", "rackets", racketId, {
+    hero_image_id: imageId,
+    source: "racket-editor",
+  });
+  await refreshRacketGallery(racketId);
+  return { status: "success", message: "Hero and catalogue thumbnail updated." };
 }
 
 export async function saveEntityAction(
@@ -555,29 +747,7 @@ export async function setRacketHeroAction(formData: FormData) {
   const racketId = String(formData.get("racket_id") ?? "").trim();
   const imageId = String(formData.get("image_id") ?? "").trim();
   if (!racketId || !imageId) throw new Error("A racket and gallery image are required.");
-
-  const supabase = await createClient();
-  const { data: image, error } = await supabase
-    .from("racket_images")
-    .select("id, racket_id, public_url, thumb_url, storage_bucket, storage_path")
-    .eq("id", imageId)
-    .eq("racket_id", racketId)
-    .single();
-  if (error || !image?.public_url) {
-    throw new Error(error?.message ?? "That image is not mapped to this racket.");
-  }
-
-  let thumbUrl = image.thumb_url ? String(image.thumb_url) : null;
-  if (!thumbUrl) {
-    const generated = await ensureRacketImageThumbnail(supabase, {
-      id: String(image.id),
-      storage_bucket: String(image.storage_bucket),
-      storage_path: String(image.storage_path),
-    });
-    thumbUrl = generated?.thumbUrl ?? null;
-  }
-
-  await setRacketHero(racketId, imageId, String(image.public_url), thumbUrl);
+  await promoteRacketImage(racketId, imageId);
   await recordAudit(staff, "updated", "rackets", racketId, {
     hero_image_id: imageId,
   });

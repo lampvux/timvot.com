@@ -88,21 +88,23 @@ export interface RacketMediaImage {
   id: string;
   publicUrl: string | null;
   thumbUrl: string | null;
-  storageBucket: string;
-  storagePath: string;
-  thumbPath: string | null;
   position: number;
   isHero: boolean;
   provider: string;
+  adminManaged: boolean;
+  colourway: string | null;
   sourcePageUrl: string;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
   folderMatches: boolean;
 }
 
 export interface RacketMediaMapping {
   racketId: string;
+  racketName: string;
   expectedFolder: string;
-  heroImageUrl: string | null;
-  heroThumbUrl: string | null;
+  heroPointersMatch: boolean;
   images: RacketMediaImage[];
 }
 
@@ -113,7 +115,7 @@ export async function getRacketMediaMapping(
   const supabase = await createClient();
   const { data: racket, error: racketError } = await supabase
     .from("rackets")
-    .select("id, slug, brand_id, hero_image_url, hero_thumb_url")
+    .select("id, name, slug, brand_id, hero_image_url, hero_thumb_url")
     .eq("id", racketId)
     .single();
   if (racketError || !racket) {
@@ -125,7 +127,7 @@ export async function getRacketMediaMapping(
       supabase.from("brands").select("slug").eq("id", racket.brand_id).single(),
       supabase
         .from("racket_images")
-        .select("id, public_url, thumb_url, storage_bucket, storage_path, thumb_path, position, is_hero, provider, source_page_url")
+        .select("id, public_url, thumb_url, storage_path, thumb_path, position, is_hero, provider, admin_managed, colourway, source_page_url, bytes, width, height")
         .eq("racket_id", racketId)
         .order("position")
         .order("id"),
@@ -140,25 +142,33 @@ export async function getRacketMediaMapping(
     racketSlug: String(racket.slug),
   };
 
+  const mappedImages = (images ?? []).map((image) => ({
+    id: String(image.id),
+    publicUrl: image.public_url ? String(image.public_url) : null,
+    thumbUrl: image.thumb_url ? String(image.thumb_url) : null,
+    position: Number(image.position),
+    isHero: Boolean(image.is_hero),
+    provider: String(image.provider),
+    adminManaged: Boolean(image.admin_managed),
+    colourway: image.colourway ? String(image.colourway) : null,
+    sourcePageUrl: String(image.source_page_url),
+    bytes: image.bytes === null ? null : Number(image.bytes),
+    width: image.width === null ? null : Number(image.width),
+    height: image.height === null ? null : Number(image.height),
+    folderMatches: storagePathMatchesRacket(String(image.storage_path), target)
+      && (!image.thumb_path || storagePathMatchesRacket(String(image.thumb_path), target)),
+  }));
+  const selectedHero = mappedImages.find((image) => image.isHero);
+
   return {
     racketId,
+    racketName: String(racket.name),
     expectedFolder: racketImageFolder(target),
-    heroImageUrl: racket.hero_image_url ? String(racket.hero_image_url) : null,
-    heroThumbUrl: racket.hero_thumb_url ? String(racket.hero_thumb_url) : null,
-    images: (images ?? []).map((image) => ({
-      id: String(image.id),
-      publicUrl: image.public_url ? String(image.public_url) : null,
-      thumbUrl: image.thumb_url ? String(image.thumb_url) : null,
-      storageBucket: String(image.storage_bucket),
-      storagePath: String(image.storage_path),
-      thumbPath: image.thumb_path ? String(image.thumb_path) : null,
-      position: Number(image.position),
-      isHero: Boolean(image.is_hero),
-      provider: String(image.provider),
-      sourcePageUrl: String(image.source_page_url),
-      folderMatches: storagePathMatchesRacket(String(image.storage_path), target)
-        && (!image.thumb_path || storagePathMatchesRacket(String(image.thumb_path), target)),
-    })),
+    heroPointersMatch: selectedHero
+      ? selectedHero.publicUrl === (racket.hero_image_url ? String(racket.hero_image_url) : null)
+        && (selectedHero.thumbUrl ?? null) === (racket.hero_thumb_url ? String(racket.hero_thumb_url) : null)
+      : racket.hero_image_url === null && racket.hero_thumb_url === null,
+    images: mappedImages,
   };
 }
 

@@ -177,8 +177,6 @@ export const collections: Record<string, CollectionConfig> = {
       { name: "currency", label: "Currency", kind: "select", required: true, options: options("VND") },
       { name: "play_style_tags", label: "Play styles / categories", kind: "multi-select", options: playStyle, fullWidth: true },
       { name: "skill_level", label: "Skill level", kind: "select", required: true, options: skillLevel },
-      { name: "hero_image_url", label: "Hero image URL", kind: "url", fullWidth: true },
-      { name: "hero_thumb_url", label: "Hero thumbnail URL", kind: "url", fullWidth: true },
       { name: "summary_en", label: "English summary", kind: "textarea", fullWidth: true },
       { name: "summary_vi", label: "Vietnamese summary", kind: "textarea", fullWidth: true },
     ],

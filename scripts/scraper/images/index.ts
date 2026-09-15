@@ -51,6 +51,12 @@ import {
   type ImageJob,
   type ImageJobOption,
 } from "./ownership";
+import {
+  isAdminManagedImage,
+  planGalleryMerge,
+  type ExistingGalleryMergeRow,
+  type GalleryMergeRow,
+} from "./merge";
 import { BrowserSession } from "./browser";
 import type { NormalizedItem } from "../normalizer";
 import { revalidateCatalogue } from "../revalidate";
@@ -224,7 +230,11 @@ function racketsFromFile(file: string): RacketTarget[] {
   return collapseEquivalentRacketTargets([...byId.values()]);
 }
 
-/** Racket ids that already carry gallery rows, so a re-run can skip them. */
+/**
+ * Racket ids that already carry crawler-owned gallery rows, so a re-run can
+ * skip them. An admin-only gallery must not make the crawler believe it has
+ * already discovered manufacturer photography for that racket.
+ */
 async function racketsWithImages(supabase: SupabaseClient): Promise<Set<string>> {
   const seen = new Set<string>();
   const pageSize = 1000;
@@ -233,6 +243,7 @@ async function racketsWithImages(supabase: SupabaseClient): Promise<Set<string>>
     const { data, error } = await supabase
       .from("racket_images")
       .select("racket_id")
+      .neq("provider", "admin")
       .order("racket_id")
       .range(from, from + pageSize - 1);
 
@@ -254,6 +265,66 @@ async function racketsWithImages(supabase: SupabaseClient): Promise<Set<string>>
   }
 
   return seen;
+}
+
+async function writeRacketHero(
+  supabase: SupabaseClient,
+  racketId: string,
+  hero: Pick<GalleryMergeRow, "id" | "public_url" | "thumb_url"> | null,
+) {
+  const { error: clearError } = await supabase
+    .from("racket_images")
+    .update({ is_hero: false })
+    .eq("racket_id", racketId);
+  if (clearError) throw new Error(`Clearing ${racketId}'s hero: ${clearError.message}`);
+
+  if (!hero?.public_url) {
+    const { error } = await supabase
+      .from("rackets")
+      .update({ hero_image_url: null, hero_thumb_url: null })
+      .eq("id", racketId);
+    if (error) throw new Error(`Clearing ${racketId}'s hero pointers: ${error.message}`);
+    return;
+  }
+
+  const { data: promoted, error: promoteError } = await supabase
+    .from("racket_images")
+    .update({ is_hero: true })
+    .eq("id", hero.id)
+    .eq("racket_id", racketId)
+    .select("id")
+    .maybeSingle();
+  if (promoteError || !promoted) {
+    throw new Error(
+      `Promoting ${hero.id} for ${racketId}: ${promoteError?.message ?? "image row no longer exists"}`,
+    );
+  }
+
+  const { error } = await supabase
+    .from("rackets")
+    .update({
+      hero_image_url: hero.public_url,
+      hero_thumb_url: hero.thumb_url ?? null,
+    })
+    .eq("id", racketId);
+  if (error) throw new Error(`Writing ${racketId}'s hero pointers: ${error.message}`);
+}
+
+/** Re-elect a valid stored hero after crawler-owned rows were pruned. */
+async function syncStoredRacketHero(supabase: SupabaseClient, racketId: string) {
+  const { data: hero, error } = await supabase
+    .from("racket_images")
+    .select("id, public_url, thumb_url")
+    .eq("racket_id", racketId)
+    .not("public_url", "is", null)
+    .order("is_hero", { ascending: false })
+    .order("position")
+    .order("id")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Reading ${racketId}'s remaining gallery: ${error.message}`);
+
+  await writeRacketHero(supabase, racketId, hero as GalleryMergeRow | null);
 }
 
 /* ---------------------------------------------------------------- crawling */
@@ -797,8 +868,6 @@ export async function crawlImages() {
   }
 
   const rows: ImageRow[] = [];
-  const heroByRacket = new Map<string, string>();
-  const heroThumbByRacket = new Map<string, string>();
   let storedImages = 0;
   let thumbnailsMade = 0;
   let duplicateImages = 0;
@@ -947,10 +1016,6 @@ export async function crawlImages() {
         });
 
         const isHero = stored === 0;
-        if (isHero) {
-          heroByRacket.set(job.racket.id, object.publicUrl);
-          if (object.thumbUrl) heroThumbByRacket.set(job.racket.id, object.thumbUrl);
-        }
         if (thumb) thumbnailsMade++;
 
         rows.push({
@@ -1014,84 +1079,76 @@ export async function crawlImages() {
   if (supabase && !options.dryRun && rows.length > 0) {
     console.log(`\n📡 Recording ${rows.length} images in racket_images…`);
 
-    // A re-crawl *replaces* a racket's gallery rather than adding to it.
-    //
-    // Without this the run half-fails on its second pass. `racket_images` has a
-    // partial unique index allowing one hero per racket, and a re-crawl that
-    // finds a different lead photograph — which is what happens the moment a
-    // provider changes source, as Yonex just did — inserts a second is_hero row
-    // and the whole 500-row batch is rejected on the constraint.
-    //
-    // Replacing also fixes the quieter problem: rows whose photograph the
-    // manufacturer has since removed, or which a tightened matcher no longer
-    // produces, used to linger in the table with their objects orphaned in the
-    // bucket. The old objects are deleted here, before the new rows land.
+    // A refresh replaces crawler-owned rows, but uploaded and manually edited
+    // rows are editorial records. Plan that merge before mutating anything so
+    // a rejected upsert cannot first erase the working gallery.
     const touched = [...new Set(rows.map((row) => row.racket_id))];
-    const keep = new Set(rows.map((row) => `${row.racket_id}|${row.checksum}`));
+    const incomingByRacket = new Map<string, ImageRow[]>();
+    for (const row of rows) {
+      incomingByRacket.set(row.racket_id, [
+        ...(incomingByRacket.get(row.racket_id) ?? []),
+        row,
+      ]);
+    }
+
+    const rowsForWrite: ImageRow[] = [];
+    const staleRows: ExistingGalleryMergeRow[] = [];
+    const supersededObjects: ExistingGalleryMergeRow[] = [];
+    const discardedIncoming: ImageRow[] = [];
+    const protectedRows: ExistingGalleryMergeRow[] = [];
+    const selectedHeroByRacket = new Map<string, GalleryMergeRow>();
+    let galleryWritten = true;
 
     for (let i = 0; i < touched.length; i += 200) {
       const ids = touched.slice(i, i + 200);
-
       const { data: existing, error: readError } = await supabase
         .from("racket_images")
-        .select("id, racket_id, checksum, storage_bucket, storage_path, thumb_path")
+        .select(
+          "id, racket_id, provider, checksum, public_url, thumb_url, storage_bucket, storage_path, thumb_path, position, is_hero, admin_managed",
+        )
         .in("racket_id", ids);
 
       if (readError) {
         console.error(`❌ racket_images (read): ${readError.message}`);
         process.exitCode = 1;
+        galleryWritten = false;
         break;
       }
 
-      // Clear the hero flag across the whole group first. Doing it before the
-      // upsert is what makes the new hero insertable; the rows that survive get
-      // their flag set again by the upsert a moment later.
-      const { error: clearError } = await supabase
-        .from("racket_images")
-        .update({ is_hero: false })
-        .in("racket_id", ids);
-      if (clearError) {
-        console.error(`❌ racket_images (clear hero): ${clearError.message}`);
-        process.exitCode = 1;
-        break;
-      }
+      const batchExisting = (existing ?? []) as ExistingGalleryMergeRow[];
+      for (const racketId of ids) {
+        const current = batchExisting.filter((row) => row.racket_id === racketId);
+        const plan = planGalleryMerge(current, incomingByRacket.get(racketId) ?? []);
+        rowsForWrite.push(...plan.incomingToWrite);
+        staleRows.push(...plan.stale);
+        discardedIncoming.push(...plan.discardedIncoming);
+        protectedRows.push(...plan.protectedRows);
+        if (plan.hero) selectedHeroByRacket.set(racketId, plan.hero);
 
-      const stale = (existing ?? []).filter(
-        (row) => !keep.has(`${row.racket_id}|${row.checksum}`),
-      );
-      if (stale.length === 0) continue;
-
-      const byBucket = new Map<string, string[]>();
-      for (const row of stale) {
-        const paths = [row.storage_path, row.thumb_path].filter(
-          (path): path is string => Boolean(path),
-        );
-        byBucket.set(row.storage_bucket, [
-          ...(byBucket.get(row.storage_bucket) ?? []),
-          ...paths,
-        ]);
+        // The checksum survived but its canonical crawler position/path may
+        // have changed. The upsert points the row at the new object; remove the
+        // old unreferenced object after that write succeeds.
+        for (const incoming of plan.incomingToWrite) {
+          const previous = current.find(
+            (image) => !isAdminManagedImage(image) && image.checksum === incoming.checksum,
+          );
+          if (
+            previous
+            && (previous.storage_bucket !== incoming.storage_bucket
+              || previous.storage_path !== incoming.storage_path
+              || previous.thumb_path !== incoming.thumb_path)
+          ) {
+            supersededObjects.push(previous);
+          }
+        }
       }
-      for (const [bucket, paths] of byBucket) {
-        const { error } = await supabase.storage.from(bucket).remove(paths);
-        if (error && options.verbose) console.log(`   ⚠️  ${bucket}: ${error.message}`);
-      }
-
-      const { error: deleteError } = await supabase
-        .from("racket_images")
-        .delete()
-        .in("id", stale.map((row) => row.id));
-      if (deleteError) {
-        console.error(`❌ racket_images (delete stale): ${deleteError.message}`);
-        process.exitCode = 1;
-        break;
-      }
-
-      console.log(`   replaced ${stale.length} superseded image(s) across ${ids.length} rackets`);
     }
 
-    let galleryWritten = true;
-    for (let i = 0; i < rows.length; i += 500) {
-      const batch = rows.slice(i, i + 500);
+    // Every incoming row is written without a hero. This avoids the partial
+    // unique-index conflict while keeping the existing hero intact until the
+    // new gallery is safely present.
+    for (let i = 0; galleryWritten && i < rowsForWrite.length; i += 500) {
+      const batch = rowsForWrite.slice(i, i + 500);
       const { error } = await supabase
         .from("racket_images")
         .upsert(batch, { onConflict: "racket_id,checksum" });
@@ -1099,7 +1156,57 @@ export async function crawlImages() {
         console.error(`❌ racket_images: ${error.message}`);
         process.exitCode = 1;
         galleryWritten = false;
-        break;
+      }
+    }
+
+    const deletedStaleIds = new Set<string>();
+    if (galleryWritten && staleRows.length > 0) {
+      for (let i = 0; i < staleRows.length; i += 500) {
+        const { data: deleted, error } = await supabase
+          .from("racket_images")
+          .delete()
+          .in("id", staleRows.slice(i, i + 500).map((row) => row.id))
+          .eq("admin_managed", false)
+          .neq("provider", "admin")
+          .select("id");
+        if (error) {
+          console.error(`❌ racket_images (delete stale): ${error.message}`);
+          process.exitCode = 1;
+          galleryWritten = false;
+          break;
+        }
+        for (const row of deleted ?? []) deletedStaleIds.add(String(row.id));
+      }
+    }
+
+    if (galleryWritten) {
+      const objectKey = (bucket: string, path: string) => `${bucket}|${path}`;
+      const keptObjects = new Set<string>();
+      for (const row of [...protectedRows, ...rowsForWrite]) {
+        keptObjects.add(objectKey(row.storage_bucket, row.storage_path));
+        if (row.thumb_path) keptObjects.add(objectKey(row.storage_bucket, row.thumb_path));
+      }
+
+      const byBucket = new Map<string, Set<string>>();
+      const deletedStaleRows = staleRows.filter((row) => deletedStaleIds.has(row.id));
+      for (const row of [...deletedStaleRows, ...supersededObjects, ...discardedIncoming]) {
+        for (const path of [row.storage_path, row.thumb_path]) {
+          if (!path || keptObjects.has(objectKey(row.storage_bucket, path))) continue;
+          const paths = byBucket.get(row.storage_bucket) ?? new Set<string>();
+          paths.add(path);
+          byBucket.set(row.storage_bucket, paths);
+        }
+      }
+      for (const [bucket, paths] of byBucket) {
+        const { error } = await supabase.storage.from(bucket).remove([...paths]);
+        if (error && options.verbose) console.log(`   ⚠️  ${bucket}: ${error.message}`);
+      }
+
+      if (deletedStaleRows.length > 0 || protectedRows.length > 0) {
+        console.log(
+          `   replaced ${deletedStaleRows.length} crawler-owned image(s); ` +
+            `preserved ${protectedRows.length} admin-managed image(s)`,
+        );
       }
     }
 
@@ -1119,52 +1226,84 @@ export async function crawlImages() {
       options.limit === Infinity &&
       PROVIDERS.every((provider) => options.providers.includes(provider.id));
 
-    if (comprehensive) {
+    if (comprehensive && galleryWritten) {
       const covered = new Set(touched);
-      const orphans = new Map<string, { bucket: string; path: string }[]>();
+      const orphans: ExistingGalleryMergeRow[] = [];
+      let pruneReadFailed = false;
 
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from("racket_images")
-          .select("racket_id, storage_bucket, storage_path, thumb_path")
+          .select(
+            "id, racket_id, provider, checksum, public_url, thumb_url, storage_bucket, storage_path, thumb_path, position, is_hero, admin_managed",
+          )
           .order("racket_id")
           .range(from, from + 999);
-        if (error || !data || data.length === 0) break;
+        if (error) {
+          console.error(`❌ racket_images (read for prune): ${error.message}`);
+          process.exitCode = 1;
+          galleryWritten = false;
+          pruneReadFailed = true;
+          break;
+        }
+        if (!data || data.length === 0) break;
 
-        for (const row of data as {
-          racket_id: string;
-          storage_bucket: string;
-          storage_path: string;
-          thumb_path: string | null;
-        }[]) {
-          if (covered.has(row.racket_id)) continue;
-          const list = orphans.get(row.racket_id) ?? [];
-          list.push({ bucket: row.storage_bucket, path: row.storage_path });
-          if (row.thumb_path) list.push({ bucket: row.storage_bucket, path: row.thumb_path });
-          orphans.set(row.racket_id, list);
+        for (const row of data as ExistingGalleryMergeRow[]) {
+          if (covered.has(row.racket_id) || isAdminManagedImage(row)) continue;
+          orphans.push(row);
         }
         if (data.length < 1000) break;
       }
 
-      if (orphans.size > 0) {
-        const byBucket = new Map<string, string[]>();
-        for (const objects of orphans.values()) {
-          for (const object of objects) {
-            byBucket.set(object.bucket, [...(byBucket.get(object.bucket) ?? []), object.path]);
+      if (!pruneReadFailed && orphans.length > 0) {
+        const deletedOrphanIds = new Set<string>();
+        for (let i = 0; i < orphans.length; i += 500) {
+          const { data: deleted, error } = await supabase
+            .from("racket_images")
+            .delete()
+            .in("id", orphans.slice(i, i + 500).map((row) => row.id))
+            .eq("admin_managed", false)
+            .neq("provider", "admin")
+            .select("id");
+          if (error) {
+            console.error(`❌ racket_images (prune): ${error.message}`);
+            process.exitCode = 1;
+            galleryWritten = false;
+            break;
           }
-        }
-        for (const [bucket, paths] of byBucket) {
-          await supabase.storage.from(bucket).remove(paths);
+          for (const row of deleted ?? []) deletedOrphanIds.add(String(row.id));
         }
 
-        const ids = [...orphans.keys()];
-        await supabase.from("racket_images").delete().in("racket_id", ids);
-        await supabase.from("rackets").update({ hero_image_url: null }).in("id", ids);
+        if (galleryWritten) {
+          const deletedOrphans = orphans.filter((row) => deletedOrphanIds.has(row.id));
+          const byBucket = new Map<string, Set<string>>();
+          for (const row of deletedOrphans) {
+            const paths = byBucket.get(row.storage_bucket) ?? new Set<string>();
+            paths.add(row.storage_path);
+            if (row.thumb_path) paths.add(row.thumb_path);
+            byBucket.set(row.storage_bucket, paths);
+          }
+          for (const [bucket, paths] of byBucket) {
+            const { error } = await supabase.storage.from(bucket).remove([...paths]);
+            if (error && options.verbose) console.log(`   ⚠️  ${bucket}: ${error.message}`);
+          }
 
-        console.log(
-          `   pruned ${[...orphans.values()].flat().length} image(s) from ${ids.length} racket(s) ` +
-            `that no longer match a product page`,
-        );
+          const affected = [...new Set(deletedOrphans.map((row) => row.racket_id))];
+          for (const racketId of affected) {
+            try {
+              await syncStoredRacketHero(supabase, racketId);
+            } catch (error) {
+              console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);
+              process.exitCode = 1;
+              galleryWritten = false;
+            }
+          }
+
+          console.log(
+            `   pruned ${deletedOrphans.length} crawler-owned image(s) from ${affected.length} racket(s) ` +
+              `that no longer match a product page; admin-managed images were preserved`,
+          );
+        }
       }
     }
 
@@ -1173,11 +1312,9 @@ export async function crawlImages() {
     // upsert — an upsert here would need every not-null column of `rackets`.
     //
     // Not written at all when the gallery write was rejected. The hero is a
-    // pointer into `racket_images`, and writing it after that insert failed
-    // leaves a racket advertising photographs the catalogue holds no row for —
-    // which is what a rejected Fleet batch did to 46 rackets, and what
-    // `audit.ts` then had no gallery row to compare against. A loud failure and
-    // an unchanged catalogue is the better half of that trade.
+    // pointer into `racket_images`, so changing it after a partial failure can
+    // advertise a row that never landed. A valid current hero is retained by
+    // the merge plan; otherwise the first new image becomes the fallback.
     let heroesWritten = 0;
     if (!galleryWritten) {
       console.error(
@@ -1185,21 +1322,18 @@ export async function crawlImages() {
           "and a hero pointing at rows that were never inserted is worse than no hero.",
       );
     }
-    for (const [racketId, url] of galleryWritten ? heroByRacket : []) {
-      const { error } = await supabase
-        .from("rackets")
-        .update({
-          hero_image_url: url,
-          // Null when this hero produced no thumbnail, which is also what the
-          // column should say — the card falls back to the full-size image.
-          hero_thumb_url: heroThumbByRacket.get(racketId) ?? null,
-        })
-        .eq("id", racketId);
-      if (!error) heroesWritten++;
+    for (const [racketId, hero] of galleryWritten ? selectedHeroByRacket : []) {
+      try {
+        await writeRacketHero(supabase, racketId, hero);
+        heroesWritten++;
+      } catch (error) {
+        console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
     }
     console.log(
-      `   hero_image_url set on ${heroesWritten}/${heroByRacket.size} rackets, ` +
-        `${heroThumbByRacket.size} with a thumbnail`,
+      `   hero mapping synchronized on ${heroesWritten}/${selectedHeroByRacket.size} rackets, ` +
+        `${[...selectedHeroByRacket.values()].filter((hero) => hero.thumb_url).length} with a thumbnail`,
     );
   }
 
