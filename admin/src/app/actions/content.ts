@@ -297,7 +297,9 @@ async function createRacketImage(
     contentType: file.type,
     upsert: false,
   });
-  if (upload.error) throw upload.error;
+  if (upload.error) {
+    throw new Error(`Supabase Storage rejected the image upload: ${upload.error.message}`);
+  }
 
   let thumbUrl: string | null = null;
   if (thumbnail && thumbPath) {
@@ -308,7 +310,7 @@ async function createRacketImage(
     });
     if (thumbUpload.error) {
       await supabase.storage.from(bucket).remove([path]);
-      throw thumbUpload.error;
+      throw new Error(`Supabase Storage rejected the thumbnail upload: ${thumbUpload.error.message}`);
     }
     thumbUrl = supabase.storage.from(bucket).getPublicUrl(thumbPath).data.publicUrl;
   }
@@ -340,7 +342,7 @@ async function createRacketImage(
     await supabase.storage.from(bucket).remove(
       [path, thumbPath].filter((candidate): candidate is string => Boolean(candidate)),
     );
-    throw insert.error;
+    throw new Error(`Could not create the racket image database record: ${insert.error.message}`);
   }
 
   if (isHero) await setRacketHero(racketId, id, publicUrl, thumbUrl);

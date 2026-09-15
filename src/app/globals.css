@@ -531,3 +531,32 @@
     transition-duration: 1ms !important;
   }
 }
+
+@keyframes slow-shake {
+  0%, 100% {
+    transform: scale(1.08) rotate(0deg) translateX(0);
+  }
+  20% {
+    transform: scale(1.08) rotate(-3deg) translateX(-3px);
+  }
+  40% {
+    transform: scale(1.08) rotate(3deg) translateX(3px);
+  }
+  60% {
+    transform: scale(1.08) rotate(-2deg) translateX(-2px);
+  }
+  80% {
+    transform: scale(1.08) rotate(2deg) translateX(2px);
+  }
+}
+
+.animate-slow-shake-hover {
+  display: inline-block;
+  transform-origin: center center;
+  transition: transform 0.3s ease;
+}
+
+.animate-slow-shake-hover:hover {
+  animation: slow-shake 1.6s ease-in-out infinite;
+}
+

@@ -43,13 +43,38 @@ export default async function HomePage({
               <span>{t("eyebrow")}</span>
             </div>
 
-            <h1 className="mt-4 font-display text-[34px] sm:text-[46px] lg:text-[56px] font-extrabold leading-[1.05] tracking-tight text-white">
-              {t("heroTitle1")} <br />
-              <span className="text-[#38d4a6]">{t("heroTitle2")}</span> <br />
-              {t("heroTitle3")}
-            </h1>
+            <div className="mt-4 flex items-center gap-3 min-[360px]:gap-4 sm:gap-6 lg:gap-7 xl:gap-8">
+              <h1
+                className={
+                  "font-display text-[22px] font-extrabold leading-[1.08] tracking-tight text-white min-[340px]:text-[24px] min-[375px]:text-[27px] sm:text-[40px] lg:text-[48px] xl:text-[54px]"
+                }
+              >
+                {t("heroTitle1")} <br />
+                <span className="text-[#38d4a6]">{t("heroTitle2")}</span> <br />
+                {t("heroTitle3")}
+              </h1>
 
-            <p className="mt-5 max-w-[54ch] text-[15px] sm:text-[16px] leading-relaxed text-[#93a09a]">
+              <Link
+                href="/finder"
+                className="shrink-0 animate-slow-shake-hover cursor-pointer"
+                title={t("startFinder")}
+              >
+                <Image
+                  src={
+                    locale === "vi"
+                      ? "/images/nudge-vi.png"
+                      : "/images/nudge-en.png"
+                  }
+                  alt={t("heroNudgeAlt")}
+                  width={1254}
+                  height={1254}
+                  sizes="(min-width: 1280px) 175px, (min-width: 1024px) 165px, (min-width: 640px) 150px, 135px"
+                  className="h-auto w-[105px] object-contain drop-shadow-[0_14px_22px_rgba(0,0,0,0.22)] min-[360px]:w-[120px] min-[390px]:w-[135px] sm:w-[155px] lg:w-[170px]"
+                />
+              </Link>
+            </div>
+
+            <p className="mt-4 max-w-[54ch] text-[15px] leading-relaxed text-[#93a09a] sm:mt-5 sm:text-[16px]">
               {t("heroBody")}
             </p>
 
