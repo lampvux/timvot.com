@@ -285,11 +285,16 @@ attaching, on purpose, for the 13 base models the manufacturer no longer publish
 for; those rows carry provider `storage-recovered` and are replaced by any later crawl.
 
 **A racket written twice is the usual reason a page looks broken.** `catalogue:dupes`
-expands the series code (`ARS`→Auraspeed, `TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
+drops the brand where a shop wrote it into the model name (`ProaceTGR F` is `TGR-F`,
+and `brand_id` already carries the brand), expands the series code (`ARS`→Auraspeed,
+`TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
 and then drops separators only — a trailing token is a product, so `Astrox 22` is not
 `Astrox 22 RX` and `Windstorm 78` is not `Windstorm 78+`. The survivor is whichever row
 holds the gallery, because the ownership trigger pins each object's path to its owner's
-slug and the rows cannot move the other way. Verification
+slug and the rows cannot move the other way. `--slug=` selects the group a row belongs
+to rather than the row, so a merge is reviewable one frame at a time; the `.claude/skills/
+catalogue-dedupe` skill carries the run order (backup, report, apply, `market:refresh`,
+`images:audit`). Verification
 (`verify.ts`) runs after the scrape is already written to disk, so a flaky Chromium
 launch cannot cost a multi-minute walk. A price a source publishes as "liên hệ" is
 counted and reported, never invented.
