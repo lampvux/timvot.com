@@ -1,0 +1,325 @@
+name: CI
+
+# The gate. Before this file, nothing ran on a pull request: `test:lib`,
+# `test:string-scraper`, `test:catalogue` and `test:supabase-migration` were
+# never executed by CI at all, and `test:scraper` / `test:image-scraper` ran
+# only inside the nightly scraper job — hours after the code that broke them
+# had already been merged.
+#
+# Five jobs, ordered by cost. `static` and `unit` are under two minutes and
+# gate the rest; `build` compiles once and hands `e2e` the artifact, so the app
+# is never built twice. The whole thing should land inside ten minutes.
+#
+# Nothing here needs a secret. That is deliberate and it is what makes the gate
+# runnable on a fork: the repository returns the same shapes from
+# `src/lib/data/seed.ts` as from Supabase, so the end-to-end suite builds and
+# serves the real app with the Supabase variables cleared, and gets a
+# deterministic catalogue that is a committed file.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one's result irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  static:
+    name: Typecheck and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck the app and the scripts
+        run: npm run typecheck
+
+      # The admin app is a separate package with its own dependencies and the
+      # only ESLint config in the repository.
+      - name: Install the admin app's dependencies
+        working-directory: admin
+        run: npm ci
+
+      - name: Typecheck the admin app
+        working-directory: admin
+        run: npm run typecheck
+
+      - name: Lint the admin app
+        working-directory: admin
+        run: npm run lint
+
+  unit:
+    name: Unit, guardrail and security suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No environment at all, on purpose. `npm test` makes the same promise
+      # `npm run dev` does — if a suite needs Postgres it belongs in the
+      # `security` job below, not here.
+      - name: Run every node:test suite
+        run: npm test
+
+      - name: Run the admin app's suite
+        working-directory: admin
+        run: |
+          npm ci
+          npm test
+
+  build:
+    name: Build and route budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with the seeded catalogue
+        env:
+          # Cleared, not absent: a build that picked up a project would make
+          # the route table depend on somebody's data.
+          NEXT_PUBLIC_SUPABASE_URL: ""
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
+          NEXT_PUBLIC_AUTH_PROVIDERS: "google,facebook"
+          NEXT_BUILD_CPUS: "4"
+        run: npm run build
+
+      # CLAUDE.md asks a human to read the route table before calling a change
+      # done. This reads it the same way every time and fails on a route that
+      # moved from prerendered to dynamic, or a bundle that jumped.
+      - name: Compare the route table to the baseline
+        run: npx tsx scripts/route-report.ts --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the build for the e2e job
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: |
+            .next
+            !.next/cache
+          retention-days: 1
+          include-hidden-files: true
+
+  e2e:
+    name: End to end, accessibility and headers
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download the build
+        uses: actions/download-artifact@v4
+        with:
+          name: next-build
+          path: .next
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # `E2E_SKIP_BUILD` reuses the artifact above rather than building again.
+      # Both locales, both widths, axe on every page a spec visits.
+      - name: Run the end-to-end suite
+        env:
+          E2E_SKIP_BUILD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ""
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
+          NEXT_PUBLIC_AUTH_PROVIDERS: "google,facebook"
+        run: npm run test:e2e
+
+      - name: Upload the report when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/.report
+            e2e/.results
+          retention-days: 7
+
+  dev-smoke:
+    name: Cache Components validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # `npm run build` passing is not enough for a caching change: some Cache
+      # Components validation runs only in development, so a route can build
+      # clean and still be blocked from prerendering. This is the automated
+      # form of "start next dev and open the routes you touched".
+      - name: Start the dev server
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ""
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
+          NEXT_PUBLIC_AUTH_PROVIDERS: "google,facebook"
+        run: |
+          npx next dev --port 3101 > dev-server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3101/vi >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
+      - name: Open every route and fail on an error overlay
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3101
+        run: npm run test:e2e:dev
+
+      - name: Print the dev server log on failure
+        if: failure()
+        run: tail -200 dev-server.log
+
+  security:
+    name: Row-level security and supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # A throwaway Postgres, not a Supabase project. The migrations only
+        # reach for four Supabase primitives and the harness provides all four,
+        # which is what lets this run on every pull request instead of against
+        # a shared project somebody has to keep clean.
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Exercise every RLS policy
+        env:
+          RLS_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: npm run test:rls
+
+      # Advisory. A new advisory published overnight is not a reason to block
+      # a pull request that has nothing to do with it — but it is something the
+      # summary should say out loud.
+      - name: Audit dependencies
+        id: audit
+        continue-on-error: true
+        run: |
+          echo "### npm audit" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          npm audit --audit-level=high 2>&1 | tail -40 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Audit the admin app's dependencies
+        id: audit_admin
+        continue-on-error: true
+        working-directory: admin
+        run: npm audit --audit-level=high
+
+      - name: Report the advisory outcomes
+        # The pattern the nightly scraper uses: an advisory step reports its
+        # own result without taking the job down with it, and one step at the
+        # bottom decides what that means.
+        run: |
+          {
+            echo ""
+            echo "| check | outcome |"
+            echo "|---|---|"
+            echo "| npm audit (root) | ${{ steps.audit.outcome }} |"
+            echo "| npm audit (admin) | ${{ steps.audit_admin.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.audit.outcome }}" != "success" ] \
+            || [ "${{ steps.audit_admin.outcome }}" != "success" ]; then
+            echo "::warning title=Dependency advisories::npm audit reported a high-severity advisory. Review it, but it does not block this pull request."
+          fi
+
+  verdict:
+    name: CI
+    if: always()
+    needs: [static, unit, build, e2e, dev-smoke, security]
+    runs-on: ubuntu-latest
+    steps:
+      # One place that says which axis broke, rather than six red circles the
+      # reader has to open one at a time.
+      - name: Collect the outcomes
+        run: |
+          {
+            echo "### CI"
+            echo ""
+            echo "| job | outcome |"
+            echo "|---|---|"
+            echo "| Typecheck and lint | ${{ needs.static.result }} |"
+            echo "| Unit, guardrail, security suites | ${{ needs.unit.result }} |"
+            echo "| Build and route budget | ${{ needs.build.result }} |"
+            echo "| End to end, a11y, headers | ${{ needs.e2e.result }} |"
+            echo "| Cache Components validation | ${{ needs.dev-smoke.result }} |"
+            echo "| Row-level security | ${{ needs.security.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          for result in \
+            "${{ needs.static.result }}" \
+            "${{ needs.unit.result }}" \
+            "${{ needs.build.result }}" \
+            "${{ needs.e2e.result }}" \
+            "${{ needs.dev-smoke.result }}" \
+            "${{ needs.security.result }}"; do
+            if [ "$result" != "success" ]; then failed=1; fi
+          done
+
+          [ "$failed" -eq 0 ] || exit 1

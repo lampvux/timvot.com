@@ -4,6 +4,12 @@
  *   npx tsx scripts/duplicate-rackets.ts             # report
  *   npx tsx scripts/duplicate-rackets.ts --apply     # merge them
  *   npx tsx scripts/duplicate-rackets.ts --brand=victor
+ *   npx tsx scripts/duplicate-rackets.ts --slug=nanoflare-700 --apply
+ *
+ * `--slug=` narrows to the group a row belongs to, named by slug or id, comma
+ * separated. It selects *groups*, not rows, so naming either spelling brings its
+ * twin with it — which is what makes a merge reviewable one frame at a time
+ * rather than 118 rows at once.
  *
  * Four Vietnamese storefronts name the same frame four ways, and the retailer
  * scrape creates a catalogue row from whatever each one called it. Victor is
@@ -106,9 +112,48 @@ const SERIES_ALIASES: [RegExp, string][] = [
  */
 const SEPARATORS = /[\s\-_.]/g;
 
-/** The comparable form of a model name: series code expanded, separators gone. */
-export function canonicalName(name: string): string {
-  let value = name.trim();
+/**
+ * Drop the brand name when a source has written it into the model name.
+ *
+ * `rackets.brand_id` already carries the brand, so a name that repeats it is a
+ * shop's page title leaking through rather than a fact about the frame:
+ * `ProaceTGR F` and `TGR-F` are one racket filed twice. It runs before the
+ * series alias, because those patterns are anchored to the start of the name and
+ * a leading brand hides them — `Yonex AX 100 ZZ` has to become `AX 100 ZZ`
+ * before `^AX` can expand it to `ASTROX`.
+ *
+ * Two guards keep it from eating a real name. A brand of under three characters
+ * is left alone, because `VS` is also how a model is written; and something has
+ * to remain, so a row named after nothing but its brand keeps that name instead
+ * of reducing to the empty string and matching every other such row.
+ *
+ * The strip is only ever applied within one brand, so both spellings of a pair
+ * lose the same prefix and no comparison crosses a brand boundary.
+ */
+function stripBrandPrefix(name: string, brandName?: string): string {
+  if (!brandName) return name;
+  const words = brandName.trim().split(SEPARATORS).filter(Boolean);
+  if (words.join("").length < 3) return name;
+
+  // Separators are allowed where the brand itself has one, and between the brand
+  // and the model, so `Li-Ning`, `Li Ning` and `LiNing` are the same prefix.
+  const escaped = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`^\\s*${escaped.join("[\\s\\-_.]*")}[\\s\\-_.]*`, "i");
+  if (!pattern.test(name)) return name;
+
+  const rest = name.replace(pattern, "");
+  return rest.replace(SEPARATORS, "").length >= 2 ? rest : name;
+}
+
+/**
+ * The comparable form of a model name: brand dropped, series code expanded,
+ * separators gone.
+ *
+ * `brandName` is optional so the reduction can be reasoned about on its own, but
+ * every caller that has a brand passes it.
+ */
+export function canonicalName(name: string, brandName?: string): string {
+  let value = stripBrandPrefix(name.trim(), brandName);
   for (const [pattern, expansion] of SERIES_ALIASES) {
     if (pattern.test(value)) {
       value = value.replace(pattern, expansion);
@@ -126,6 +171,7 @@ interface Racket {
   name: string;
   brandId: string;
   brandSlug: string;
+  brandName: string;
   heroImageUrl: string | null;
   heroThumbUrl: string | null;
 }
@@ -152,9 +198,15 @@ interface Counts {
   reviews: Map<string, number>;
 }
 
-/** True when the name is already the expanded form rather than the series code. */
+/**
+ * True when the name is already what it reduces to — no series code to expand
+ * and no brand repeated in front of the model.
+ */
 function isExpanded(racket: Racket): boolean {
-  return canonicalName(racket.name) === racket.name.toUpperCase().replace(SEPARATORS, "");
+  return (
+    canonicalName(racket.name, racket.brandName) ===
+    racket.name.toUpperCase().replace(SEPARATORS, "")
+  );
 }
 
 /**
@@ -195,7 +247,7 @@ export function rank(rackets: Racket[], counts: Counts): Racket[] {
 export function groupDuplicates(rackets: Racket[], counts: Counts): Group[] {
   const groups = new Map<string, Racket[]>();
   for (const racket of rackets) {
-    const key = `${racket.brandId}|${canonicalName(racket.name)}`;
+    const key = `${racket.brandId}|${canonicalName(racket.name, racket.brandName)}`;
     const group = groups.get(key) ?? [];
     group.push(racket);
     groups.set(key, group);
@@ -343,6 +395,14 @@ async function main(): Promise<void> {
   const brandFilter = [...flags]
     .find((flag) => flag.startsWith("--brand="))
     ?.slice("--brand=".length);
+  const slugFilter = new Set(
+    [...flags]
+      .find((flag) => flag.startsWith("--slug="))
+      ?.slice("--slug=".length)
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [],
+  );
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
@@ -355,7 +415,7 @@ async function main(): Promise<void> {
   const supabase = createClient(url, key);
 
   const [brands, racketRows, variantRows, imageRows, offerRows, reviewRows] = await Promise.all([
-    readAll<{ id: string; slug: string }>(supabase, "brands", "id, slug"),
+    readAll<{ id: string; slug: string; name: string }>(supabase, "brands", "id, slug, name"),
     readAll<Record<string, string | null>>(
       supabase,
       "rackets",
@@ -372,6 +432,7 @@ async function main(): Promise<void> {
   ]);
 
   const brandSlugs = new Map(brands.map((brand) => [brand.id, brand.slug]));
+  const brandNames = new Map(brands.map((brand) => [brand.id, brand.name]));
   const rackets: Racket[] = racketRows
     .filter((row) => brandSlugs.has(String(row.brand_id)))
     .map((row) => ({
@@ -380,6 +441,7 @@ async function main(): Promise<void> {
       name: String(row.name),
       brandId: String(row.brand_id),
       brandSlug: brandSlugs.get(String(row.brand_id))!,
+      brandName: brandNames.get(String(row.brand_id)) ?? "",
       heroImageUrl: row.hero_image_url === null ? null : String(row.hero_image_url),
       heroThumbUrl: row.hero_thumb_url === null ? null : String(row.hero_thumb_url),
     }))
@@ -404,12 +466,35 @@ async function main(): Promise<void> {
     variantsByRacket.set(variant.racketId, group);
   }
 
-  const groups = groupDuplicates(rackets, counts);
+  // Grouping happens over the whole brand and `--slug=` selects from the result,
+  // so naming one spelling of a pair still finds the other. Filtering the rows
+  // first would leave the named row alone in its group and report nothing.
+  const all = groupDuplicates(rackets, counts);
+  const groups = slugFilter.size
+    ? all.filter((group) =>
+        [group.survivor, ...group.losers].some(
+          (racket) => slugFilter.has(racket.slug) || slugFilter.has(racket.id),
+        ),
+      )
+    : all;
+
+  // A name that matched nothing is worth saying out loud: it means the row has
+  // no twin, or it is spelled differently from what was typed — not that the
+  // catalogue is clean.
+  const unmatched = [...slugFilter].filter(
+    (value) =>
+      !groups.some((group) =>
+        [group.survivor, ...group.losers].some(
+          (racket) => racket.slug === value || racket.id === value,
+        ),
+      ),
+  );
 
   console.log("=================================================");
   console.log("🧬 Duplicate catalogue rows");
   console.log("=================================================");
   console.log(`Rackets considered : ${rackets.length}`);
+  if (slugFilter.size) console.log(`Selected by --slug : ${groups.length} of ${all.length} groups`);
   console.log(`Duplicate groups   : ${groups.length}`);
   console.log(`Rows to merge away : ${groups.reduce((total, g) => total + g.losers.length, 0)}\n`);
 
@@ -423,6 +508,10 @@ async function main(): Promise<void> {
     for (const loser of group.losers) {
       console.log(`  ${show(loser, group.blocked ? "skip  " : "merge ")}`);
     }
+  }
+
+  if (unmatched.length) {
+    console.log(`\n⚠ no duplicate group holds: ${unmatched.join(", ")}`);
   }
 
   const mergeable = groups.filter((group) => !group.blocked);

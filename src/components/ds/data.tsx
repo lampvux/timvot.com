@@ -352,16 +352,20 @@ export function SpecRow({
   border?: boolean;
 }) {
   return (
+    // `dt`/`dd`, not two spans. Every caller wraps these in a `<dl>`, and a
+    // `<dl>` whose rows are `div > span` is invalid markup — axe reports it as
+    // a serious violation, and a screen reader loses the pairing between each
+    // label and its value, which on /methodology is the whole content.
     <div
       className={cx(
         "flex items-baseline justify-between gap-3 py-2",
         border && "border-b border-line",
       )}
     >
-      <span className="eyebrow">{label}</span>
-      <span className="font-mono text-[13px] tabular-nums text-primary text-right">
+      <dt className="eyebrow">{label}</dt>
+      <dd className="m-0 font-mono text-[13px] tabular-nums text-primary text-right">
         {value}
-      </span>
+      </dd>
     </div>
   );
 }

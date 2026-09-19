@@ -13,14 +13,52 @@ npm run typecheck      # tsc --noEmit — the static gate for src/ and scripts/
 ```
 
 There is no ESLint config. `npm run typecheck` is what "does it pass" means for
-`src/`; run it after any change to `src/` or `scripts/`. The node:test suites under
-`scripts/` are the rest of the gate — no framework, just `tsx --test`:
+`src/`; the node:test suites are the rest of it — no framework, just `tsx --test`.
+`.github/workflows/ci.yml` runs all of this on every pull request.
 
 ```bash
+npm test                     # every node:test suite. Runs with NO env vars, like `npm run dev`
+npm run test:lib             # src/lib, src/i18n — units and the guardrails below
+npm run test:guardrails      # src/lib/guardrails — the rules in this file, enforced
+npm run test:security        # open redirect, revalidate auth, key leakage, crawl safety
 npm run test:scraper         # scraper: per-shop failure isolation, run report, abort path
 npm run test:image-scraper   # manufacturer gallery crawl and image ownership
 npm run test:string-scraper  # string catalogue
 ```
+
+**`src/lib/guardrails/` is where a rule in this document becomes a failure.**
+Every file there reads source as text and asserts on it — no database, no
+build, no browser, milliseconds. `selectAll` on every unbounded read, no
+`cookies()` in the locale layout, no icon barrel, no URL hook outside a
+boundary, Court Score reading no commercial data, no emoji, prices never
+abbreviated, one fixed balance rule, `seed.sql` matching `seed.ts`. A rule
+added here that is mechanically checkable belongs there too; a rule that is
+neither enforced nor checkable should be deleted rather than believed.
+
+Two suites need more than a checkout, so they are separate and skip cleanly
+without it:
+
+```bash
+npm run test:e2e       # Playwright: both locales, 1280 and 400px, axe on every page
+npm run test:e2e:dev   # against `next dev` — Cache Components validation is dev-only
+npm run test:rls       # every RLS policy, against a throwaway Postgres:
+                       #   docker run -d --rm -p 55432:5432 -e POSTGRES_PASSWORD=postgres postgres:17
+                       #   RLS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres npm run test:rls
+```
+
+**The end-to-end suite needs no database and no secret.** It builds and serves
+the real app with the Supabase variables *cleared*, so the repository falls
+back to `src/lib/data/seed.ts` and the catalogue under test is a committed
+file — deterministic, offline, identical on every machine. That only holds
+while the seed stays reproducible: `src/lib/guardrails/seed-drift.test.ts`
+regenerates `supabase/seed.sql` and compares, and fails on a `new Date(y, m, d)`
+in `seed.ts`, because the local-time constructor makes the generated SQL
+depend on the machine's timezone.
+
+Accessibility runs as a fixture on every page a spec visits, not as its own
+spec. Serious and critical violations fail; the one baselined exception and the
+reason for it are in `KNOWN_VIOLATIONS` in `e2e/fixtures.ts` and
+`docs/accessibility-findings.md`.
 
 Data and schema:
 
@@ -49,6 +87,23 @@ region, and from a laptop it is most of every `sql` number. Subtract it before
 concluding a query is slow. `today` rows are what the app does now, `proposed`
 rows are the alternative — the table exists so a read-path change is argued from
 a number rather than from a guess.
+
+Two scripts turn those measurements into a verdict, against baselines committed
+under `perf/`:
+
+```bash
+npm run benchmark -- --json=perf/latest.json && npm run perf:budget -- --run=perf/latest.json
+npm run perf:routes            # route table + bundle size, read from .next after a build
+npm run perf:routes -- --update # accept the current numbers as the new baseline
+```
+
+`perf-budget.ts` subtracts `baseline:round trip` from every `sql` row before
+comparing, so the number is the query rather than where the developer is
+sitting, and it budgets per scenario group rather than per scenario. It runs
+nightly, because it needs the real database. `route-report.ts` runs on every
+pull request and fails when a route moves from prerendered to dynamic, or when
+the client bundle grows past tolerance — the check CLAUDE.md otherwise asks a
+human to perform by reading the route table.
 
 Scrapers (full flag tables live in `README.md`):
 
@@ -230,11 +285,16 @@ attaching, on purpose, for the 13 base models the manufacturer no longer publish
 for; those rows carry provider `storage-recovered` and are replaced by any later crawl.
 
 **A racket written twice is the usual reason a page looks broken.** `catalogue:dupes`
-expands the series code (`ARS`→Auraspeed, `TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
+drops the brand where a shop wrote it into the model name (`ProaceTGR F` is `TGR-F`,
+and `brand_id` already carries the brand), expands the series code (`ARS`→Auraspeed,
+`TK`→Thruster, `DX`→DriveX, `JS`→Jetspeed S)
 and then drops separators only — a trailing token is a product, so `Astrox 22` is not
 `Astrox 22 RX` and `Windstorm 78` is not `Windstorm 78+`. The survivor is whichever row
 holds the gallery, because the ownership trigger pins each object's path to its owner's
-slug and the rows cannot move the other way. Verification
+slug and the rows cannot move the other way. `--slug=` selects the group a row belongs
+to rather than the row, so a merge is reviewable one frame at a time; the `.claude/skills/
+catalogue-dedupe` skill carries the run order (backup, report, apply, `market:refresh`,
+`images:audit`). Verification
 (`verify.ts`) runs after the scrape is already written to disk, so a flaky Chromium
 launch cannot cost a multi-minute walk. A price a source publishes as "liên hệ" is
 counted and reported, never invented.

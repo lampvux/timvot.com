@@ -18,6 +18,13 @@ const nextConfig: NextConfig = {
   typedRoutes: false,
 
   /**
+   * `X-Powered-By: Next.js` off. Not a vulnerability on its own — it is a free
+   * hint about what to try, and free hints are what turn a broad scan into a
+   * targeted attempt.
+   */
+  poweredByHeader: false,
+
+  /**
    * Keep every production source-map layer off. Browser and server maps are
    * already opt-in, but prerender and Turbopack maps default to on and add
    * avoidable memory pressure during this catalogue-heavy build.
@@ -113,6 +120,90 @@ const nextConfig: NextConfig = {
     webpackBuildWorker: true,
     webpackMemoryOptimizations: true,
   },
+  /**
+   * Security headers.
+   *
+   * None of these were set before, which meant the app relied entirely on
+   * browser defaults: no framing policy, no MIME-sniffing protection, a
+   * referrer sent in full to every outbound link, and no transport pinning.
+   *
+   * The CSP is the one with teeth and the one that needs care. It has to allow
+   * what the app actually does:
+   *
+   *   - Supabase storage, for every product photograph. The origin is read
+   *     from the same env var `images.remotePatterns` matches, so the two
+   *     cannot disagree; `https:` stays in `img-src` as the fallback for a
+   *     deployment whose storage origin is not set at build time.
+   *   - Vercel Analytics and Speed Insights, which load a script from the
+   *     deployment's own origin and beacon back to it.
+   *   - `'unsafe-inline'` for styles, because Next injects the critical CSS
+   *     inline, and for scripts because the App Router's streaming payload
+   *     arrives as inline `<script>` tags. Nonces would be the stronger
+   *     answer and would make every route dynamic, which is the opposite of
+   *     what this app is built around.
+   *
+   * `e2e/security-headers.spec.ts` asserts each of these on a prerendered
+   * route and a dynamic one, so a header that gets dropped fails a test rather
+   * than being noticed by a scanner months later.
+   */
+  async headers() {
+    const supabaseOrigin = (() => {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      if (!url) return null;
+      try {
+        return new URL(url).origin;
+      } catch {
+        return null;
+      }
+    })();
+
+    const csp = [
+      "default-src 'self'",
+      "base-uri 'self'",
+      // No plugins, and no <base> or <object> redirection of relative URLs.
+      "object-src 'none'",
+      // Nothing may frame this app: the catalogue carries prices, and a
+      // transparent overlay over a "set price alert" button is a real click.
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self' data:",
+      `img-src 'self' data: blob: https:${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
+      `connect-src 'self' https://vitals.vercel-insights.com${
+        supabaseOrigin ? ` ${supabaseOrigin} ${supabaseOrigin.replace(/^https:/, "wss:")}` : ""
+      }`,
+      "frame-src 'none'",
+      "worker-src 'self' blob:",
+      "manifest-src 'self'",
+      "upgrade-insecure-requests",
+    ].join("; ");
+
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: csp },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          {
+            // Nothing here needs a camera, a microphone or a location.
+            key: "Permissions-Policy",
+            value:
+              "accelerometer=(), camera=(), geolocation=(), gyroscope=(), " +
+              "magnetometer=(), microphone=(), payment=(), usb=()",
+          },
+          { key: "X-DNS-Prefetch-Control", value: "on" },
+        ],
+      },
+    ];
+  },
+
   images: {
     /**
      * Every distinct (src, width, quality) is one billed transformation, and

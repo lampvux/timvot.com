@@ -12,6 +12,7 @@ const racket = (id: string, name: string, slug = id.replace(/^r-/, "")): Racket 
   name,
   brandId: "b-victor",
   brandSlug: "victor",
+  brandName: "Victor",
   heroImageUrl: null,
   heroThumbUrl: null,
 });
@@ -131,4 +132,43 @@ test("three spellings of one racket collapse into one group", () => {
     "r-victor-brave-sword-12",
     "r-victor-bs-12",
   ]);
+});
+
+test("a brand written into the model name is not a different racket", () => {
+  // proace.vn titles one page `ProaceTGR F` and another `TGR-F`; the brand is
+  // already in `brand_id`, so repeating it in the name says nothing about the frame.
+  assert.equal(canonicalName("ProaceTGR F", "Proace"), canonicalName("TGR-F", "Proace"));
+  assert.equal(canonicalName("Yonex Nanoflare 700", "Yonex"), canonicalName("Nanoflare 700", "Yonex"));
+  // The strip runs before the series alias, which is anchored to the start of
+  // the name and would otherwise be hidden behind the brand.
+  assert.equal(canonicalName("Yonex AX 100 ZZ", "Yonex"), canonicalName("Astrox 100 ZZ", "Yonex"));
+  // However the brand is punctuated.
+  assert.equal(canonicalName("Li-Ning Axforce 90", "Li-Ning"), canonicalName("Axforce 90", "Li-Ning"));
+  assert.equal(canonicalName("LiNing Axforce 90", "Li-Ning"), canonicalName("Axforce 90", "Li-Ning"));
+});
+
+test("the brand strip refuses the cases where it would destroy a name", () => {
+  // Under three characters: `VS` is also how a model is written.
+  assert.equal(canonicalName("VS 100", "VS"), "VS100");
+  // Nothing would remain: a row named after nothing but its brand keeps its
+  // name rather than reducing to "" and matching every other such row.
+  assert.equal(canonicalName("Proace", "Proace"), "PROACE");
+  assert.notEqual(canonicalName("Proace", "Proace"), canonicalName("Kamito", "Kamito"));
+  // Only a prefix, never the middle of a name.
+  assert.equal(canonicalName("Super Proace 9", "Proace"), "SUPERPROACE9");
+  // And it is only ever applied within one brand, so it cannot merge across them.
+  assert.notEqual(canonicalName("Yonex 100", "Yonex"), canonicalName("Yonex 100", "Victor"));
+});
+
+test("the brand strip leaves a suffix alone, like every other rule here", () => {
+  assert.notEqual(
+    canonicalName("Yonex Astrox 22", "Yonex"),
+    canonicalName("Astrox 22 RX", "Yonex"),
+  );
+});
+
+test("the row whose name does not repeat the brand is the one kept", () => {
+  const noisy = { ...racket("r-proace-proacetgr-f", "ProaceTGR F"), brandName: "Proace" };
+  const clean = { ...racket("r-proace-tgr-f", "TGR-F"), brandName: "Proace" };
+  assert.equal(rank([noisy, clean], counts())[0].id, "r-proace-tgr-f");
 });
