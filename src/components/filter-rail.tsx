@@ -419,6 +419,11 @@ export function SortSelect({ filters }: { filters: CatalogFilters }) {
       <div className="w-[190px]">
         <Select
           size="sm"
+          // The visible label beside it is `hidden sm:inline`, so below the
+          // `sm` breakpoint the wrapping <label> contributes no text and the
+          // control reaches a screen reader as an unnamed select. Axe reports
+          // it as critical, and only on mobile.
+          aria-label={t("sort")}
           value={filters.sort}
           onChange={(event) =>
             startTransition(() => {

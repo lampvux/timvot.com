@@ -454,7 +454,10 @@ export default async function RacketPage({
             <p className="mt-3 text-caption text-tertiary">
               {racket.player
                 ? t("playerHalfNote", { count: racket.reviewCount })
-                : t("specOnlyNote", { count: racket.reviewCount })}
+                : t("specOnlyNote", {
+                    count: racket.reviewCount,
+                    needed: MIN_REVIEWS_FOR_PLAYER_SCORE,
+                  })}
             </p>
           </Card>
 
@@ -679,7 +682,10 @@ export default async function RacketPage({
         )}
         {reviews.length < MIN_REVIEWS_FOR_PLAYER_SCORE && (
           <p className="mt-2 text-caption text-tertiary">
-            {t("specOnlyNote", { count: reviews.length })}
+            {t("specOnlyNote", {
+              count: reviews.length,
+              needed: MIN_REVIEWS_FOR_PLAYER_SCORE,
+            })}
           </p>
         )}
       </section>

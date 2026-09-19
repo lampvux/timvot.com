@@ -698,7 +698,15 @@ export const offers: Offer[] = rackets.flatMap((racket) => {
       leadTimeDays: 1 + Math.floor(rng() * 4),
       promoted: rng() > 0.86,
       status: "live" as const,
-      updatedAt: new Date(2026, 7, 10 + Math.floor(rng() * 7)).toISOString(),
+      // Date.UTC, not new Date(y, m, d): the local-time constructor makes the
+      // generated seed depend on the machine's timezone, so `npm run seed:sql`
+      // produced a different supabase/seed.sql in Hanoi than it did in CI —
+      // seventy-three offers' worth of diff, every time, for no change at all.
+      // The price history and the reviews below already build their dates this
+      // way; this one was the outlier.
+      updatedAt: new Date(
+        Date.UTC(2026, 7, 10 + Math.floor(rng() * 7)),
+      ).toISOString(),
     };
   });
 });

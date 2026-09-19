@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
@@ -68,6 +68,7 @@ function LiveLanguageSwitcher({ compact }: { compact?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
+  const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
 
   const current = (params.locale as Locale) ?? routing.defaultLocale;
@@ -83,8 +84,12 @@ function LiveLanguageSwitcher({ compact }: { compact?: boolean }) {
         startTransition(() => {
           beginNavigation();
           router.replace(
+            // The query goes with it. Filters live in the URL, so switching
+            // language without carrying them drops whatever the visitor was
+            // looking at — a filtered, sorted, paginated catalogue becomes an
+            // unfiltered first page, in the other language, with no way back.
             // @ts-expect-error — pathname is a known route at runtime
-            { pathname, params },
+            { pathname, params, query: Object.fromEntries(searchParams) },
             { locale: other },
           );
         })

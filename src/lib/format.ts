@@ -98,6 +98,23 @@ export function stockTone(qty: number): StockTone {
   return "normal";
 }
 
+/**
+ * The absolute form, which does not depend on when it is rendered.
+ *
+ * This is what a server render has to emit. `formatReviewDate` is relative
+ * under 30 days, and "relative to when" is a different answer at build time
+ * than it is in the browser — which is a hydration mismatch, and React's
+ * response to one is to throw away the server's HTML for that subtree and
+ * render the whole thing again on the client.
+ */
+export function formatAbsoluteDate(iso: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 /** Dates are relative under 30 days, absolute after. */
 export function formatReviewDate(
   iso: string,
@@ -110,11 +127,7 @@ export function formatReviewDate(
     const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
     return rtf.format(-days, "day");
   }
-  return new Intl.DateTimeFormat(locale, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(then);
+  return formatAbsoluteDate(iso, locale);
 }
 
 export const FLEX_MESSAGE_KEY: Record<ShaftFlex, string> = {

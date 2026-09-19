@@ -248,6 +248,40 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npx tsx scripts/backup.ts
 
+      # The read path's costs are invisible from the app: a page renders, and
+      # nothing on screen says whether it moved 40 KB or 40 MB. `benchmark.ts`
+      # has always measured that and always only printed it; `perf-budget.ts`
+      # compares the run to a committed baseline and says whether it got worse.
+      #
+      # Nightly rather than per-pull-request because it needs the real
+      # database, and degraded rather than fatal because a slow night on a
+      # shared instance is not the same thing as a slower query.
+      - name: Benchmark The Read Path
+        id: benchmark
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          mkdir -p perf
+          npm run benchmark -- --json=perf/nightly.json --markdown \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check The Performance Budget
+        id: perf_budget
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          if [ ! -f perf/nightly.json ]; then
+            echo "::warning title=No benchmark run::The benchmark step produced no JSON, so there is nothing to compare."
+            exit 0
+          fi
+          npx tsx scripts/perf-budget.ts --run=perf/nightly.json --markdown \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Daily Backup Snapshot
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
@@ -275,6 +309,8 @@ jobs:
           IMAGES: ${{ steps.images.outcome }}
           AUDIT: ${{ steps.audit.outcome }}
           BACKUP: ${{ steps.backup.outcome }}
+          BENCHMARK: ${{ steps.benchmark.outcome }}
+          PERF_BUDGET: ${{ steps.perf_budget.outcome }}
         run: |
           set -uo pipefail
 
@@ -319,6 +355,12 @@ jobs:
           record "Manufacturer image crawl" "$IMAGES"      fatal
           record "Image ownership audit"   "$AUDIT"        fatal
           record "Post-sync backup"        "$BACKUP"       fatal
+          # Measurement, not the product. A slow night on a shared instance is
+          # not the same thing as a slower query, so neither of these takes the
+          # nightly refresh down — they report, and the summary carries the
+          # number and the comparison against perf/benchmark-baseline.json.
+          record "Read-path benchmark"     "$BENCHMARK"    degraded
+          record "Performance budget"      "$PERF_BUDGET"  degraded
 
           if [ "$failures" -gt 0 ]; then
             {
