@@ -168,6 +168,41 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
     );
   });
 
+  it("keeps guide generation runs private to the worker", async () => {
+    const runKey = `rls-test:${randomUUID()}`;
+    await harness.client.query(
+      `insert into guide_generation_runs (run_key, state, lease_expires_at)
+       values ($1, 'running', now() + interval '5 minutes')`,
+      [runKey],
+    );
+
+    await harness.asAnon(async (client) => {
+      const { rows } = await client.query(
+        "select run_key from guide_generation_runs where run_key = $1",
+        [runKey],
+      );
+      assert.equal(rows.length, 0, "anon can read worker run state");
+    });
+
+    await harness.asUser(SHOPPER, async (client) => {
+      const { rows } = await client.query(
+        "select run_key from guide_generation_runs where run_key = $1",
+        [runKey],
+      );
+      assert.equal(rows.length, 0, "a signed-in user can read worker run state");
+      await expectWriteRefused(
+        () => client.query(
+          `insert into guide_generation_runs (run_key, state, lease_expires_at)
+           values ($1, 'running', now() + interval '5 minutes')`,
+          [`user-run:${randomUUID()}`],
+        ),
+        "a signed-in user created a guide generation run",
+      );
+    });
+
+    await harness.client.query("delete from guide_generation_runs where run_key = $1", [runKey]);
+  });
+
   /* ------------------------------------------------- the catalogue is public */
 
   it("lets anyone read the catalogue", async () => {
