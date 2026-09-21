@@ -309,7 +309,7 @@ export default async function HomePage({
               {guides.slice(0, 3).map((guide) => (
                 <Link
                   key={guide.slug}
-                  href="/guides"
+                  href={guide.hasContent ? `/guides/${guide.slug}` : "/guides"}
                   className={
                     "block rounded-md border px-4 py-3.5 no-underline " +
                     (guide.tone === "used"

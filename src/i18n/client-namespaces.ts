@@ -25,6 +25,7 @@ export const CLIENT_NAMESPACES = [
   "compare",
   "enums",
   "finder",
+  "guides",
   "nav",
   "profile",
   "racket",

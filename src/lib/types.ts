@@ -171,6 +171,7 @@ export interface Review {
 
 export interface Guide {
   slug: string;
+  hasContent?: boolean;
   title: { en: string; vi: string };
   excerpt: { en: string; vi: string };
   readMinutes: number;
