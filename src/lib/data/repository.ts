@@ -524,12 +524,14 @@ async function readGuides(): Promise<Guide[]> {
 
   try {
     const { data, error } = await selectAll((from, to) =>
-      supabase.from("guides").select("*").order("slug").range(from, to),
+      supabase.from("guides").select("slug,title_en,title_vi,excerpt_en,excerpt_vi,read_minutes,tone,has_content")
+        .eq("published", true).eq("has_content", true)
+        .order("published_at", { ascending: false, nullsFirst: false }).order("slug").range(from, to),
     );
-    if (error || !data?.length) return seed.guides;
-    return data.map(mapGuide);
+    if (error) throw new Error("Guides could not be loaded");
+    return (data ?? []).map(mapGuide);
   } catch {
-    return seed.guides;
+    return [];
   }
 }
 

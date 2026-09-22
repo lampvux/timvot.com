@@ -1,0 +1,18 @@
+# Local watermark remover for the retailer gallery backfill.
+#   docker compose up -d --build watermark
+#   npm run images:watermark -- --check
+services:
+  watermark:
+    build: ./docker/watermark
+    image: shuttlecraft-watermark:1.0.0
+    # Loopback only: this service takes image bytes and needs no public address.
+    ports:
+      - "127.0.0.1:8770:8770"
+    environment:
+      WATERMARK_ENGINE: "${WATERMARK_ENGINE:-lama}"
+      WATERMARK_SERVICE_API_KEY: "${WATERMARK_SERVICE_API_KEY:-}"
+      OMP_NUM_THREADS: "${WATERMARK_THREADS:-4}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

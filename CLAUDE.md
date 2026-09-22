@@ -273,6 +273,31 @@ known colour words, and only while a model identifier remains — `Ryuga CLS C` 
 `CLS J` are different rackets. Matching in `images/match.ts` is prefix-based and
 *refuses* rather than guessing; an ambiguous match is reported, not taken.
 
+**A watermark is found by template, never inferred.** `docker/watermark/` is a
+local service (`npm run watermark:up`) that the retailer backfill calls with
+`--remove-watermarks`. Each shop's overlay is cropped once from that shop's own
+photograph into `templates/<site>/`; the service correlates those templates
+across scales, verifies each candidate a second time over the template's ink
+pixels alone, and repaints only the matched ink with LaMa. **An image where no
+template matches is returned unchanged and its original bytes are published** —
+that is a verified answer, not a fallback, and a remover *failure* still aborts
+the image. Thresholds are per retailer and every number is the measured span of
+real overlays, because the shops differ: QV Badminton, FBShop and HVShop stamp
+nearly every photograph while most VNB photographs carry none, so one loose
+threshold would repaint clean product shots. Adding a shop means adding a
+template crop and its settings, not loosening a threshold for everyone, and
+sampling a shop means sampling **across its canvas sizes**: HVShop looked like
+one overlay until a stratified sample showed three, and a run had already
+published 606 of its images with their marks intact. An overlay too pale for
+intensity correlation is matched on `domain: "edges"` instead, against a
+template *estimated* from a collection rather than cropped from one
+photograph — see `docs/retailer-image-backfill.md`. The
+published gallery's identity folds in the service's fingerprint over its
+templates and thresholds, so changing either starts a new gallery rather than
+silently extending one. `docs/retailer-image-backfill.md` has the measured
+numbers. The generative `gpt-image-2` editor remains behind
+`WATERMARK_BACKEND=openai` and charges per image.
+
 **An unreferenced object in the image bucket is not a lost gallery.** The storage key is
 `<brand>/<model-slug>/<nn>-<sha8>.<ext>`, so a folder looks like it names its racket — but
 `images/reconcile.ts` trusts the hash in the key over the folder name, because all 346

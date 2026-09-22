@@ -118,6 +118,7 @@ for (const locale of LOCALES) {
     test("the empty tray says what to do next", async ({ page }) => {
       await page.goto(at(locale, "/compare"));
       await page.waitForLoadState("load");
+      await expect(page.locator('main a[href$="/rackets"]').first()).toBeVisible();
 
       const main = (await page.locator("main").innerText()).replace(/\s+/g, " ").trim();
       expect(main.length, "the empty comparison rendered nothing").toBeGreaterThan(20);

@@ -1,0 +1,9 @@
+# iopaint 1.6.0 pulls gradio 4.21, which caps numpy below 2, so numpy and
+# OpenCV are pinned to the pair that resolves with it. iopaint also pins its
+# own fastapi/uvicorn/pydantic (fastapi==0.108.0), which this service uses as
+# given. Torch and torchvision install from the CPU index in the Dockerfile.
+torch==2.6.0
+torchvision==0.21.0
+numpy==1.26.4
+iopaint==1.6.0
+opencv-python-headless==4.10.0.84

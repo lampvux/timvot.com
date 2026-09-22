@@ -166,7 +166,8 @@ const nextConfig: NextConfig = {
       // transparent overlay over a "set price alert" button is a real click.
       "frame-ancestors 'none'",
       "form-action 'self'",
-      "script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com",
+      // React's development stack reconstruction requires eval; production does not.
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""} https://va.vercel-scripts.com`,
       "style-src 'self' 'unsafe-inline'",
       "font-src 'self' data:",
       `img-src 'self' data: blob: https:${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,

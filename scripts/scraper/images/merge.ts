@@ -22,6 +22,11 @@ export function isAdminManagedImage(
   return image.provider === "admin" || image.admin_managed;
 }
 
+/** A manufacturer refresh does not own galleries collected by the retailer backfill. */
+export function isPreservedGalleryImage(image: Pick<ExistingGalleryMergeRow, "provider" | "admin_managed">) {
+  return isAdminManagedImage(image) || image.provider.startsWith("retailer-");
+}
+
 /**
  * Merge one crawler result with the rows already curated in the admin app.
  *
@@ -35,14 +40,14 @@ export function planGalleryMerge<Incoming extends GalleryMergeRow>(
   incoming: Incoming[],
 ) {
   const incomingChecksums = new Set(incoming.map((image) => image.checksum));
-  const protectedRows = existing.filter(isAdminManagedImage);
+  const protectedRows = existing.filter(isPreservedGalleryImage);
   const protectedChecksums = new Set(protectedRows.map((image) => image.checksum));
   const discardedIncoming = incoming.filter((image) => protectedChecksums.has(image.checksum));
   const incomingToWrite = incoming
     .filter((image) => !protectedChecksums.has(image.checksum))
     .map((image) => ({ ...image, is_hero: false }));
   const stale = existing.filter(
-    (image) => !isAdminManagedImage(image) && !incomingChecksums.has(image.checksum),
+    (image) => !isPreservedGalleryImage(image) && !incomingChecksums.has(image.checksum),
   );
 
   const currentHero = existing.find((image) => image.is_hero && image.public_url);
@@ -52,7 +57,7 @@ export function planGalleryMerge<Incoming extends GalleryMergeRow>(
   let hero: GalleryMergeRow | null = null;
 
   if (retainedCurrentHero) {
-    hero = isAdminManagedImage(retainedCurrentHero)
+    hero = isPreservedGalleryImage(retainedCurrentHero)
       ? retainedCurrentHero
       : incomingToWrite.find((image) => image.checksum === retainedCurrentHero.checksum) ?? retainedCurrentHero;
   }

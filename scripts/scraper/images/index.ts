@@ -52,7 +52,7 @@ import {
   type ImageJobOption,
 } from "./ownership";
 import {
-  isAdminManagedImage,
+  isPreservedGalleryImage,
   planGalleryMerge,
   type ExistingGalleryMergeRow,
   type GalleryMergeRow,
@@ -1130,7 +1130,7 @@ export async function crawlImages() {
         // old unreferenced object after that write succeeds.
         for (const incoming of plan.incomingToWrite) {
           const previous = current.find(
-            (image) => !isAdminManagedImage(image) && image.checksum === incoming.checksum,
+            (image) => !isPreservedGalleryImage(image) && image.checksum === incoming.checksum,
           );
           if (
             previous
@@ -1249,7 +1249,7 @@ export async function crawlImages() {
         if (!data || data.length === 0) break;
 
         for (const row of data as ExistingGalleryMergeRow[]) {
-          if (covered.has(row.racket_id) || isAdminManagedImage(row)) continue;
+          if (covered.has(row.racket_id) || isPreservedGalleryImage(row)) continue;
           orphans.push(row);
         }
         if (data.length < 1000) break;

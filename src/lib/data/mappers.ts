@@ -286,6 +286,7 @@ export function mapReview(row: Row): Review {
 export function mapGuide(row: Row): Guide {
   return {
     slug: row.slug,
+    hasContent: row.has_content === true,
     title: { en: row.title_en ?? "", vi: row.title_vi ?? "" },
     excerpt: { en: row.excerpt_en ?? "", vi: row.excerpt_vi ?? "" },
     readMinutes: row.read_minutes ?? 0,

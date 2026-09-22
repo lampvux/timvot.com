@@ -1,0 +1,2 @@
+# SDK used by the installed imagegen CLI; install in .venv-watermarks.
+openai==3.16.2

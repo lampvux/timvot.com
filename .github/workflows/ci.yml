@@ -171,6 +171,7 @@ jobs:
             e2e/.report
             e2e/.results
           retention-days: 7
+          include-hidden-files: true
 
   dev-smoke:
     name: Cache Components validation
@@ -221,10 +222,10 @@ jobs:
 
     services:
       postgres:
-        # A throwaway Postgres, not a Supabase project. The migrations only
-        # reach for four Supabase primitives and the harness provides all four,
-        # which is what lets this run on every pull request instead of against
-        # a shared project somebody has to keep clean.
+        # A throwaway Postgres, not a Supabase project. The harness provides
+        # the small Auth and Storage surface the migrations reference, which
+        # lets this run on every pull request instead of against a shared
+        # project somebody has to keep clean.
         image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres

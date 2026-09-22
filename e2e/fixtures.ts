@@ -231,6 +231,17 @@ export const at = (locale: Locale, path: string): string => `/${locale}${path}`;
 export const cards = (page: Page) =>
   page.locator('main a[href*="/rackets/"]').filter({ has: page.locator("h3") });
 
+/** Wait until a Cache Components fallback has been replaced by route content. */
+export async function waitForStreamedContent(
+  page: Page,
+  timeoutMs = 10_000,
+): Promise<void> {
+  await page.waitForLoadState("load");
+  await page
+    .locator('main [role="status"][aria-busy="true"]')
+    .waitFor({ state: "hidden", timeout: timeoutMs });
+}
+
 /**
  * How many cards a filtered catalogue settled on.
  *
@@ -246,7 +257,7 @@ export const cards = (page: Page) =>
  * being waited for.
  */
 export async function countCards(page: Page, timeoutMs = 5000): Promise<number> {
-  await page.waitForLoadState("load");
+  await waitForStreamedContent(page, timeoutMs);
 
   const deadline = Date.now() + timeoutMs;
   let previous = -1;
@@ -286,11 +297,10 @@ export async function visit(
 
   expect(response?.status(), `${path} returned ${response?.status()}`).toBeLessThan(400);
 
+  await page.locator("main").waitFor({ state: "visible" });
   // Wait for the streamed content, not for the network: the analytics scripts
   // 404 and retry outside a Vercel deployment, so `networkidle` never arrives.
-  await page.waitForLoadState("load");
-  await page.locator("main").waitFor({ state: "visible" });
-  await page.waitForTimeout(250);
+  await waitForStreamedContent(page);
 
   await expectNoHorizontalScroll(page, path);
   if (a11y) await expectAccessible(page, path);

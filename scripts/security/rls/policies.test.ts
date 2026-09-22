@@ -61,7 +61,14 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
        on conflict (id) do update set role = 'admin'`,
       [ADMIN],
     );
-    for (const id of [SELLER_OWNER, OTHER_SELLER_OWNER, SHOPPER, OTHER_SHOPPER]) {
+    for (const id of [SELLER_OWNER, OTHER_SELLER_OWNER]) {
+      await client.query(
+        `insert into profiles (id, role) values ($1, 'seller')
+         on conflict (id) do update set role = 'seller'`,
+        [id],
+      );
+    }
+    for (const id of [SHOPPER, OTHER_SHOPPER]) {
       await client.query(
         `insert into profiles (id, role) values ($1, 'user')
          on conflict (id) do nothing`,
@@ -166,6 +173,41 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
       `${rows.map((row) => row.tablename).join(", ")} has RLS on and no policy, ` +
         `so nothing can read or write it at all.`,
     );
+  });
+
+  it("keeps guide generation runs private to the worker", async () => {
+    const runKey = `rls-test:${randomUUID()}`;
+    await harness.client.query(
+      `insert into guide_generation_runs (run_key, state, lease_expires_at)
+       values ($1, 'running', now() + interval '5 minutes')`,
+      [runKey],
+    );
+
+    await harness.asAnon(async (client) => {
+      const { rows } = await client.query(
+        "select run_key from guide_generation_runs where run_key = $1",
+        [runKey],
+      );
+      assert.equal(rows.length, 0, "anon can read worker run state");
+    });
+
+    await harness.asUser(SHOPPER, async (client) => {
+      const { rows } = await client.query(
+        "select run_key from guide_generation_runs where run_key = $1",
+        [runKey],
+      );
+      assert.equal(rows.length, 0, "a signed-in user can read worker run state");
+      await expectWriteRefused(
+        () => client.query(
+          `insert into guide_generation_runs (run_key, state, lease_expires_at)
+           values ($1, 'running', now() + interval '5 minutes')`,
+          [`user-run:${randomUUID()}`],
+        ),
+        "a signed-in user created a guide generation run",
+      );
+    });
+
+    await harness.client.query("delete from guide_generation_runs where run_key = $1", [runKey]);
   });
 
   /* ------------------------------------------------- the catalogue is public */
@@ -321,7 +363,7 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
                condition, warranty_months, includes_stringing, ships_from,
                lead_time_days, promoted, status
              ) values ('o-impersonated', $1, $2, $3, 1, 'VND', 1, 'new', 0, false,
-                       'x', 1, false, 'live')`,
+                       'x', 1, false, 'review')`,
             [VARIANT_ID, RACKET_ID, OTHER_SELLER_ID],
           ),
         "a seller listed under a competitor's storefront",
@@ -353,12 +395,12 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
     // The escalation this schema exists to prevent. Tier decides trust
     // signals and sort position; a seller who can set it has bought both.
     await harness.asUser(SELLER_OWNER, async (client) => {
-      await expectWriteRefused(
+      await assert.rejects(
         () =>
           client.query("update sellers set tier = 'authorised' where id = $1", [
             SELLER_ID,
           ]),
-        "a seller promoted itself to authorised",
+        /Only staff can change seller trust and ownership fields/,
       );
     });
 

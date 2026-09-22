@@ -83,3 +83,11 @@ test("crawler refresh retains a valid selected crawler hero", () => {
   assert.equal(plan.hero?.id, "refreshed");
   assert.equal(plan.incomingToWrite.every((image) => !image.is_hero), true);
 });
+
+test("manufacturer refresh retains retailer galleries and their selected hero", () => {
+  const retailer = row({ provider: "retailer-vnb", is_hero: true });
+  const plan = planGalleryMerge([retailer], [incoming()]);
+  assert.deepEqual(plan.stale, []);
+  assert.deepEqual(plan.protectedRows, [retailer]);
+  assert.equal(plan.hero?.id, retailer.id);
+});
