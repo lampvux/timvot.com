@@ -7,12 +7,11 @@
  * suites deliberately need nothing.
  *
  * So this is its own runner, its own job in CI, and its own service container.
- * What it does not do is need a Supabase project: the migrations only depend
- * on four Supabase primitives — the `anon`, `authenticated` and `service_role`
- * roles, `auth.uid()`, and an `auth.users` table to hang foreign keys off —
- * and all four fit in the bootstrap below. A plain `postgres:17` container is
- * enough, which is what makes this runnable on every pull request rather than
- * against a shared project somebody has to keep clean.
+ * What it does not do is need a Supabase project: the bootstrap below supplies
+ * the API roles, Auth helpers/users and the small part of Storage's schema
+ * referenced by migrations. A plain `postgres:17` container is enough, which
+ * is what makes this runnable on every pull request rather than against a
+ * shared project somebody has to keep clean.
  *
  * The simulation is the standard one: `set local role` plus
  * `request.jwt.claims`, which is exactly how PostgREST presents a request to
@@ -67,12 +66,31 @@ const BOOTSTRAP = `
   end $$;
 
   create schema if not exists auth;
+  create schema if not exists storage;
 
   -- Foreign keys across the schema point at this.
   create table if not exists auth.users (
     id uuid primary key default gen_random_uuid(),
-    email text unique
+    email text unique,
+    raw_user_meta_data jsonb not null default '{}'::jsonb
   );
+
+  -- Production uses Supabase Storage's richer tables. Migrations only need
+  -- these columns to create the public image bucket and object policies.
+  create table if not exists storage.buckets (
+    id text primary key,
+    name text not null unique,
+    public boolean not null default false,
+    file_size_limit bigint,
+    allowed_mime_types text[]
+  );
+
+  create table if not exists storage.objects (
+    id uuid primary key default gen_random_uuid(),
+    bucket_id text not null references storage.buckets(id),
+    name text not null
+  );
+  alter table storage.objects enable row level security;
 
   create or replace function auth.uid() returns uuid
   language sql stable as $$
@@ -100,24 +118,30 @@ const BOOTSTRAP = `
   $$;
 
   grant usage on schema auth to anon, authenticated, service_role;
+  grant usage on schema storage to anon, authenticated, service_role;
   grant usage on schema public to anon, authenticated, service_role;
   grant execute on all functions in schema auth to anon, authenticated, service_role;
 `;
 
 /**
- * Grants, which RLS does not replace.
+ * Supabase's default grants, which RLS does not replace.
  *
  * A policy decides which *rows* a role may touch; a grant decides whether it
- * may touch the table at all. Supabase issues these grants as part of its own
- * setup, so the migrations do not, and without them every query here would
- * fail with "permission denied" and every assertion would pass for the wrong
- * reason.
+ * may touch the table at all. Supabase applies these defaults before project
+ * migrations run. Doing the same here matters because a later migration may
+ * deliberately revoke a broad grant and replace it with column-level access.
+ * Granting everything after the migrations would silently undo that security
+ * work and make this harness less restrictive than production.
  */
-const GRANTS = `
-  grant select on all tables in schema public to anon, authenticated;
-  grant insert, update, delete on all tables in schema public to authenticated;
-  grant usage, select on all sequences in schema public to anon, authenticated;
-  grant all on all tables in schema public to service_role;
+const DEFAULT_GRANTS = `
+  alter default privileges in schema public
+    grant select on tables to anon, authenticated;
+  alter default privileges in schema public
+    grant insert, update, delete on tables to authenticated;
+  alter default privileges in schema public
+    grant usage, select on sequences to anon, authenticated;
+  alter default privileges in schema public
+    grant all on tables to service_role;
 `;
 
 export interface Harness {
@@ -151,6 +175,7 @@ export async function setup(): Promise<Harness> {
   await client.query("drop schema if exists public cascade");
   await client.query("create schema public");
   await client.query(BOOTSTRAP);
+  await client.query(DEFAULT_GRANTS);
 
   for (const { name, sql } of migrations()) {
     try {
@@ -162,8 +187,6 @@ export async function setup(): Promise<Harness> {
       );
     }
   }
-
-  await client.query(GRANTS);
 
   const run = async <T>(
     role: "anon" | "authenticated",
