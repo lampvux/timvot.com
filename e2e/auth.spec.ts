@@ -104,6 +104,7 @@ for (const locale of LOCALES) {
       // this asserts; the server half is a unit test.
       await page.goto(at(locale, "/sign-in"));
       await page.waitForLoadState("load");
+      await expect(page.locator("main form").first()).toBeVisible();
 
       const body = (await page.locator("main").innerText()).toLowerCase();
 

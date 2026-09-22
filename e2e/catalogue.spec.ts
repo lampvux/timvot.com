@@ -153,11 +153,13 @@ for (const locale of LOCALES) {
         );
 
       await page.goto(at(locale, "/rackets?sort=price-asc"));
+      expect(await countCards(page)).toBeGreaterThan(1);
       const ascending = (await priceOf()).filter((n): n is number => n !== null);
       expect(ascending.length).toBeGreaterThan(1);
       expect(ascending).toEqual([...ascending].sort((a, b) => a - b));
 
       await page.goto(at(locale, "/rackets?sort=price-desc"));
+      expect(await countCards(page)).toBeGreaterThan(1);
       const descending = (await priceOf()).filter((n): n is number => n !== null);
       expect(descending).toEqual([...descending].sort((a, b) => b - a));
     });

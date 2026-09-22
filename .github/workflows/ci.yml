@@ -171,6 +171,7 @@ jobs:
             e2e/.report
             e2e/.results
           retention-days: 7
+          include-hidden-files: true
 
   dev-smoke:
     name: Cache Components validation
