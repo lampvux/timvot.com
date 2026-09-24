@@ -26,9 +26,20 @@ import { WatchPriceSlot } from "@/components/watch-price-slot";
 import { RacketGallery } from "@/components/racket-gallery";
 import { StringRecommender } from "@/components/string-recommender";
 import { LazySimilarRackets } from "@/components/lazy-similar-rackets";
-import { getRacketCore, getRacketDetail, getRackets } from "@/lib/data/repository";
-import { MIN_REVIEWS_FOR_PLAYER_SCORE } from "@/lib/court-score";
-import { ReviewDate } from "@/components/review-date";
+import {
+  REVIEW_PAGE_SIZE,
+  getRacketCore,
+  getRacketDetail,
+  getRackets,
+} from "@/lib/data/repository";
+import {
+  MIN_REVIEWS_FOR_PLAYER_SCORE,
+  tallyCount,
+  type ReviewTally,
+} from "@/lib/court-score";
+import { ReviewSlot } from "@/components/review-slot";
+import { ReviewPager } from "@/components/review-pager";
+import { RATING_AXES } from "@/lib/review-standards";
 import {
   BALANCE_MESSAGE_KEY,
   CONDITION_MESSAGE_KEY,
@@ -37,7 +48,7 @@ import {
   formatTension,
 } from "@/lib/format";
 import { EVEN_BAND_MAX_MM, EVEN_BAND_MIN_MM } from "@/lib/types";
-import type { Review, SellerTier } from "@/lib/types";
+import type { SellerTier } from "@/lib/types";
 import {
   finishFunctionProfile,
   profileFunction,
@@ -202,7 +213,8 @@ export default async function RacketPage({
     getRacketDetail(brand, model),
   );
   if (!detail) notFound();
-  const { racket, offers, reviews, price } = detail;
+  const { racket, offers, reviews, reviewTally, price } = detail;
+  const reviewTotal = tallyCount(reviewTally);
 
   const t = await profileFunction("i18n.getTranslations.racket", () =>
     getTranslations("racket"),
@@ -369,7 +381,7 @@ export default async function RacketPage({
     brand,
     model,
     offerCount: offers.length,
-    reviewCount: reviews.length,
+    reviewCount: reviewTotal,
   });
 
   return (
@@ -662,32 +674,40 @@ export default async function RacketPage({
             <span id="reviews">{t("reviews")}</span>
           </Eyebrow>
           <span className="font-mono text-[12px] tabular-nums text-tertiary">
-            {t("reviewsVerified", { count: racket.reviewCount })}
+            {t("reviewsCount", {
+              count: reviewTotal,
+              verified: reviewTotal - reviewTally.community.count,
+            })}
           </span>
         </div>
 
-        {reviews.length === 0 ? (
+        {reviewTotal === 0 ? (
           <EmptyState title={t("noReviewsTitle")} body={t("noReviewsBody")} />
         ) : (
-          <div className="grid gap-3 lg:grid-cols-3">
-            {reviews.slice(0, 3).map((review) => (
-              <ReviewCard key={review.id} review={review} locale={locale} />
-            ))}
-          </div>
+          <>
+            <ReviewAverages tally={reviewTally} />
+            <ReviewPager
+              racketId={racket.id}
+              total={reviewTotal}
+              pageSize={REVIEW_PAGE_SIZE}
+              initial={reviews}
+            />
+          </>
         )}
-        {reviews.length > 3 && (
-          <p className="mt-3 text-body-sm font-semibold text-brand">
-            {t("readAllReviews", { count: reviews.length })}
-          </p>
-        )}
-        {reviews.length < MIN_REVIEWS_FOR_PLAYER_SCORE && (
+        {reviewTotal < MIN_REVIEWS_FOR_PLAYER_SCORE && (
           <p className="mt-2 text-caption text-tertiary">
             {t("specOnlyNote", {
-              count: reviews.length,
+              count: reviewTotal,
               needed: MIN_REVIEWS_FOR_PLAYER_SCORE,
             })}
           </p>
         )}
+
+        <ReviewSlot
+          racketId={racket.id}
+          locale={locale}
+          maxTension={racket.maxTensionLbs[1]}
+        />
       </section>
 
       {lowestOffer && (
@@ -724,61 +744,32 @@ export default async function RacketPage({
   );
 }
 
-/** Reviewer context chips sit above the prose, not below: "4U G5 at 26 lbs,
- *  intermediate doubles" is what makes the sentence that follows usable. */
-async function ReviewCard({
-  review,
-  locale,
-}: {
-  review: Review;
-  locale: Locale;
-}) {
-  const te = await getTranslations("enums");
-
+/** Plain averages on the review form's own 1–5 scale, every tier counted
+ *  once. This is what readers said, not the Court Score: the score weights
+ *  tiers and lives in the aside with its methodology. */
+async function ReviewAverages({ tally }: { tally: ReviewTally }) {
+  const tr = await getTranslations("racket");
+  const count = tallyCount(tally);
   return (
-    <article className="rounded-md border border-line bg-card p-4">
-      <div className="mb-2.5 flex items-center gap-2">
-        <TrustBadge
-          state={review.tier === "community" ? "unverified" : "verified"}
-          label={te(
-            review.tier === "purchase"
-              ? "tierPurchase"
-              : review.tier === "owner"
-                ? "tierOwner"
-                : "tierCommunity",
-          )}
-        />
-        <ReviewDate iso={review.createdAt} locale={locale} />
-      </div>
-
-      <div className="mb-2.5 flex flex-wrap gap-1.5">
-        <Tag>
-          {te(
-            review.skillLevel === "beginner"
-              ? "skillBeginner"
-              : review.skillLevel === "intermediate"
-                ? "skillIntermediate"
-                : "skillAdvanced",
-          )}
-        </Tag>
-        <Tag>
-          {te(review.format === "singles" ? "formatSingles" : "formatDoubles")} ·{" "}
-          {te(
-            review.position === "net"
-              ? "positionNet"
-              : review.position === "mid"
-                ? "positionMid"
-                : "positionRear",
-          ).toLowerCase()}
-        </Tag>
-        <Tag mono>
-          {review.stringModel} · {review.tensionLbs} lbs
-        </Tag>
-      </div>
-
-      <p className="text-[14px] leading-[1.55] text-ink-700">
-        {review.body[locale]}
+    <div className="mb-3 rounded-md border border-line bg-card px-4 py-3">
+      <p className="mb-2 text-caption text-tertiary">
+        {tr("reviewAverages", { count })}
       </p>
-    </article>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {RATING_AXES.map((axis) => {
+          const mean =
+            (tally.purchase[axis] + tally.owner[axis] + tally.community[axis]) / count;
+          return (
+            <div key={axis}>
+              <dt className="eyebrow text-tertiary">{tr(axis)}</dt>
+              <dd className="font-mono text-[17px] tabular-nums text-primary">
+                {mean.toFixed(1)}
+                <span className="text-[12px] text-tertiary">/5</span>
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
   );
 }

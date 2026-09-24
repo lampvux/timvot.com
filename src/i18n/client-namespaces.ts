@@ -28,6 +28,7 @@ export const CLIENT_NAMESPACES = [
   "guides",
   "nav",
   "profile",
+  "reviewForm",
   "racket",
   "sellerApplication",
   "sellerListing",

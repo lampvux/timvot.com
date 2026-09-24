@@ -15,6 +15,7 @@
     "guides:generate": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts",
     "guides:daily": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts --daily",
     "guides:check": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts --check",
+    "guides:models": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts --models",
     "guides:research": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts --research-only",
     "guides:revalidate": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/index.ts --revalidate",
     "guides:repair-vi": "node --import ./scripts/guides/typescript-loader.mjs scripts/guides/repair-vietnamese.ts",
@@ -68,7 +69,8 @@
     "images:cache-repair": "tsx scripts/scraper/images/repair-cache-control.ts",
     "images:reconcile": "tsx scripts/scraper/images/reconcile.ts",
     "catalogue:dupes": "tsx scripts/duplicate-rackets.ts",
-    "test:catalogue": "tsx --test scripts/duplicate-rackets.test.ts"
+    "test:catalogue": "tsx --test scripts/duplicate-rackets.test.ts scripts/racket-release-years.test.ts",
+    "rackets:years": "tsx scripts/racket-release-years.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

@@ -401,3 +401,33 @@ test("reviewCount reports what it was given, not what it used", () => {
 test("playerProfile refuses an empty list rather than dividing by zero", () => {
   assert.equal(playerProfile([]), null);
 });
+
+/* ------------------------------------------------------------ the tally */
+
+test("a tally scores every seeded racket exactly as its reviews do", async () => {
+  // The detail page now receives per-tier sums from Postgres instead of every
+  // review. This is the proof that the reduction changes no score: the
+  // reference below is the per-review weighted mean, written out longhand.
+  const { courtScoreFromTally, tallyReviews } = await import("./court-score");
+  let compared = 0;
+  for (const racket of rackets) {
+    const own = reviews.filter((review) => review.racketId === racket.id);
+    const viaTally = courtScoreFromTally(racket, tallyReviews(own));
+    assert.deepEqual(viaTally, courtScore(racket, own), racket.id);
+
+    if (own.length >= MIN_REVIEWS_FOR_PLAYER_SCORE) {
+      const weight = own.reduce((sum, r) => sum + REVIEW_WEIGHT[r.tier], 0);
+      const mean = (axis: "power" | "speed" | "control" | "comfort") =>
+        own.reduce((sum, r) => sum + r[axis] * REVIEW_WEIGHT[r.tier], 0) / weight;
+      const toTen = (v: number) => Math.round(((v - 1) / 4) * 100) / 10;
+      assert.deepEqual(viaTally.player, {
+        power: toTen(mean("power")),
+        speed: toTen(mean("speed")),
+        control: toTen(mean("control")),
+        comfort: toTen(mean("comfort")),
+      }, racket.id);
+      compared += 1;
+    }
+  }
+  assert.ok(compared > 0, "no seeded racket has enough reviews to compare");
+});

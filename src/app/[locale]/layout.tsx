@@ -12,7 +12,6 @@ import { fontVariables } from "@/app/fonts";
 import { AccountSlot } from "@/components/auth-slot";
 import { CompareProvider, CompareTray } from "@/components/compare-tray";
 import { MobileTabBar, TopBar } from "@/components/site-chrome";
-import { SiteFooter } from "@/components/site-footer";
 import { NavigationProgress } from "@/components/navigation-progress";
 import {
   finishFunctionProfile,
@@ -119,7 +118,6 @@ export default async function LocaleLayout({
               <main id="main" className="flex-1">
                 {children}
               </main>
-              <SiteFooter />
               <CompareTray />
               <MobileTabBar />
             </div>

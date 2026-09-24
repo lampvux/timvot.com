@@ -17,11 +17,19 @@ export const archivo = Archivo({
   display: "swap",
 });
 
-/** UI and body. Primary font: Google Sans Flex. */
+/** UI and body. Primary font: Google Sans Flex.
+ *
+ *  `adjustFontFallback: false` because next/font's metrics table has no entry
+ *  for this face: it cannot generate a size-adjusted fallback, and says so on
+ *  every build ("Failed to find font override values"). Turning it off states
+ *  that rather than warning about it. The fallback stack is the one
+ *  `--font-ui` in globals.css already names. */
 export const googleSansFlex = Google_Sans_Flex({
   subsets: ["latin", "vietnamese"],
   variable: "--font-google-sans-flex",
   display: "swap",
+  adjustFontFallback: false,
+  fallback: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
 });
 
 /** Data. Prices, spec codes, serials, deltas, tension. */

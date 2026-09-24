@@ -107,7 +107,7 @@ export default async function DealsPage({
   );
 
   return (
-    <div className="deals-page">
+    <>
       <section data-theme="inverse" className="bg-green-900">
         <div className="page-shell grid gap-8 py-9 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:gap-16 lg:py-14">
           <div>
@@ -350,6 +350,6 @@ export default async function DealsPage({
           </Card>
         </div>
       </section>
-    </div>
+    </>
   );
 }

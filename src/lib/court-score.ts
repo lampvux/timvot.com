@@ -154,20 +154,77 @@ export function toScore(composite: number): number {
   return Math.min(100, Math.max(0, Math.round((composite - 5.4) * 22 + 58)));
 }
 
+/** The only fields of a review the score reads. */
+export type ReviewRating = Pick<Review, "tier" | "power" | "speed" | "control" | "comfort">;
+
+/** Per-tier count and raw axis sums — no weights, no averages. */
+export interface TierTotals {
+  count: number;
+  power: number;
+  speed: number;
+  control: number;
+  comfort: number;
+}
+
+/**
+ * Reviews reduced to what the player half needs.
+ *
+ * Unweighted on purpose: a tally is a count and four sums per tier, which
+ * Postgres can produce for a racket with ten thousand reviews without sending
+ * them (`get_racket_detail_market` does exactly that). Every weight and every
+ * threshold is applied below, in this file, so the methodology still has one
+ * definition.
+ */
+export type ReviewTally = Record<ReviewTier, TierTotals>;
+
+const emptyTotals = (): TierTotals => ({
+  count: 0,
+  power: 0,
+  speed: 0,
+  control: 0,
+  comfort: 0,
+});
+
+export function emptyTally(): ReviewTally {
+  return { purchase: emptyTotals(), owner: emptyTotals(), community: emptyTotals() };
+}
+
+export function tallyReviews(reviews: readonly ReviewRating[]): ReviewTally {
+  const tally = emptyTally();
+  for (const review of reviews) {
+    const totals = tally[review.tier];
+    totals.count += 1;
+    totals.power += review.power;
+    totals.speed += review.speed;
+    totals.control += review.control;
+    totals.comfort += review.comfort;
+  }
+  return tally;
+}
+
+export function tallyCount(tally: ReviewTally): number {
+  return tally.purchase.count + tally.owner.count + tally.community.count;
+}
+
 /** Weighted average of review axes, mapped from the 1–5 form to 0–10. */
-export function playerProfile(reviews: Review[]): AxisScores | null {
-  if (reviews.length < MIN_REVIEWS_FOR_PLAYER_SCORE) return null;
+export function playerProfile(reviews: readonly ReviewRating[]): AxisScores | null {
+  return playerProfileFromTally(tallyReviews(reviews));
+}
+
+export function playerProfileFromTally(tally: ReviewTally): AxisScores | null {
+  if (tallyCount(tally) < MIN_REVIEWS_FOR_PLAYER_SCORE) return null;
 
   let totalWeight = 0;
   const sums = { power: 0, speed: 0, control: 0, comfort: 0 };
 
-  for (const review of reviews) {
-    const weight = REVIEW_WEIGHT[review.tier];
-    totalWeight += weight;
-    sums.power += review.power * weight;
-    sums.speed += review.speed * weight;
-    sums.control += review.control * weight;
-    sums.comfort += review.comfort * weight;
+  for (const tier of Object.keys(REVIEW_WEIGHT) as ReviewTier[]) {
+    const weight = REVIEW_WEIGHT[tier];
+    const totals = tally[tier];
+    totalWeight += totals.count * weight;
+    sums.power += totals.power * weight;
+    sums.speed += totals.speed * weight;
+    sums.control += totals.control * weight;
+    sums.comfort += totals.comfort * weight;
   }
 
   if (totalWeight === 0) return null;
@@ -201,9 +258,13 @@ export interface CourtScore {
   specOnly: boolean;
 }
 
-export function courtScore(racket: Racket, reviews: Review[]): CourtScore {
+export function courtScore(racket: Racket, reviews: readonly ReviewRating[]): CourtScore {
+  return courtScoreFromTally(racket, tallyReviews(reviews));
+}
+
+export function courtScoreFromTally(racket: Racket, tally: ReviewTally): CourtScore {
   const spec = specProfileForRacket(racket);
-  const player = playerProfile(reviews);
+  const player = playerProfileFromTally(tally);
 
   const specComposite = aggregate(spec);
   const playerComposite = player ? aggregate(player) : null;
@@ -213,7 +274,7 @@ export function courtScore(racket: Racket, reviews: Review[]): CourtScore {
     specScore: toScore(specComposite),
     player,
     playerScore: playerComposite === null ? null : toScore(playerComposite),
-    reviewCount: reviews.length,
+    reviewCount: tallyCount(tally),
     specOnly: player === null,
     total:
       playerComposite === null

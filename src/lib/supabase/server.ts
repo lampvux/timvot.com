@@ -1,4 +1,9 @@
 import { cookies } from "next/headers";
+// The module `next/navigation` re-exports on the server. Imported directly
+// because the node:test suites load this file outside the Next bundler, where
+// `next/navigation` resolves to its client build and needs a React client
+// context that does not exist there.
+import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow";
 import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -62,7 +67,13 @@ export async function createClient({
         },
       },
     });
-  } catch {
+  } catch (error) {
+    // Under Cache Components, `cookies()` in a prerender rejects with the
+    // signal Next uses to stop rendering this subtree and stream it at request
+    // time. Swallowing that signal is what let the static client below run
+    // `auth.getUser()` — and Supabase Auth's `Date.now()` — inside the
+    // prerender. Hand it back to Next; only a genuine failure falls through.
+    unstable_rethrow(error);
     // Called inside static context (e.g. generateStaticParams / static generation).
     // Accessing cookies() is not supported without an HTTP request.
     return createStaticClient();
@@ -77,7 +88,8 @@ export async function getUser() {
       data: { user },
     } = await supabase.auth.getUser();
     return user;
-  } catch {
+  } catch (error) {
+    unstable_rethrow(error);
     return null;
   }
 }

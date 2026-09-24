@@ -25,7 +25,7 @@ let validationError = "";
 for (let attempt = 0; attempt < 3; attempt++) {
   const result = record(await llm.json(
     "Translate the supplied English badminton guide into fluent, natural Vietnamese. Every human-readable Vietnamese field must use correct Unicode Vietnamese diacritics; ASCII transliteration is invalid. Preserve every fact, number, product name, source ID, version, table shape, and section id exactly. Do not add or remove claims. Only section id fields stay in ASCII. Return {vi:{title,excerpt,document:{version:1,takeaways:[strings],sections:[{id,heading,paragraphs:[strings],bullets?:[strings],table?:{headers:[strings],rows:[[strings]]},sourceIds:[integers]}]}}}.",
-    { english: en, sources, ...(validationError ? { fix: validationError } : {}) },
+    { english: en, sources, ...(validationError ? { fix: validationError } : {}) }, 10000, "Vietnamese translation",
   ), "Vietnamese repair");
   try {
     draft = validateDraft({ ...base, vi: result.vi }, sources);
@@ -39,7 +39,7 @@ if (!draft) throw new Error("No valid Vietnamese repair");
 
 const review = record(await llm.json(
   "Compare the English guide and Vietnamese translation. Reject any missing or added claim, changed number, changed product name, changed citation, ASCII-only Vietnamese, unnatural Vietnamese, or mismatched section. Return {approved:boolean,bilingual:boolean,issues:[strings]}.",
-  { en: draft.en, vi: draft.vi }, 3500,
+  { en: draft.en, vi: draft.vi }, 3500, "translation review",
 ), "Translation review");
 if (review.approved !== true || review.bilingual !== true || !Array.isArray(review.issues) || review.issues.length) throw new Error(`Translation review failed: ${JSON.stringify(review.issues ?? "invalid review")}`);
 

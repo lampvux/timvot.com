@@ -605,6 +605,175 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
     });
   });
 
+  /* ------------------------------------------------- community reviews RPC */
+
+  const submitArgs = (body: string) => [
+    RACKET_ID, "intermediate", "doubles", "rear", "BG65", 25, 4, 3, 4, 3, body, "en",
+  ];
+  const SUBMIT = `select public.submit_review($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) as id`;
+  const BODY = "Solid clears from the rear court, a little slow on drives at the net.";
+  /** A refused call aborts the transaction; a savepoint keeps the next one
+   *  meaningful. Only used for calls expected to fail. */
+  const attempt = async (client: Client, args: unknown[]) => {
+    await client.query("savepoint attempt");
+    try {
+      await client.query(SUBMIT, args);
+    } finally {
+      await client.query("rollback to savepoint attempt");
+    }
+  };
+
+  it("refuses a direct author insert, even as the author", async () => {
+    // The init policies let an author insert tier 'purchase', status
+    // 'published' — a 3x-weighted Court Score review written by anyone.
+    await harness.asUser(SHOPPER, async (client) => {
+      await expectWriteRefused(
+        () =>
+          client.query(
+            `insert into reviews (
+               id, racket_id, user_id, author_name, tier, skill_level, format,
+               position, string_model, tension_lbs, power, speed, control, comfort,
+               body_en, body_vi, status
+             ) values ($1, $2, $3, 'Self', 'purchase', 'advanced', 'singles',
+                       'rear', 'BG65', 24, 5, 5, 5, 5, 'x', 'x', 'published')`,
+            [randomUUID(), RACKET_ID, SHOPPER],
+          ),
+        "an author inserted a review around submit_review",
+      );
+    });
+  });
+
+  it("publishes a community review through submit_review, with the tier forced", async () => {
+    await harness.asUser(SHOPPER, async (client) => {
+      const { rows } = await client.query(SUBMIT, submitArgs(BODY));
+      const { rows: stored } = await client.query(
+        "select user_id, tier, status, body_en, body_vi from reviews where id = $1",
+        [rows[0].id],
+      );
+      assert.equal(stored[0].user_id, SHOPPER);
+      assert.equal(stored[0].tier, "community", "an author chose their own tier.");
+      assert.equal(stored[0].status, "published");
+      assert.equal(stored[0].body_en, BODY);
+      assert.equal(stored[0].body_vi, null);
+    });
+  });
+
+  it("refuses submit_review for an anonymous visitor", async () => {
+    await harness.asAnon(async (client) => {
+      await expectWriteRefused(
+        () => client.query(SUBMIT, submitArgs(BODY)),
+        "anon submitted a review",
+      );
+    });
+  });
+
+  it("holds one review per racket, a cooldown, and the content rules", async () => {
+    await harness.asUser(OTHER_SHOPPER, async (client) => {
+      await client.query(SUBMIT, submitArgs(BODY));
+      await assert.rejects(
+        () => attempt(client, submitArgs(BODY)),
+        /review_duplicate/,
+        "one account reviewed the same racket twice",
+      );
+    });
+
+    await harness.asUser(SHOPPER, async (client) => {
+      await assert.rejects(
+        () => attempt(client, submitArgs("too short")),
+        /review_invalid/,
+      );
+      await assert.rejects(
+        () => attempt(client, submitArgs(`${BODY} Cheaper at https://example.test`)),
+        /review_links/,
+      );
+      const nullRating = submitArgs(BODY);
+      nullRating[6] = null as never;
+      await assert.rejects(
+        () => attempt(client, nullRating),
+        /review_invalid/,
+        "a null rating passed the range check",
+      );
+    });
+
+    // Cooldown: a second racket straight after the first.
+    const second = "r-test-2";
+    await harness.client.query(
+      `insert into rackets (
+         id, slug, brand_id, name, release_year, balance_point_mm, shaft_flex,
+         shaft_diameter_mm, frame_shape, frame_material, max_tension_min_lbs,
+         max_tension_max_lbs, length_mm, string_pattern, msrp, currency,
+         play_style_tags, skill_level, summary_en, summary_vi
+       ) select $1, 'test-racket-2', brand_id, 'Test Racket 2', release_year,
+                balance_point_mm, shaft_flex, shaft_diameter_mm, frame_shape,
+                frame_material, max_tension_min_lbs, max_tension_max_lbs, length_mm,
+                string_pattern, msrp, currency, play_style_tags, skill_level,
+                summary_en, summary_vi
+         from rackets where id = $2`,
+      [second, RACKET_ID],
+    );
+    try {
+      await harness.asUser(OTHER_SHOPPER, async (client) => {
+        await client.query(SUBMIT, submitArgs(BODY));
+        const args = submitArgs(BODY);
+        args[0] = second;
+        await assert.rejects(() => attempt(client, args), /review_cooldown/);
+      });
+    } finally {
+      await harness.client.query("delete from rackets where id = $1", [second]);
+    }
+  });
+
+  it("pages published reviews only, capped, and tallies them per tier", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 15; i += 1) {
+      const id = `rv-page-${String(i).padStart(2, "0")}`;
+      ids.push(id);
+      await harness.client.query(
+        `insert into reviews (
+           id, racket_id, author_name, tier, skill_level, format, position,
+           string_model, tension_lbs, power, speed, control, comfort, body_en,
+           status, created_at
+         ) values ($1, $2, 'Page', $3, 'intermediate', 'doubles', 'mid',
+                   'BG65', 25, 4, 3, 2, 5, 'x', $4, now() - make_interval(mins => $5))`,
+        [id, RACKET_ID, i % 3 === 0 ? "purchase" : "community",
+         i === 14 ? "pending" : "published", i],
+      );
+    }
+    try {
+      await harness.asAnon(async (client) => {
+        const first = await client.query(
+          "select public.get_racket_reviews($1, 0, 3) as rows", [RACKET_ID]);
+        assert.deepEqual(
+          first.rows[0].rows.map((r: { id: string }) => r.id),
+          ["rv-page-00", "rv-page-01", "rv-page-02"],
+          "page one is not the newest three",
+        );
+        const capped = await client.query(
+          "select jsonb_array_length(public.get_racket_reviews($1, 0, 500)) as n", [RACKET_ID]);
+        assert.equal(capped.rows[0].n, 12, "a caller asked for 500 reviews and got them");
+        const tail = await client.query(
+          "select public.get_racket_reviews($1, 12, 12) as rows", [RACKET_ID]);
+        assert.deepEqual(
+          tail.rows[0].rows.map((r: { id: string }) => r.id),
+          ["rv-page-12", "rv-page-13"],
+          "the pending review leaked into a public page",
+        );
+
+        const market = await client.query(
+          "select public.get_racket_detail_market('test', 'test-racket') as m");
+        const m = market.rows[0].m;
+        assert.equal(m.first_reviews.length, 3);
+        assert.equal("reviews" in m, false, "the market read still ships every review");
+        // 14 published: i = 0,3,6,9,12 are purchase (5), the rest community (9).
+        assert.deepEqual(m.review_tally.purchase,
+          { count: 5, power: 20, speed: 15, control: 10, comfort: 25 });
+        assert.equal(m.review_tally.community.count, 9);
+      });
+    } finally {
+      await harness.client.query("delete from reviews where id = any($1)", [ids]);
+    }
+  });
+
   /* ------------------------------------------------------------- an admin */
 
   it("lets an admin manage the catalogue", async () => {

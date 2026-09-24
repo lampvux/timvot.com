@@ -52,9 +52,10 @@ quality gate, not a mathematical guarantee.
 ## Operational decisions
 
 - Use existing Supabase and local 9router; no new hosted AI or database service.
-- Pin a model explicitly and allow only user-confirmed free model IDs. Never
-  silently fall back to another model or paid provider. Check the selected combo's
-  own fallback policy in 9router as well.
+- Pin a model explicitly in `NINE_ROUTER_MODEL` and allow it through
+  `NINE_ROUTER_ALLOWED_MODELS`. Existing free-only installations can retain
+  `NINE_ROUTER_FREE_MODELS`. Never silently fall back to another model or provider.
+  Check the selected combo's quota, pricing, and fallback policy in 9router as well.
 - Default schedule: 09:00 local machine time; daily identity uses `GUIDE_TIMEZONE`
   (default `Asia/Hovd`). The machine and 9router must be running. A missed task may
   run after startup, but does not bulk-publish missed days.
@@ -68,7 +69,7 @@ quality gate, not a mathematical guarantee.
 
 ## Acceptance checks
 
-- One real bilingual guide generated through the configured free 9router model,
+- One real bilingual guide generated through the explicitly allowed 9router model,
   persisted to Supabase, and readable in both locales.
 - Re-running the same daily key publishes nothing; overlapping claims cannot win.
 - Duplicate topics/body hashes, bad citations, malformed JSON, and failed review
