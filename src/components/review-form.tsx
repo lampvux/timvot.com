@@ -5,9 +5,27 @@ import { useTranslations } from "next-intl";
 import type { Locale } from "@/i18n/routing";
 import { Button, Icon, cx } from "@/components/ds/primitives";
 import { Field, Input, Select, Textarea } from "@/components/ds/forms";
-import { submitReview, type ReviewFormState } from "@/lib/review-actions";
+import {
+  submitReview,
+  updateReview,
+  type ReviewFormState,
+} from "@/lib/review-actions";
 import { RATING_AXES, REVIEW_LIMITS } from "@/lib/review-standards";
-import type { SkillLevel } from "@/lib/types";
+import type { Review, SkillLevel } from "@/lib/types";
+
+/** The author's own review, when the form is editing rather than creating. */
+export type ExistingReview = Pick<
+  Review,
+  | "skillLevel"
+  | "format"
+  | "position"
+  | "stringModel"
+  | "tensionLbs"
+  | "power"
+  | "speed"
+  | "control"
+  | "comfort"
+> & { body: string };
 
 /**
  * The write half of the reviews section, for a signed-in reader.
@@ -22,20 +40,22 @@ export function ReviewForm({
   locale,
   initialSkill,
   maxTension,
+  existing,
 }: {
   racketId: string;
   locale: Locale;
   initialSkill?: SkillLevel | null;
   maxTension: number;
+  existing?: ExistingReview;
 }) {
   const t = useTranslations("reviewForm");
   const te = useTranslations("enums");
   const tr = useTranslations("racket");
   const [state, action, pending] = useActionState<ReviewFormState, FormData>(
-    submitReview,
+    existing ? updateReview : submitReview,
     {},
   );
-  const [bodyLength, setBodyLength] = useState(0);
+  const [bodyLength, setBodyLength] = useState(existing?.body.trim().length ?? 0);
 
   if (state.submitted) {
     return (
@@ -44,12 +64,12 @@ export function ReviewForm({
         className="flex items-start gap-2 rounded-md border border-line bg-card px-4 py-3 text-body-sm text-primary"
       >
         <Icon name="CircleCheck" size="sm" className="mt-0.5 text-brand" />
-        {t("submitted")}
+        {state.edited ? t("saved") : t("submitted")}
       </p>
     );
   }
 
-  const tensionDefault = Math.min(
+  const tensionDefault = existing?.tensionLbs ?? Math.min(
     REVIEW_LIMITS.tensionMax,
     Math.max(REVIEW_LIMITS.tensionMin, Math.min(24, maxTension)),
   );
@@ -72,7 +92,7 @@ export function ReviewForm({
           name="skillLevel"
           size="lg"
           required
-          defaultValue={initialSkill ?? "intermediate"}
+          defaultValue={existing?.skillLevel ?? initialSkill ?? "intermediate"}
           options={[
             { value: "beginner", label: te("skillBeginner") },
             { value: "intermediate", label: te("skillIntermediate") },
@@ -86,7 +106,7 @@ export function ReviewForm({
           name="format"
           size="lg"
           required
-          defaultValue="doubles"
+          defaultValue={existing?.format ?? "doubles"}
           options={[
             { value: "singles", label: te("formatSingles") },
             { value: "doubles", label: te("formatDoubles") },
@@ -99,7 +119,7 @@ export function ReviewForm({
           name="position"
           size="lg"
           required
-          defaultValue="mid"
+          defaultValue={existing?.position ?? "mid"}
           options={[
             { value: "net", label: te("positionNet") },
             { value: "mid", label: te("positionMid") },
@@ -118,6 +138,7 @@ export function ReviewForm({
             minLength={REVIEW_LIMITS.stringMin}
             maxLength={REVIEW_LIMITS.stringMax}
             autoComplete="off"
+            defaultValue={existing?.stringModel}
           />
         </Field>
       </div>
@@ -140,7 +161,13 @@ export function ReviewForm({
           {t("ratings")}
         </legend>
         {RATING_AXES.map((axis) => (
-          <RatingInput key={axis} name={axis} label={tr(axis)} scale={t("scale")} />
+          <RatingInput
+            key={axis}
+            name={axis}
+            label={tr(axis)}
+            scale={t("scale")}
+            initial={existing?.[axis]}
+          />
         ))}
       </fieldset>
 
@@ -162,6 +189,7 @@ export function ReviewForm({
             maxLength={REVIEW_LIMITS.bodyMax}
             rows={5}
             placeholder={t("bodyPlaceholder")}
+            defaultValue={existing?.body}
             onChange={(event) => setBodyLength(event.currentTarget.value.trim().length)}
           />
         </Field>
@@ -177,6 +205,7 @@ export function ReviewForm({
             {t(`error.${state.error}`, {
               perDay: REVIEW_LIMITS.perDay,
               seconds: REVIEW_LIMITS.cooldownSeconds,
+              days: REVIEW_LIMITS.editWindowDays,
             })}
           </p>
           {state.violations && state.violations.length > 0 && (
@@ -200,7 +229,7 @@ export function ReviewForm({
 
       <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
         <Button type="submit" variant="primary" size="lg" disabled={pending}>
-          {pending ? t("submitting") : t("submit")}
+          {pending ? t("submitting") : existing ? t("saveEdit") : t("submit")}
         </Button>
         <span className="text-caption text-tertiary">{t("tierNote")}</span>
       </div>
@@ -213,10 +242,12 @@ function RatingInput({
   name,
   label,
   scale,
+  initial,
 }: {
   name: string;
   label: string;
   scale: string;
+  initial?: number;
 }) {
   return (
     <div role="radiogroup" aria-label={`${label}, ${scale}`} className="flex items-center gap-3">
@@ -237,6 +268,7 @@ function RatingInput({
               name={name}
               value={value}
               required
+              defaultChecked={initial === value}
               className="sr-only"
               aria-label={`${label} ${value}`}
             />

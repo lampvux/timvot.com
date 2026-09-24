@@ -208,7 +208,32 @@ export function SellersSkeleton() {
           </div>
         ))}
       </div>
-      <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <SellerDirectorySkeleton bare />
+    </div>
+  );
+}
+
+/** The ranked list alone: the fallback while the directory reads its URL.
+ *  Same boxes as the real controls and cards so nothing moves on arrival. */
+export function SellerDirectorySkeleton({ bare = false }: { bare?: boolean }) {
+  return (
+    <div
+      className="mt-8"
+      {...(bare ? {} : { role: "status", "aria-busy": true })}
+    >
+      {!bare && <span className="sr-only">Loading sellers directory</span>}
+      <div className="space-y-3 rounded-md border border-line bg-card p-4">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-2">
+            <Bar className="h-3 w-16" />
+            <Bar className="h-11 w-24 lg:h-8" />
+            <Bar className="h-11 w-24 lg:h-8" />
+            <Bar className="h-11 w-24 lg:h-8" />
+          </div>
+        ))}
+      </div>
+      <Bar className="mt-5 h-3.5 w-32" />
+      <div className="mt-3 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 6 }, (_, i) => (
           <div key={i} className="rounded-md border border-line bg-card p-5">
             <Bar className="h-5 w-36" />
