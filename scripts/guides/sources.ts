@@ -13,7 +13,7 @@ export const SOURCE_PAGES = [
   "https://us.yonex.com/collections/badminton-strings",
   "https://www.victorsport.com/badmintonaz/16586",
   "https://www.victorsport.com/product/js-520-a",
-  "https://th.victorsport.com/badmintonaz/2446/Choosing-the-right-racket-for-yourself-Part-1",
+  "https://www.victor-europe.com/badmintonaz/2446/Choosing-the-right-racket-for-yourself-Part-1",
   "https://shopvnb.com/vot-cau-long.html",
   "https://fbshop.vn/vot-cau-long/",
   "https://hvshop.vn/vot-cau-long/",
@@ -144,6 +144,8 @@ export async function collectEvidence(): Promise<Evidence[]> {
     const ranked = links.sort((a, b) => createHash("sha256").update(dailyKey() + a).digest("hex").localeCompare(createHash("sha256").update(dailyKey() + b).digest("hex")));
     for (const url of ranked.slice(0, 2)) await read(url);
   }
-  if (new Set(evidence.map((s) => new URL(s.url).hostname)).size < 2) throw new Error("Research requires at least two accessible sources");
+  const operatorCount = new Set(evidence.map((s) => new URL(s.url).hostname)).size;
+  if (operatorCount < 2) throw new Error("Research requires at least two accessible sources");
+  console.log(`Research complete: ${evidence.length} sources across ${operatorCount} operators.`);
   return evidence;
 }

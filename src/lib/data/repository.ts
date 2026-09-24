@@ -4,7 +4,13 @@ import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { createStaticClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { courtScore } from "@/lib/court-score";
+import {
+  courtScoreFromTally,
+  emptyTally,
+  tallyCount,
+  tallyReviews,
+  type ReviewTally,
+} from "@/lib/court-score";
 import { balanceTypeOf } from "@/lib/format";
 import {
   bySteepestDrop,
@@ -390,7 +396,7 @@ function enrich(index: Index, racket: Racket): RacketWithMarket {
   return enrichRacket(
     racket,
     index.offersByRacket.get(racket.id) ?? EMPTY_OFFERS,
-    racketReviews,
+    tallyReviews(racketReviews),
     history,
   );
 }
@@ -399,20 +405,20 @@ function enrich(index: Index, racket: Racket): RacketWithMarket {
 function enrichRacket(
   racket: Racket,
   offers: readonly Offer[],
-  racketReviews: readonly Review[],
+  reviewTally: ReviewTally,
   history: PricePoint[],
 ): RacketWithMarket {
   const liveOffers = offers.filter(
     (offer) => offer.status === "live" && offer.qtyAvailable > 0,
   );
-  const score = courtScore(racket, racketReviews as Review[]);
+  const score = courtScoreFromTally(racket, reviewTally);
 
   return {
     ...racket,
     balanceType: balanceTypeOf(racket.balancePointMm),
     spec: score.spec,
     player: score.player,
-    reviewCount: racketReviews.length,
+    reviewCount: tallyCount(reviewTally),
     courtScore: score.total,
     specScore: score.specScore,
     lowestPrice: liveOffers.length
@@ -546,8 +552,33 @@ type RacketCoreRead =
 interface RacketMarketData {
   racketId: string;
   offers: OfferWithSeller[];
+  /** The first page only — see REVIEW_PAGE_SIZE. */
   reviews: Review[];
+  reviewTally: ReviewTally;
   history: PricePoint[];
+}
+
+/** Reviews per page on the detail page. The market RPC's `limit 3` is the
+ *  first page of the same size. */
+export const REVIEW_PAGE_SIZE = 3;
+
+/** `review_tally` from the market RPC: tier → count and raw axis sums. */
+function mapReviewTally(value: unknown): ReviewTally {
+  const tally = emptyTally();
+  const record = rpcRecord(value);
+  if (!record) return tally;
+  for (const tier of Object.keys(tally) as (keyof ReviewTally)[]) {
+    const row = rpcRecord(record[tier]);
+    if (!row) continue;
+    tally[tier] = {
+      count: Number(row.count ?? 0),
+      power: Number(row.power ?? 0),
+      speed: Number(row.speed ?? 0),
+      control: Number(row.control ?? 0),
+      comfort: Number(row.comfort ?? 0),
+    };
+  }
+  return tally;
 }
 
 type RacketMarketRead =
@@ -557,7 +588,10 @@ type RacketMarketRead =
 export interface RacketDetail {
   racket: RacketWithMarket;
   offers: OfferWithSeller[];
+  /** The newest REVIEW_PAGE_SIZE reviews; later pages come from getReviewPage. */
   reviews: Review[];
+  /** Every published review, reduced to counts and sums per tier. */
+  reviewTally: ReviewTally;
   price: VariantPrice | null;
 }
 
@@ -665,16 +699,24 @@ async function readRacketMarketByPath(
       .filter((offer): offer is OfferWithSeller => Boolean(offer))
       .sort((a, b) => a.price - b.price);
 
-    const reviews = rpcRows(payload.reviews)
+    // `review_tally` + `first_reviews` since 20260925000000_review_pagination;
+    // before it, every review arrived as `reviews`. Both are read so the app
+    // can deploy ahead of the migration.
+    const paged = "review_tally" in payload;
+    const reviewRows = rpcRows(paged ? payload.first_reviews : payload.reviews)
       .map((row) => mapReview(row as never))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const reviewTally = paged
+      ? mapReviewTally(payload.review_tally)
+      : tallyReviews(reviewRows);
+    const reviews = reviewRows.slice(0, REVIEW_PAGE_SIZE);
     const history = rpcRows(payload.price_points)
       .map((row) => mapPricePoint(row as never))
       .sort((a, b) => a.observedOn.localeCompare(b.observedOn));
 
     return {
       status: "found",
-      market: { racketId, offers, reviews, history },
+      market: { racketId, offers, reviews, reviewTally, history },
     };
   } catch (error) {
     console.warn(
@@ -727,12 +769,13 @@ export const getRacketDetail = cache(
       market.status === "found" &&
       core.racket.id === market.market.racketId
     ) {
-      const { offers, reviews, history } = market.market;
-      const racket = enrichRacket(core.racket, offers, reviews, history);
+      const { offers, reviews, reviewTally, history } = market.market;
+      const racket = enrichRacket(core.racket, offers, reviewTally, history);
       return {
         racket,
         offers,
         reviews,
+        reviewTally,
         price: headlineVariantPriceFromRows(racket, offers, history),
       };
     }
@@ -744,12 +787,18 @@ export const getRacketDetail = cache(
     const racket = index.enrichedByPath.get(`${brandSlug}/${racketSlug}`);
     if (!racket) return null;
 
-    const [offers, reviews, price] = await Promise.all([
+    const [offers, allReviews, price] = await Promise.all([
       getOffersForRacket(racket.id),
       getReviewsForRacket(racket.id),
       getHeadlineVariantPrice(racket),
     ]);
-    return { racket, offers, reviews, price };
+    return {
+      racket,
+      offers,
+      reviews: allReviews.slice(0, REVIEW_PAGE_SIZE),
+      reviewTally: tallyReviews(allReviews),
+      price,
+    };
   },
 );
 
@@ -1055,6 +1104,54 @@ async function readOffersForSeller(
 export async function getSeller(slug: string): Promise<Seller | null> {
   const sellers = await getSellers();
   return sellers.find((s) => s.slug === slug) ?? null;
+}
+
+async function readReviewPage(
+  racketId: string,
+  offset: number,
+  limit: number,
+): Promise<Review[] | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.reviews);
+
+  const supabase = createStaticClient("review-page-client");
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.rpc("get_racket_reviews", {
+      p_racket_id: racketId,
+      p_offset: offset,
+      p_limit: limit,
+    });
+    if (error) throw new Error(error.message);
+    if (!Array.isArray(data)) throw new Error("malformed review-page RPC response");
+    return rpcRows(data).map((row) => mapReview(row as never));
+  } catch (error) {
+    console.warn(
+      `[repository] review page RPC failed for ${racketId}: ` +
+        `${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * One page of a racket's reviews, newest first, 1-based.
+ *
+ * The detail page renders page one from the market read and asks for the rest
+ * only when a reader clicks, so a racket with thousands of reviews costs the
+ * page three of them. The seeded index answers when the RPC cannot.
+ */
+export async function getReviewPage(
+  racketId: string,
+  page: number,
+  pageSize = REVIEW_PAGE_SIZE,
+): Promise<Review[]> {
+  const offset = (Math.max(1, Math.floor(page)) - 1) * pageSize;
+  const direct = await readReviewPage(racketId, offset, pageSize);
+  if (direct) return direct;
+  return (await getReviewsForRacket(racketId)).slice(offset, offset + pageSize);
 }
 
 export async function getReviewsForRacket(racketId: string): Promise<Review[]> {

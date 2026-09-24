@@ -449,25 +449,6 @@
     padding-inline: 16px;
   }
 
-  /* The deals route begins with the same court-green band as its reference
-     hero. :has keeps the shared header server-rendered and route-aware without
-     moving pathname state into another client boundary. */
-  body:has(.deals-page) header {
-    --text-primary: var(--ink-0);
-    --text-secondary: rgba(255, 255, 255, 0.72);
-    --text-tertiary: rgba(255, 255, 255, 0.58);
-    --text-brand: var(--cyan-300);
-    --text-link-hover: var(--cyan-200);
-    --surface-card: var(--green-900);
-    --surface-sunken: var(--green-800);
-    --border-subtle: rgba(255, 255, 255, 0.13);
-    --border-default: rgba(255, 255, 255, 0.22);
-  }
-
-  body:has(.deals-page) header .text-ink-700 {
-    color: rgba(255, 255, 255, 0.74);
-  }
-
   /* Compare tables deliberately show a partial third racket on phones. */
   .compare-grid {
     grid-template-columns: 96px repeat(var(--compare-column-count), 128px);

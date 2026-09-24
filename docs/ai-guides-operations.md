@@ -5,21 +5,42 @@ The implementation plan is [ai-guides-plan.md](ai-guides-plan.md).
 ## Setup
 
 Use Node 24 and the existing project dependencies (`npm install`). Start 9router
-on this Windows machine. In its dashboard, select a genuinely free provider/model
-or a combo containing only free routes; a model listing alone does not establish
-quota or pricing. Do not enable a paid fallback in that combo.
+on this Windows machine. In its dashboard, connect the provider/model or combo
+you want to use and check its quota, pricing, and fallback policy. The worker
+uses one explicitly allowed model; listing a model does not establish that it
+is free. For free-only use, choose a combo containing only confirmed free routes.
 
 Add these to the ignored `.env.local`:
 
 ```dotenv
 NINE_ROUTER_BASE_URL=http://localhost:20128/v1
 NINE_ROUTER_API_KEY=<key from your local 9router dashboard>
-NINE_ROUTER_MODEL=<exact free model ID from /v1/models>
-NINE_ROUTER_FREE_MODELS=<same ID; comma separated if you approve several>
-NINE_ROUTER_API_MODE=responses
+NINE_ROUTER_MODEL=<exact model ID from npm run guides:models>
+NINE_ROUTER_ALLOWED_MODELS=<same ID; comma separated if you approve several>
+NINE_ROUTER_API_MODE=chat
 NINE_ROUTER_REASONING_EFFORT=low
+NINE_ROUTER_REQUEST_TIMEOUT_MS=600000
 GUIDE_TIMEZONE=Asia/Hovd
 ```
+
+`NINE_ROUTER_FREE_MODELS` remains supported when `NINE_ROUTER_ALLOWED_MODELS` is
+empty or unset. A nonempty `NINE_ROUTER_ALLOWED_MODELS` replaces that legacy
+allowlist; it does not enable automatic model selection or fallback.
+
+For xAI, use an exact `xai/...` ID listed by your instance and `chat` mode. For
+example, **if `xai/grok-4.6` is listed**:
+
+```dotenv
+NINE_ROUTER_MODEL=xai/grok-4.6
+NINE_ROUTER_ALLOWED_MODELS=xai/grok-4.6
+NINE_ROUTER_API_MODE=chat
+```
+
+Adding or switching a provider in 9router does not update `.env.local`. Run
+`npm run guides:models` to see all available model IDs without database access
+or generation. If the configured model is no longer listed, update both its ID
+and the allowlist, and choose the provider's API mode. The worker reads the
+shell environment first, then `.env.local`, then `.env`.
 
 The worker uses `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` already
 used by catalogue scripts. The browser never receives the service-role or model
@@ -28,7 +49,16 @@ OpenCode Muse models use 9router's Responses API, so set `NINE_ROUTER_API_MODE` 
 `responses` for them. Use `chat` only for models whose provider supports ordinary
 `/v1/chat/completions` requests.
 `low` reasoning is deliberate for this structured editorial pipeline: it leaves
-enough of a free model's output budget for both complete translations.
+enough of the model's output budget for both complete translations. The worker
+sends this setting to xAI Chat Completions as `reasoning_effort`; without it,
+Grok 4.6 defaults to high reasoning and can take several minutes on topic selection.
+The xAI chat route uses streaming so long bilingual responses are received as they
+are generated instead of waiting behind 9router's non-streaming response window.
+Generation requests allow 10 minutes by default because long bilingual xAI output
+can take more than three minutes through 9router. Set
+`NINE_ROUTER_REQUEST_TIMEOUT_MS` between `60000` and `1200000` to tune this. The
+worker logs the stage, elapsed time, response status, and model without logging
+prompts or credentials.
 
 Apply the additive guide migration once:
 
@@ -40,7 +70,7 @@ npm run guides:generate -- --dry-run
 npm run guides:daily
 ```
 
-`guides:check` verifies model discovery, the free-model allowlist, and access to the
+`guides:check` verifies model discovery, the explicit model allowlist, and access to the
 guide schema. It does not spend a generation request. A dry run performs research,
 generation, validation and review, saves a local artifact, and does not write the
 database. `guides:daily` publishes at most one guide for today's calendar date in
@@ -139,10 +169,10 @@ A cache-refresh failure never regenerates or rolls back a committed guide. If
 publication's network response is interrupted, re-run the same daily command:
 the database records publication atomically and prevents a second article.
 
-If 9router returns 401, check the local key. If it returns 429, wait for free quota
+If 9router returns 401, check the local key. If it returns 429, wait for provider quota
 to recover. If JSON is malformed, output is truncated, evidence is insufficient,
 or review fails, inspect the local artifact/log before retrying. Do not solve a
-free quota failure by enabling a paid fallback. Clear old local artifacts/logs
+free-only quota failure by enabling a paid fallback. Clear old local artifacts/logs
 periodically according to your desired retention.
 
 ## Validation
