@@ -70,7 +70,9 @@
     "images:reconcile": "tsx scripts/scraper/images/reconcile.ts",
     "catalogue:dupes": "tsx scripts/duplicate-rackets.ts",
     "test:catalogue": "tsx --test scripts/duplicate-rackets.test.ts scripts/racket-release-years.test.ts",
-    "rackets:years": "tsx scripts/racket-release-years.ts"
+    "rackets:years": "tsx scripts/racket-release-years.ts",
+    "strings:images": "tsx scripts/string-images.ts",
+    "strings:images:dry": "tsx scripts/string-images.ts --dry-run"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

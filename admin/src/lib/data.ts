@@ -281,3 +281,42 @@ export async function getActivity(limit = 100) {
 export function collectionExists(key: string) {
   return Boolean(getCollection(key));
 }
+
+export interface StringMedia {
+  stringId: string;
+  stringName: string;
+  brandName: string;
+  folder: string;
+  imageUrl: string | null;
+  thumbUrl: string | null;
+  imagePath: string | null;
+  sourceUrl: string | null;
+}
+
+/** The one packshot a string has, for the edit page's image panel. */
+export async function getStringMedia(stringId: string): Promise<StringMedia> {
+  await assertStaff();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("strings")
+    .select("id, name, slug, image_url, thumb_url, image_path, image_source_url, brand:brands!inner(slug, name)")
+    .eq("id", stringId)
+    .single();
+  if (error || !data) {
+    throw new Error(`Could not load string image: ${error?.message ?? "string not found"}`);
+  }
+  const brand = (Array.isArray(data.brand) ? data.brand[0] : data.brand) as
+    | { slug: string; name: string }
+    | undefined;
+
+  return {
+    stringId: String(data.id),
+    stringName: String(data.name),
+    brandName: String(brand?.name ?? ""),
+    folder: `${brand?.slug ?? "unknown"}/${data.slug}`,
+    imageUrl: (data.image_url as string | null) ?? null,
+    thumbUrl: (data.thumb_url as string | null) ?? null,
+    imagePath: (data.image_path as string | null) ?? null,
+    sourceUrl: (data.image_source_url as string | null) ?? null,
+  };
+}

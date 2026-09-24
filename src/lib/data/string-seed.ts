@@ -1,6 +1,8 @@
 import type { BadmintonString, StringOffer, StringPricePoint } from "@/lib/types";
 
-type SeedString = Omit<BadmintonString, "id">;
+// Images live in Storage, so the offline catalogue has none; the pages show
+// the brand placeholder a racket card shows before its photo exists.
+type SeedString = Omit<BadmintonString, "id" | "imageUrl" | "thumbUrl">;
 
 const catalogue: SeedString[] = [
   { slug: "bg65", brandSlug: "yonex", brandName: "Yonex", name: "BG65", gaugeMm: 0.70, crossGaugeMm: null, feel: "medium", durability: 5, repulsion: 3, control: 3, playStyleTags: ["all-round"], skillLevels: ["beginner", "intermediate"], summary: { en: "A durable, forgiving benchmark string for everyday club play.", vi: "Mẫu cước bền, dễ chơi tiêu chuẩn cho người chơi phong trào hằng ngày." } },
@@ -31,6 +33,8 @@ const catalogue: SeedString[] = [
 
 export const strings: BadmintonString[] = catalogue.map((string) => ({
   ...string,
+  imageUrl: null,
+  thumbUrl: null,
   // Keep the original Yonex identifiers stable for databases seeded before the
   // catalogue expansion. New products include the brand to avoid collisions.
   id: ["bg65", "bg80-power", "exbolt-63", "bg66-ultimax", "aerobite"].includes(string.slug)

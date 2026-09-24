@@ -13,7 +13,7 @@ type Row = Record<string, unknown>;
 
 const mapString = (row: Row): BadmintonString => {
   const brand = Array.isArray(row.brand) ? row.brand[0] as Row : row.brand as Row | undefined;
-  return { id: String(row.id), slug: String(row.slug), brandSlug: String(brand?.slug ?? ""), brandName: String(brand?.name ?? ""), name: String(row.name), gaugeMm: Number(row.gauge_mm), crossGaugeMm: row.cross_gauge_mm == null ? null : Number(row.cross_gauge_mm), feel: row.feel as BadmintonString["feel"], durability: Number(row.durability), repulsion: Number(row.repulsion), control: Number(row.control), playStyleTags: row.play_style_tags as BadmintonString["playStyleTags"], skillLevels: row.skill_levels as BadmintonString["skillLevels"], summary: { en: String(row.summary_en ?? ""), vi: String(row.summary_vi ?? "") } };
+  return { id: String(row.id), slug: String(row.slug), brandSlug: String(brand?.slug ?? ""), brandName: String(brand?.name ?? ""), name: String(row.name), gaugeMm: Number(row.gauge_mm), crossGaugeMm: row.cross_gauge_mm == null ? null : Number(row.cross_gauge_mm), feel: row.feel as BadmintonString["feel"], durability: Number(row.durability), repulsion: Number(row.repulsion), control: Number(row.control), playStyleTags: row.play_style_tags as BadmintonString["playStyleTags"], skillLevels: row.skill_levels as BadmintonString["skillLevels"], summary: { en: String(row.summary_en ?? ""), vi: String(row.summary_vi ?? "") }, imageUrl: typeof row.image_url === "string" && row.image_url ? row.image_url : null, thumbUrl: typeof row.thumb_url === "string" && row.thumb_url ? row.thumb_url : null };
 };
 
 interface StringSnapshot {

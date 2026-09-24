@@ -7,6 +7,7 @@ import { PriceHistory } from "@/components/ds/data";
 import { Badge, Eyebrow, TrustBadge } from "@/components/ds/primitives";
 import { formatDong } from "@/lib/format";
 import { getString, getStringOffers, getStrings } from "@/lib/data/string-repository";
+import { StringImage } from "@/components/string-image";
 
 /**
  * One shared App Shell for this route instead of one prefetch per link. The
@@ -43,6 +44,7 @@ export default async function StringPage({ params }: { params: Promise<{ locale:
       <nav aria-label="Breadcrumb" className="mb-7 flex gap-2 text-[12.5px] text-tertiary"><Link href="/strings" className="no-underline hover:underline">{t("title")}</Link><span>/</span><span>{string.name}</span></nav>
       <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
         <div>
+          <StringImage string={string} variant="hero" priority className="mb-7 max-w-[420px]" />
           <Eyebrow>{string.brandName} · {t("catalogued")}</Eyebrow>
           <h1 className="display mt-2 text-[38px] leading-none text-primary lg:text-[52px]">{string.name}</h1>
           <p className="mt-5 max-w-[52ch] text-body text-secondary">{string.summary[locale]}</p>

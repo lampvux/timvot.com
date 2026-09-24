@@ -914,4 +914,73 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
 
     assert.ok(policies.length > 0, "storage.objects has no policies at all.");
   });
+
+  it("makes string images public-read and staff-write, in their own bucket", async () => {
+    // Supabase grants the API roles table access to storage.objects; RLS is
+    // what then decides. Grant the same here so the policies are what is
+    // being tested, not a missing grant.
+    await harness.client.query(
+      "grant select, insert, update, delete on storage.objects to anon, authenticated",
+    );
+    const { rows: bucket } = await harness.client.query(
+      "select public from storage.buckets where id = 'string-images'",
+    );
+    assert.equal(bucket[0]?.public, true, "the string-images bucket is missing or private");
+
+    await harness.client.query(
+      `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/seed.png')`,
+    );
+    try {
+      await harness.asAnon(async (client) => {
+        const { rows } = await client.query(
+          "select name from storage.objects where bucket_id = 'string-images'",
+        );
+        assert.ok(rows.some((r) => r.name === "yonex/bg65/seed.png"), "anon cannot read a string image");
+        await expectWriteRefused(
+          () => client.query(
+            `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/anon.png')`,
+          ),
+          "anon uploaded a string image",
+        );
+      });
+
+      await harness.asUser(SHOPPER, async (client) => {
+        await expectWriteRefused(
+          () => client.query(
+            `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/user.png')`,
+          ),
+          "a signed-in shopper uploaded a string image",
+        );
+      });
+      // A refusal aborts the transaction, so each check gets its own.
+      await harness.asUser(SHOPPER, async (client) => {
+        await expectWriteRefused(
+          () => client.query("delete from storage.objects where bucket_id = 'string-images'"),
+          "a signed-in shopper deleted a string image",
+        );
+      });
+
+      await harness.asUser(ADMIN, async (client) => {
+        const { rowCount } = await client.query(
+          `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/staff.png')`,
+        );
+        assert.equal(rowCount, 1, "staff cannot upload a string image");
+        // The string policy is its own: it does not open racket-images.
+        const { rows } = await client.query(
+          `select count(*)::int n from pg_policy p join pg_class c on c.oid = p.polrelid
+            where c.relname = 'objects' and p.polname = 'staff manage string image objects'`,
+        );
+        assert.equal(rows[0].n, 1);
+      });
+
+      await harness.asUser(SELLER_OWNER, async (client) => {
+        await expectWriteRefused(
+          () => client.query("update strings set image_url = 'https://evil.test/x.png'"),
+          "a seller pointed a string at their own image",
+        );
+      });
+    } finally {
+      await harness.client.query("delete from storage.objects where bucket_id = 'string-images'");
+    }
+  });
 });

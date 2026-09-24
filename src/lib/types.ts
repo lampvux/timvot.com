@@ -271,6 +271,10 @@ export interface BadmintonString {
   playStyleTags: PlayStyle[];
   skillLevels: SkillLevel[];
   summary: { en: string; vi: string };
+  /** Stored packshot in the `string-images` bucket; null until one is added. */
+  imageUrl: string | null;
+  /** 400px WebP of imageUrl for lists; null when the original is that small. */
+  thumbUrl: string | null;
 }
 
 export interface StringOffer {
