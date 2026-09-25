@@ -5,7 +5,7 @@ import type {
   SortKey,
   WeightClass,
 } from "./types";
-import { EMPTY_FILTERS } from "./types";
+import { AXIS_SORTS, EMPTY_FILTERS } from "./types";
 
 /**
  * Filters live in the URL, not in component state.
@@ -87,7 +87,14 @@ const number = (value: string | string[] | undefined): number | null => {
 const WEIGHT_CLASSES: WeightClass[] = ["2U", "3U", "4U", "5U"];
 const BALANCE_TYPES: BalanceType[] = ["head-light", "even", "head-heavy"];
 const FLEXES: ShaftFlex[] = ["extra-stiff", "stiff", "medium", "flexible"];
-const SORTS: SortKey[] = ["popular", "score", "price-asc", "price-desc", "new"];
+const SORTS: SortKey[] = [
+  "popular",
+  "score",
+  "price-asc",
+  "price-desc",
+  "new",
+  ...AXIS_SORTS,
+];
 
 export function parseFilters(params: SearchParams): CatalogFilters {
   const sort = first(params[SEARCH_KEYS.sort]) as SortKey;

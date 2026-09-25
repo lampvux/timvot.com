@@ -10,6 +10,9 @@ import {
   test,
   visit,
 } from "./fixtures";
+import { specProfileForRacket } from "../src/lib/court-score";
+import { rackets } from "../src/lib/data/seed";
+import { AXIS_SORTS } from "../src/lib/types";
 
 /**
  * The catalogue is the page people paste into a group chat.
@@ -162,6 +165,42 @@ for (const locale of LOCALES) {
       expect(await countCards(page)).toBeGreaterThan(1);
       const descending = (await priceOf()).filter((n): n is number => n !== null);
       expect(descending).toEqual([...descending].sort((a, b) => b - a));
+    });
+
+    test("sorting by a spec-profile axis orders by that axis", async ({ page }) => {
+      // The suite serves the seed catalogue, so each card's axis value can be
+      // recomputed here from the same published methodology the page ranks by.
+      const specBySlug = new Map(
+        rackets.map((racket) => [racket.slug, specProfileForRacket(racket)]),
+      );
+
+      for (const axis of AXIS_SORTS) {
+        await page.goto(at(locale, `/rackets?sort=${axis}`));
+        expect(await countCards(page)).toBeGreaterThan(1);
+
+        const slugs = await cards(page).evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (node.getAttribute("href") ?? "").split("/").filter(Boolean).at(-1) ?? "",
+          ),
+        );
+        const values = slugs.map((slug) => specBySlug.get(slug)?.[axis]);
+        expect(values, `sort=${axis}: a card is not a seeded racket`).not.toContain(undefined);
+        expect(values, `sort=${axis}`).toEqual(
+          [...values].sort((a, b) => (b ?? 0) - (a ?? 0)),
+        );
+
+        // The control reflects the URL, so the ranking is visibly the one chosen.
+        await expect(page.locator("select").first()).toHaveValue(axis);
+      }
+    });
+
+    test("choosing an axis sort updates the URL", async ({ page }) => {
+      await page.goto(at(locale, "/rackets"));
+
+      const sort = page.locator("select").first();
+      await sort.selectOption("comfort");
+      await page.waitForURL(/[?&]sort=comfort/);
+      expect(page.url()).toContain("sort=comfort");
     });
 
     test("the result count matches what is rendered", async ({ page }) => {

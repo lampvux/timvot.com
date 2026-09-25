@@ -304,7 +304,31 @@ export interface StringWithMarket extends BadmintonString {
   history: StringPricePoint[];
 }
 
-export type SortKey = "popular" | "score" | "price-asc" | "price-desc" | "new";
+/**
+ * One axis of the spec profile, as a sort. The catalogue ranks by the spec
+ * half because it exists for every racket and is the same number the detail
+ * page shows; `racket_scores` stores it so Postgres can order by it.
+ */
+export type AxisSortKey = keyof AxisScores;
+
+export const AXIS_SORTS: readonly AxisSortKey[] = [
+  "power",
+  "speed",
+  "control",
+  "comfort",
+];
+
+export function isAxisSort(sort: SortKey): sort is AxisSortKey {
+  return (AXIS_SORTS as readonly string[]).includes(sort);
+}
+
+export type SortKey =
+  | "popular"
+  | "score"
+  | "price-asc"
+  | "price-desc"
+  | "new"
+  | AxisSortKey;
 
 export interface CatalogFilters {
   brands: string[];

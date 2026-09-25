@@ -446,6 +446,10 @@ export function SortSelect({ filters }: { filters: CatalogFilters }) {
             { value: "price-asc", label: tc("sortPriceAsc") },
             { value: "price-desc", label: tc("sortPriceDesc") },
             { value: "new", label: tc("sortNewest") },
+            { value: "power", label: tc("sortPower") },
+            { value: "speed", label: tc("sortSpeed") },
+            { value: "control", label: tc("sortControl") },
+            { value: "comfort", label: tc("sortComfort") },
           ]}
         />
       </div>

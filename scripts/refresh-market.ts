@@ -137,6 +137,11 @@ async function main() {
       spec_score: score.specScore,
       review_count: racketReviews.length,
       popular_rank: popularRank.get(racket.brandSlug) ?? 1,
+      // The spec half's four axes, so the catalogue can sort by one of them.
+      spec_power: score.spec.power,
+      spec_speed: score.spec.speed,
+      spec_control: score.spec.control,
+      spec_comfort: score.spec.comfort,
       computed_at: new Date().toISOString(),
     };
   });
@@ -172,7 +177,12 @@ async function main() {
       // real failure for this script, but not for the app: the repository
       // falls back to the snapshot when the view is absent.
       console.error(`racket_scores upsert failed: ${error.message}`);
-      if (/does not exist|schema cache/i.test(error.message)) {
+      if (/spec_(power|speed|control|comfort)/i.test(error.message)) {
+        console.error(
+          "Apply supabase/migrations/20260929000000_racket_axis_scores.sql first " +
+            "(npm run migrate).",
+        );
+      } else if (/does not exist|schema cache/i.test(error.message)) {
         console.error(
           "Apply supabase/migrations/20260906000000_catalogue_pagination.sql first " +
             "(npm run migrate).",

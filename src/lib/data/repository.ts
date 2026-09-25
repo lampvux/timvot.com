@@ -1560,6 +1560,12 @@ export function sortRackets(
   };
 
   switch (sort) {
+    case "power":
+    case "speed":
+    case "control":
+    case "comfort":
+      // The spec axis, as `racket_scores.spec_<axis>` stores it for the view.
+      return copy.sort((a, b) => b.spec[sort] - a.spec[sort] || byScore(a, b));
     case "popular":
       return copy.sort(
         (a, b) => comparePopularBrandTiers(a, b) || byScore(a, b),
