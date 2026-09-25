@@ -9,7 +9,6 @@ import {
   Eyebrow,
   TrustBadge,
 } from "@/components/ds/primitives";
-import { StockLabel } from "@/components/ds/data";
 import { getOffersForSeller, getSeller, getSellers } from "@/lib/data/repository";
 import { CONDITION_MESSAGE_KEY, formatDong } from "@/lib/format";
 import type { SellerTier } from "@/lib/types";
@@ -58,12 +57,14 @@ export default async function SellerPage({
   const t = await getTranslations("sellers");
   const ts = await getTranslations("specs");
   const te = await getTranslations("enums");
-  const tk = await getTranslations("stock");
   const tc = await getTranslations("common");
 
   const offers = await getOffersForSeller(seller.id);
   const live = offers.filter((offer) => offer.status === "live");
-  const totalStock = live.reduce((sum, offer) => sum + offer.qtyAvailable, 0);
+  // The directory ranks on this number, so the page states the same one.
+  const racketsInStock = new Set(
+    live.filter((offer) => offer.qtyAvailable > 0).map((offer) => offer.racketId),
+  ).size;
 
   const tierKey =
     seller.tier === "authorised"
@@ -105,11 +106,10 @@ export default async function SellerPage({
         </div>
       </div>
 
-      <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         {[
           { label: t("inventory"), value: String(live.length) },
-          { label: t("stock"), value: String(totalStock) },
-          { label: t("orders"), value: String(seller.ordersCount) },
+          { label: t("statRackets"), value: String(racketsInStock) },
           {
             label: t("rating"),
             value: seller.rating > 0 ? seller.rating.toFixed(1) : "—",
@@ -133,14 +133,13 @@ export default async function SellerPage({
           <EmptyState title={t("emptyInventory")} body={t("subtitle")} />
         ) : (
           <div className="overflow-x-auto rounded-md border border-line bg-card">
-            <table className="w-full min-w-[680px] border-collapse text-left">
+            <table className="w-full min-w-[560px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-line bg-sunken">
                   {[
                     ts("brand"),
                     ts("variant"),
                     ts("condition"),
-                    ts("stock"),
                     ts("price"),
                     "",
                   ].map((label, index) => (
@@ -181,17 +180,6 @@ export default async function SellerPage({
                           {te(CONDITION_MESSAGE_KEY[offer.condition])}
                         </Badge>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StockLabel
-                        qty={offer.qtyAvailable}
-                        labels={{
-                          inStock: (count) => tk("inStock", { count }),
-                          inStockMany: tk("inStockMany"),
-                          left: (count) => tk("left", { count }),
-                          outOfStock: tk("outOfStock"),
-                        }}
-                      />
                     </td>
                     <td className="px-4 py-3">
                       <span className="price text-[17px] text-primary">

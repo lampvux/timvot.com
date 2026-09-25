@@ -25,6 +25,8 @@ export const REVIEW_LIMITS = {
   tensionMax: 35,
   perDay: 5,
   cooldownSeconds: 60,
+  /** Days after posting that an author may still edit. `created_at` never moves. */
+  editWindowDays: 3,
 } as const;
 
 export type ReviewViolation =

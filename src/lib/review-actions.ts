@@ -16,12 +16,17 @@ export type ReviewError =
   | "duplicate"
   | "cooldown"
   | "rateLimited"
+  | "notFound"
+  | "editClosed"
+  | "rejected"
   | "generic";
 
 export interface ReviewFormState {
   error?: ReviewError;
   violations?: ReviewViolation[];
   submitted?: boolean;
+  /** Set when the success was an edit rather than a first review. */
+  edited?: boolean;
 }
 
 /** `submit_review` raises one of these as its message. */
@@ -32,6 +37,9 @@ const RPC_ERRORS: Record<string, ReviewError | ReviewViolation> = {
   review_duplicate: "duplicate",
   review_cooldown: "cooldown",
   review_rate_limited: "rateLimited",
+  review_not_found: "notFound",
+  review_edit_closed: "editClosed",
+  review_rejected: "rejected",
 };
 
 /**
@@ -45,6 +53,29 @@ const RPC_ERRORS: Record<string, ReviewError | ReviewViolation> = {
  */
 export async function submitReview(
   _previous: ReviewFormState,
+  formData: FormData,
+): Promise<ReviewFormState> {
+  return saveReview("submit_review", formData);
+}
+
+/**
+ * Edit the author's own review of this racket.
+ *
+ * SECURITY. `update_review` finds the row by `auth.uid()`, not by anything
+ * the form sends, and refuses once the three-day window from `created_at`
+ * has closed or after staff rejected the review. The form hiding its edit
+ * button past the window is display; this is the rule.
+ */
+export async function updateReview(
+  _previous: ReviewFormState,
+  formData: FormData,
+): Promise<ReviewFormState> {
+  const result = await saveReview("update_review", formData);
+  return result.submitted ? { ...result, edited: true } : result;
+}
+
+async function saveReview(
+  rpc: "submit_review" | "update_review",
   formData: FormData,
 ): Promise<ReviewFormState> {
   // A field no person can see. A bot that fills every input fills this one;
@@ -63,7 +94,7 @@ export async function submitReview(
   } = await supabase.auth.getUser();
   if (!user) return { error: "auth" };
 
-  const { error } = await supabase.rpc("submit_review", {
+  const { error } = await supabase.rpc(rpc, {
     p_racket_id: draft.racketId,
     p_skill_level: draft.skillLevel,
     p_format: draft.format,

@@ -35,6 +35,7 @@ import type {
   Seller,
 } from "@/lib/types";
 import * as seed from "./seed";
+import type { SellerDirectoryEntry } from "@/lib/seller-ranking";
 import { TAG } from "./tags";
 import {
   countCatalogMatchesInView,
@@ -519,6 +520,75 @@ async function readSellers(): Promise<Seller[]> {
 }
 
 export const getSellers = cache(readSellers);
+
+/** `get_seller_directory_stats`: seller id → counts. Null when unavailable. */
+async function readSellerStats(): Promise<Map<
+  string,
+  { racketCount: number; offerCount: number; brandCount: number }
+> | null> {
+  "use cache";
+  cacheLife("prices");
+  cacheTag(TAG.sellers, TAG.offers, TAG.rackets);
+
+  const supabase = createStaticClient("seller-stats-client");
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.rpc("get_seller_directory_stats");
+    if (error) throw new Error(error.message);
+    if (!Array.isArray(data)) throw new Error("malformed seller-stats RPC response");
+    return new Map(
+      rpcRows(data).map((row) => [
+        String(row.seller_id),
+        {
+          racketCount: Number(row.racket_count ?? 0),
+          offerCount: Number(row.offer_count ?? 0),
+          brandCount: Number(row.brand_count ?? 0),
+        },
+      ]),
+    );
+  } catch (error) {
+    console.warn(
+      `[repository] seller directory stats RPC failed: ` +
+        `${error instanceof Error ? error.message : "unknown error"}. ` +
+        `Apply supabase/migrations/20260927000000_seller_directory_stats.sql.`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Every seller with the counts the directory ranks by.
+ *
+ * Postgres counts when it can: ten rows instead of every offer. The seeded
+ * index answers when it cannot, with the same definitions — rackets and brands
+ * counted over live offers in stock, offers over live offers.
+ */
+export async function getSellerDirectory(): Promise<SellerDirectoryEntry[]> {
+  const [sellers, stats] = await Promise.all([getSellers(), readSellerStats()]);
+  if (stats) {
+    return sellers.map((seller) => ({
+      ...seller,
+      ...(stats.get(seller.id) ?? { racketCount: 0, offerCount: 0, brandCount: 0 }),
+    }));
+  }
+
+  const index = await loadIndex();
+  const brandOf = new Map(index.snapshot.rackets.map((r) => [r.id, r.brandSlug]));
+  return sellers.map((seller) => {
+    const live = (index.offersBySeller.get(seller.id) ?? EMPTY_OFFERS).filter(
+      (offer) => offer.status === "live",
+    );
+    const inStock = live.filter((offer) => offer.qtyAvailable > 0);
+    const rackets = new Set(inStock.map((offer) => offer.racketId));
+    return {
+      ...seller,
+      racketCount: rackets.size,
+      offerCount: live.length,
+      brandCount: new Set([...rackets].map((id) => brandOf.get(id))).size,
+    };
+  });
+}
 
 async function readGuides(): Promise<Guide[]> {
   "use cache";

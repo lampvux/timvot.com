@@ -6,7 +6,7 @@ import type { EntityRecord } from "@/lib/data";
 
 function displayValue(row: EntityRecord, column: ListColumn) {
   let value = row[column.name];
-  if (column.kind === "image" && !value) value = row.public_url ?? row.hero_image_url;
+  if (column.kind === "image" && !value) value = row.public_url ?? row.hero_image_url ?? row.image_url;
   if (column.kind === "image") {
     return value ? (
       <span className="relative block size-10 overflow-hidden rounded-lg border border-[#e5e2e9] bg-[#f7f6f9]">

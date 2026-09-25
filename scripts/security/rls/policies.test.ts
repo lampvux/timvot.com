@@ -614,14 +614,15 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
   const BODY = "Solid clears from the rear court, a little slow on drives at the net.";
   /** A refused call aborts the transaction; a savepoint keeps the next one
    *  meaningful. Only used for calls expected to fail. */
-  const attempt = async (client: Client, args: unknown[]) => {
+  const attemptWith = async (client: Client, sql: string, args: unknown[]) => {
     await client.query("savepoint attempt");
     try {
-      await client.query(SUBMIT, args);
+      await client.query(sql, args);
     } finally {
       await client.query("rollback to savepoint attempt");
     }
   };
+  const attempt = (client: Client, args: unknown[]) => attemptWith(client, SUBMIT, args);
 
   it("refuses a direct author insert, even as the author", async () => {
     // The init policies let an author insert tier 'purchase', status
@@ -723,6 +724,103 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
     }
   });
 
+  it("lets an author edit their own review for three days, and not after", async () => {
+    const UPDATE = `select public.update_review($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) as id`;
+    const edited = "Edited after a week: the rear-court clears are better than I first said.";
+    const plant = async (id: string, userId: string, age: string, status = "published") =>
+      harness.client.query(
+        `insert into reviews (
+           id, racket_id, user_id, author_name, tier, skill_level, format, position,
+           string_model, tension_lbs, power, speed, control, comfort, body_en,
+           status, created_at
+         ) values ($1, $2, $3, 'Author', 'owner', 'intermediate', 'doubles', 'mid',
+                   'BG65', 25, 3, 3, 3, 3, 'Original body text, long enough to pass.',
+                   $4, now() - $5::interval)`,
+        [id, RACKET_ID, userId, status, age],
+      );
+
+    await plant("rv-edit-fresh", SHOPPER, "1 day");
+    try {
+      await harness.asUser(SHOPPER, async (client) => {
+        const args = submitArgs(edited);
+        args[6] = 5;
+        await client.query(UPDATE, args);
+        const { rows } = await client.query(
+          "select tier, status, power, body_en, created_at, updated_at from reviews where id = 'rv-edit-fresh'");
+        assert.equal(rows[0].power, "5.0");
+        assert.equal(rows[0].body_en, edited);
+        assert.equal(rows[0].tier, "owner", "an edit changed the tier");
+        assert.equal(rows[0].status, "published", "an edit changed the status");
+        assert.ok(rows[0].updated_at, "updated_at was not stamped");
+        assert.ok(rows[0].created_at < rows[0].updated_at, "an edit moved created_at");
+
+        // A second edit straight after the first is the cooldown.
+        await assert.rejects(() => attemptWith(client, UPDATE, submitArgs(edited)), /review_cooldown/);
+        // The rules of a new review hold for an edit.
+        await assert.rejects(() => attemptWith(client, UPDATE, submitArgs("short")), /review_invalid/);
+        // A direct update is not a way around the window.
+        await expectWriteRefused(
+          () => client.query("update reviews set power = 1 where id = 'rv-edit-fresh'"),
+          "an author updated their review around update_review",
+        );
+      });
+
+      // Someone else's review is not found, because the row is looked up by
+      // auth.uid() and never by an id the caller sends.
+      await harness.asUser(OTHER_SHOPPER, async (client) => {
+        await assert.rejects(() => attemptWith(client, UPDATE, submitArgs(edited)), /review_not_found/);
+      });
+    } finally {
+      await harness.client.query("delete from reviews where id = 'rv-edit-fresh'");
+    }
+
+    await plant("rv-edit-old", SHOPPER, "3 days 1 minute");
+    try {
+      await harness.asUser(SHOPPER, async (client) => {
+        await assert.rejects(() => attemptWith(client, UPDATE, submitArgs(edited)), /review_edit_closed/);
+      });
+    } finally {
+      await harness.client.query("delete from reviews where id = 'rv-edit-old'");
+    }
+
+    await plant("rv-edit-rejected", SHOPPER, "1 hour", "rejected");
+    try {
+      await harness.asUser(SHOPPER, async (client) => {
+        await assert.rejects(() => attemptWith(client, UPDATE, submitArgs(edited)), /review_rejected/);
+      });
+    } finally {
+      await harness.client.query("delete from reviews where id = 'rv-edit-rejected'");
+    }
+
+    await harness.asAnon(async (client) => {
+      await expectWriteRefused(() => client.query(UPDATE, submitArgs(edited)), "anon edited a review");
+    });
+  });
+
+  it("counts each seller's in-stock rackets for the directory, from live offers only", async () => {
+    await harness.asAnon(async (client) => {
+      const { rows } = await client.query("select public.get_seller_directory_stats() as s");
+      const stats = new Map(
+        rows[0].s.map((row: { seller_id: string }) => [row.seller_id, row]),
+      );
+      // Both fixtures' offers are live on the same in-stock racket.
+      const liveRackets = await harness.client.query(
+        `select seller_id, count(distinct racket_id)::int n from offers
+         where status = 'live' and qty_available > 0 group by seller_id`,
+      );
+      for (const id of [SELLER_ID, OTHER_SELLER_ID]) {
+        const expected = liveRackets.rows.find((r) => r.seller_id === id)?.n ?? 0;
+        assert.equal(
+          (stats.get(id) as { racket_count: number } | undefined)?.racket_count,
+          expected,
+          `racket_count for ${id}`,
+        );
+      }
+      assert.equal(stats.size, (await harness.client.query("select count(*)::int n from sellers")).rows[0].n,
+        "a seller with no offers is missing from the directory stats");
+    });
+  });
+
   it("pages published reviews only, capped, and tallies them per tier", async () => {
     const ids: string[] = [];
     for (let i = 0; i < 15; i += 1) {
@@ -815,5 +913,74 @@ describe("row-level security", { skip: canRun ? false : SKIP_REASON }, () => {
     );
 
     assert.ok(policies.length > 0, "storage.objects has no policies at all.");
+  });
+
+  it("makes string images public-read and staff-write, in their own bucket", async () => {
+    // Supabase grants the API roles table access to storage.objects; RLS is
+    // what then decides. Grant the same here so the policies are what is
+    // being tested, not a missing grant.
+    await harness.client.query(
+      "grant select, insert, update, delete on storage.objects to anon, authenticated",
+    );
+    const { rows: bucket } = await harness.client.query(
+      "select public from storage.buckets where id = 'string-images'",
+    );
+    assert.equal(bucket[0]?.public, true, "the string-images bucket is missing or private");
+
+    await harness.client.query(
+      `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/seed.png')`,
+    );
+    try {
+      await harness.asAnon(async (client) => {
+        const { rows } = await client.query(
+          "select name from storage.objects where bucket_id = 'string-images'",
+        );
+        assert.ok(rows.some((r) => r.name === "yonex/bg65/seed.png"), "anon cannot read a string image");
+        await expectWriteRefused(
+          () => client.query(
+            `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/anon.png')`,
+          ),
+          "anon uploaded a string image",
+        );
+      });
+
+      await harness.asUser(SHOPPER, async (client) => {
+        await expectWriteRefused(
+          () => client.query(
+            `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/user.png')`,
+          ),
+          "a signed-in shopper uploaded a string image",
+        );
+      });
+      // A refusal aborts the transaction, so each check gets its own.
+      await harness.asUser(SHOPPER, async (client) => {
+        await expectWriteRefused(
+          () => client.query("delete from storage.objects where bucket_id = 'string-images'"),
+          "a signed-in shopper deleted a string image",
+        );
+      });
+
+      await harness.asUser(ADMIN, async (client) => {
+        const { rowCount } = await client.query(
+          `insert into storage.objects (bucket_id, name) values ('string-images', 'yonex/bg65/staff.png')`,
+        );
+        assert.equal(rowCount, 1, "staff cannot upload a string image");
+        // The string policy is its own: it does not open racket-images.
+        const { rows } = await client.query(
+          `select count(*)::int n from pg_policy p join pg_class c on c.oid = p.polrelid
+            where c.relname = 'objects' and p.polname = 'staff manage string image objects'`,
+        );
+        assert.equal(rows[0].n, 1);
+      });
+
+      await harness.asUser(SELLER_OWNER, async (client) => {
+        await expectWriteRefused(
+          () => client.query("update strings set image_url = 'https://evil.test/x.png'"),
+          "a seller pointed a string at their own image",
+        );
+      });
+    } finally {
+      await harness.client.query("delete from storage.objects where bucket_id = 'string-images'");
+    }
   });
 });

@@ -345,6 +345,7 @@ export const collections: Record<string, CollectionConfig> = {
     orderBy: "name",
     searchColumns: ["id", "name", "slug"],
     columns: [
+      { name: "thumb_url", label: "Image", kind: "image" },
       { name: "name", label: "String" },
       { name: "brand_id", label: "Brand" },
       { name: "gauge_mm", label: "Gauge" },

@@ -18,6 +18,7 @@ import {
   type RacketImagePathTarget,
 } from "@/lib/racket-image-paths";
 import { createClient } from "@/lib/supabase/server";
+import { makeThumbnail } from "@/lib/thumbnail";
 import { recordAudit, revalidateStorefront } from "./mutation-utils";
 
 export interface ContentActionState {
@@ -191,20 +192,6 @@ async function getRacketImagePathTarget(
     brandSlug: String(brand.slug),
     racketSlug: String(racket.slug),
   };
-}
-
-async function makeThumbnail(bytes: Buffer) {
-  try {
-    const { data, info } = await sharp(bytes, { failOn: "error" })
-      .resize({ width: 400, withoutEnlargement: true, fit: "inside" })
-      .webp({ quality: 78 })
-      .toBuffer({ resolveWithObject: true });
-
-    if (data.byteLength >= bytes.byteLength) return null;
-    return { data, width: info.width, height: info.height };
-  } catch {
-    return null;
-  }
 }
 
 function adminSourcePageUrl(value: FormDataEntryValue | null, imageId: string) {
