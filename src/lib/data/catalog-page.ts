@@ -168,6 +168,15 @@ function applySort(query: Query, sort: SortKey): Query {
       .order("spec_score", { ascending: false });
 
   switch (sort) {
+    case "power":
+    case "speed":
+    case "control":
+    case "comfort":
+      // Null until `refresh-market` has filled the axis columns, and null sorts
+      // last — the ranking degrades to Court Score order, not to an error.
+      return byScore(
+        query.order(`spec_${sort}`, { ascending: false, nullsFirst: false }),
+      ).order("id");
     case "popular":
       return byScore(query.order("popular_rank", { ascending: true })).order("id");
     case "price-asc":
@@ -400,7 +409,14 @@ export async function readCatalogPageFromView(
     if (error) {
       // The view is missing until the migration lands. Say so once, clearly,
       // rather than serving a slow path forever with no explanation.
-      if (/racket_market|schema cache|does not exist/i.test(error.message)) {
+      if (/spec_(power|speed|control|comfort)/i.test(error.message)) {
+        console.warn(
+          "[repository] racket_market has no spec-axis columns, so this sort is " +
+            "being paginated in memory. Apply supabase/migrations/" +
+            "20260929000000_racket_axis_scores.sql and run " +
+            "`npx tsx scripts/refresh-market.ts`.",
+        );
+      } else if (/racket_market|schema cache|does not exist/i.test(error.message)) {
         console.warn(
           "[repository] racket_market is missing, so the catalogue is being " +
             "paginated in memory. Apply supabase/migrations/" +
