@@ -19,6 +19,11 @@ import {
   type VariantPrice,
 } from "@/lib/price-window";
 import { comparePopularBrandTiers } from "@/lib/catalog-ranking";
+import {
+  MAX_CANDIDATES,
+  matchesTokens,
+  type RacketCandidate,
+} from "@/lib/listing-check/match";
 import type {
   Brand,
   CatalogFilters,
@@ -41,6 +46,7 @@ import {
   countCatalogMatchesInView,
   readCatalogPageFromView,
   readMarketRacketsByIds,
+  readRacketCandidates,
   readTopRacketsByScore,
   type CatalogPage,
 } from "./catalog-page";
@@ -1002,6 +1008,60 @@ export async function getSimilarRackets(
     .sort((a, b) => a.distance - b.distance)
     .slice(0, limit)
     .map(({ racket }) => toRacketCardData(racket));
+}
+
+/**
+ * Model suggestions for the listing check, bounded by `MAX_CANDIDATES`.
+ *
+ * With Supabase this is two bounded reads (`readRacketCandidates`). Without
+ * it, the seeded catalogue is small enough to filter directly — and it is the
+ * seed arrays, not `loadIndex()`, so no suggestion ever enriches a catalogue.
+ * Null means the database could not answer; the caller says so.
+ */
+export async function searchRackets(tokens: readonly string[]): Promise<RacketCandidate[] | null> {
+  if (createStaticClient("racket-search-client")) {
+    return readRacketCandidates(tokens, MAX_CANDIDATES);
+  }
+
+  return seed.rackets
+    .filter((racket) => matchesTokens(tokens, racket.brandName, racket.name))
+    .slice(0, MAX_CANDIDATES)
+    .map((racket) => ({
+      id: racket.id,
+      brandSlug: racket.brandSlug,
+      brandName: racket.brandName,
+      slug: racket.slug,
+      name: racket.name,
+      releaseYear: racket.releaseYear,
+      thumbUrl: racket.heroThumbUrl ?? racket.heroImageUrl,
+      variants: racket.variants.map((v) => ({
+        id: v.id,
+        weightClass: v.weightClass,
+        gripSize: v.gripSize,
+        colourway: v.colourway,
+      })),
+    }));
+}
+
+/** True when pages are answering from the seeded sample catalogue, which must
+ *  say so rather than imply live market prices. */
+export function isSampleCatalogue(): boolean {
+  return createStaticClient("sample-check") === null;
+}
+
+/**
+ * "Now", for judging whether an offer is fresh.
+ *
+ * The sample catalogue was observed on fixed dates, so against the real clock
+ * every sample offer is stale and the sample could never show a comparable
+ * range. It is judged as of its own newest offer instead — which the page
+ * labels as sample data. A live catalogue always uses the real clock.
+ */
+export function priceClock(): Date {
+  if (!isSampleCatalogue()) return new Date();
+  let newest = "";
+  for (const offer of seed.offers) if (offer.updatedAt > newest) newest = offer.updatedAt;
+  return new Date(newest);
 }
 
 export async function getRacketsBySlugs(

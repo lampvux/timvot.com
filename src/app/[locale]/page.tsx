@@ -2,11 +2,17 @@ import Image from "next/image";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import type { Locale } from "@/i18n/routing";
-import { Eyebrow, Icon } from "@/components/ds/primitives";
+import { Eyebrow, Icon, type IconName } from "@/components/ds/primitives";
 import { PriceDelta, PriceHistory } from "@/components/ds/data";
 import { RacketCard } from "@/components/racket-card";
 import { getHomepageData } from "@/lib/data/repository";
 import { formatDong } from "@/lib/format";
+
+const PATHS: { href: string; title: string; body: string; icon: IconName }[] = [
+  { href: "/check", title: "pathCheckTitle", body: "pathCheckBody", icon: "ClipboardCheck" },
+  { href: "/finder", title: "pathFinderTitle", body: "pathFinderBody", icon: "Sparkles" },
+  { href: "/compare", title: "pathCompareTitle", body: "pathCompareBody", icon: "GitCompare" },
+];
 
 export default async function HomePage({
   params,
@@ -106,18 +112,20 @@ export default async function HomePage({
             </div>
 
             <div className="mt-8 flex flex-wrap items-center gap-4">
+              {/* Most visitors arrive from a listing in a Facebook group, so
+                  checking it is the primary action. */}
               <Link
-                href="/rackets"
+                href="/check"
                 className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[#38d4a6] px-6 text-[15px] font-bold text-[#062e1c] transition-colors hover:bg-[#2dc497]"
               >
-                {t("exploreNow")}
+                {t("checkListing")}
                 <Icon name="ArrowRight" size="md" />
               </Link>
               <Link
-                href="/deals"
+                href="/rackets"
                 className="inline-flex min-h-[48px] items-center justify-center rounded-xl border border-emerald-700/50 bg-[#0b3323]/60 px-6 text-[15px] font-semibold text-white transition-colors hover:bg-[#0b3323]"
               >
-                {t("todayDeals")}
+                {t("exploreNow")}
               </Link>
             </div>
           </div>
@@ -201,6 +209,34 @@ export default async function HomePage({
       </section>
 
       <div className="page-shell py-8 lg:py-12">
+        {/* Three ways in, the listing check first. */}
+        <section aria-labelledby="paths" className="mb-10 lg:mb-12">
+          <Eyebrow as="h2" className="!text-tertiary">
+            <span id="paths">{t("pathsTitle")}</span>
+          </Eyebrow>
+          <ul className="mt-4 grid gap-3 md:grid-cols-3">
+            {PATHS.map((path, index) => (
+              <li key={path.href}>
+                <Link
+                  href={path.href}
+                  className={
+                    "flex h-full min-h-[48px] flex-col rounded-md border p-4 no-underline transition-colors " +
+                    (index === 0
+                      ? "border-line-brand bg-brand-soft hover:border-[var(--green-700)]"
+                      : "border-line bg-card hover:border-line-strong")
+                  }
+                >
+                  <span className="flex items-center gap-2 font-display text-h4 font-bold text-primary">
+                    <Icon name={path.icon} size="md" className="text-brand" />
+                    {t(path.title)}
+                  </span>
+                  <span className="mt-1.5 text-body-sm text-secondary">{t(path.body)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+
         {/* Trending */}
         <section aria-labelledby="trending">
           <div className="mb-5 flex items-baseline gap-4">
@@ -279,7 +315,7 @@ export default async function HomePage({
                     <span className="hidden font-mono text-[15px] tabular-nums text-primary lg:inline">
                       {formatDong(deal.price.latest)}
                     </span>
-                    <PriceDelta amount={deal.price.delta30} period="30d" />
+                    <PriceDelta amount={deal.price.delta30} period={tc("recentWindow")} />
                     <div className="hidden lg:block">
                       <PriceHistory
                         data={deal.price.points.slice(-8).map((p) => p.price)}

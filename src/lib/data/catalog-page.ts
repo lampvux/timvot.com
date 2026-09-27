@@ -15,6 +15,7 @@ import type {
 import { mapRacket } from "./mappers";
 import { RACKET_SELECT, RACKET_SELECT_NO_THUMBS, isMissingColumnError } from "./mappers";
 import { TAG } from "./tags";
+import type { RacketCandidate } from "@/lib/listing-check/match";
 
 /**
  * The catalogue page, fetched as a page.
@@ -534,6 +535,103 @@ export async function readMarketRacketsByIds(
   }
 
   return byId;
+}
+
+/* ---------------------------------------------------------- model search */
+
+/** Just what a suggestion renders and the check form needs to pick a variant. */
+const CANDIDATE_COLUMNS =
+  "id, slug, name, release_year, hero_image_url, hero_thumb_url, " +
+  "brand:brands!inner ( slug, name ), " +
+  "variants:racket_variants ( id, weight_class, weight_grams, grip_size, colourway )";
+
+interface CandidateRow {
+  id: string;
+  slug: string;
+  name: string;
+  release_year: number;
+  hero_image_url: string | null;
+  hero_thumb_url?: string | null;
+  brand: { slug: string; name: string };
+  variants: {
+    id: string;
+    weight_class: string;
+    weight_grams: number;
+    grip_size: string;
+    colourway: string | null;
+  }[];
+}
+
+/**
+ * Model suggestions for the listing check: at most `limit` rackets whose
+ * brand-and-model text holds every token, most popular first.
+ *
+ * Bounded twice — by `.limit()` on the view and by `.in()` on the hydrate —
+ * so a keystroke never costs the catalogue. Null when the view cannot answer;
+ * the caller reports that rather than building the whole index per keystroke.
+ */
+export async function readRacketCandidates(
+  tokens: readonly string[],
+  limit: number,
+): Promise<RacketCandidate[] | null> {
+  "use cache";
+  cacheLife("catalogue");
+  cacheTag(TAG.brands, TAG.rackets);
+
+  const supabase = createStaticClient("racket-search-client");
+  if (!supabase) return null;
+
+  try {
+    let query = supabase.from("racket_market").select("id");
+    for (const token of tokens) query = query.like("search_text", `%${escapeLike(token)}%`);
+    const { data, error } = await query
+      .order("popular_rank", { ascending: true })
+      .order("id")
+      .limit(limit);
+    if (error) throw new Error(error.message);
+
+    const ids = ((data ?? []) as { id: string }[]).map((row) => row.id);
+    if (ids.length === 0) return [];
+
+    const read = (select: string) => supabase.from("rackets").select(select).in("id", ids);
+    let rows = await read(CANDIDATE_COLUMNS);
+    if (rows.error && isMissingColumnError(rows.error.message)) {
+      rows = await read(CANDIDATE_COLUMNS.replace(" hero_thumb_url,", ""));
+    }
+    if (rows.error) throw new Error(rows.error.message);
+
+    const byId = new Map(
+      ((rows.data ?? []) as unknown as CandidateRow[]).map((row) => [row.id, row]),
+    );
+    return ids.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row) return [];
+      return [
+        {
+          id: row.id,
+          brandSlug: row.brand.slug,
+          brandName: row.brand.name,
+          slug: row.slug,
+          name: row.name,
+          releaseYear: row.release_year,
+          thumbUrl: row.hero_thumb_url ?? row.hero_image_url,
+          variants: [...row.variants]
+            .sort((a, b) => a.weight_grams - b.weight_grams || a.grip_size.localeCompare(b.grip_size))
+            .map((v) => ({
+              id: v.id,
+              weightClass: v.weight_class,
+              gripSize: v.grip_size,
+              colourway: v.colourway,
+            })),
+        },
+      ];
+    });
+  } catch (error) {
+    console.warn(
+      `[repository] racket search failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------- trending */

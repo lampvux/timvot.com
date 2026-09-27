@@ -131,6 +131,28 @@ export function FinderSkeleton() {
   );
 }
 
+/** The listing check before it knows whether it is showing the form or a result. */
+export function CheckSkeleton() {
+  return (
+    <div className="page-shell py-8 lg:py-12" role="status" aria-busy="true">
+      <span className="sr-only">Loading listing check</span>
+      <div className="mx-auto max-w-[560px]">
+        <Bar className="h-9 w-3/4" />
+        <Bar className="mt-3 h-5 w-full" />
+        <div className="mt-8 flex flex-col gap-6">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div key={i}>
+              <Bar className="h-4 w-32" />
+              <Bar className="mt-2 h-12 w-full" />
+            </div>
+          ))}
+          <Bar className="h-12 w-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Auth pages read searchParams only for a callback error or notice, so the
  *  form's own box is all that has to be held. */
 export function AuthFormSkeleton() {

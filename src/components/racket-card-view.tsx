@@ -4,10 +4,13 @@ import { Card, cx } from "@/components/ds/primitives";
 import { BalanceMini } from "@/components/ds/data";
 import { CompareToggle } from "@/components/compare-tray";
 import { formatDong } from "@/lib/format";
+import { displayPrice } from "@/lib/price-context";
 import type { PlayStyle, RacketCardData } from "@/lib/types";
 
 export interface RacketCardLabels {
   belowList: string;
+  /** Prefix for a list price shown because nobody lists the racket. */
+  msrp: string;
   sellers: string;
   headLight: string;
   headHeavy: string;
@@ -49,7 +52,7 @@ export function RacketCardView({
   eager = false,
   labels,
 }: RacketCardProps & { labels: RacketCardLabels }) {
-  const price = racket.lowestPrice ?? racket.msrp;
+  const price = displayPrice(racket);
   const isBelowList = racket.lowestPrice !== null && racket.lowestPrice < racket.msrp;
   const mobileHorizontal = mobileLayout === "horizontal";
   const catalogDense = density === "catalog";
@@ -152,7 +155,12 @@ export function RacketCardView({
                 catalogDense ? "text-[16px]" : "text-[17px]",
               )}
             >
-              {formatDong(price)}
+              {price.kind === "msrp" && (
+                <span className="mr-1 font-mono text-[11px] font-normal text-tertiary">
+                  {labels.msrp}
+                </span>
+              )}
+              {formatDong(price.amount)}
             </span>
             {isBelowList && (
               <span className="font-mono text-[12px] tabular-nums text-tertiary line-through">
