@@ -85,6 +85,7 @@ export function LazySimilarRackets({ racketId }: { racketId: string }) {
 
   const labelsFor = (racket: RacketCardData): RacketCardLabels => ({
     belowList: tc("belowList"),
+    msrp: tc("msrpPrefix"),
     sellers: tc("sellers", { count: racket.sellerCount }),
     headLight: t("headLight"),
     headHeavy: t("headHeavy"),

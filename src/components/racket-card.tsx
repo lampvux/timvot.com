@@ -36,6 +36,7 @@ export async function RacketCard({
       eager={eager}
       labels={{
         belowList: t("belowList"),
+        msrp: t("msrpPrefix"),
         sellers: t("sellers", { count: racket.sellerCount }),
         headLight: tr("headLight"),
         headHeavy: tr("headHeavy"),

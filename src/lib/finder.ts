@@ -34,7 +34,7 @@ export const BUDGET_RANGE: Record<Budget, [number, number]> = {
   o35: [3_500_000, Number.MAX_SAFE_INTEGER],
 };
 
-const SKILL_FOR: Record<Experience, SkillLevel> = {
+export const SKILL_FOR: Record<Experience, SkillLevel> = {
   under1: "beginner",
   "1to3": "intermediate",
   over3: "advanced",
@@ -45,6 +45,12 @@ const SKILL_RANK: Record<SkillLevel, number> = {
   intermediate: 1,
   advanced: 2,
 };
+
+/** A beginner is not sold an advanced frame. One rule, shared with the
+ *  listing check, so the two never disagree about who a racket suits. */
+export function skillFits(racketSkill: SkillLevel, experience: Experience): boolean {
+  return SKILL_RANK[racketSkill] <= SKILL_RANK[SKILL_FOR[experience]] + 1;
+}
 
 export interface AxisWeights {
   power: number;
@@ -110,8 +116,10 @@ export function runFinder(
       return false;
 
     // Hard filter: a beginner is not sold an advanced frame.
-    if (SKILL_RANK[racket.skillLevel] > SKILL_RANK[skill] + 1) return false;
+    if (!skillFits(racket.skillLevel, answers.experience)) return false;
 
+    // MSRP stands in for a racket nobody lists so it can still match a
+    // budget; the result card labels it as MSRP, never as a price to pay.
     const price = racket.lowestPrice ?? racket.msrp;
     return price >= budgetMin && price <= budgetMax;
   });
@@ -138,9 +146,12 @@ export function runFinder(
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
-  const cheapest = Math.min(
-    ...ranked.map((entry) => entry.racket.lowestPrice ?? entry.racket.msrp),
+  // "Cheapest" is a claim about offers a buyer can take today, so a list
+  // price never wins it.
+  const offered = ranked.flatMap((entry) =>
+    entry.racket.lowestPrice === null ? [] : [entry.racket.lowestPrice],
   );
+  const cheapest = offered.length ? Math.min(...offered) : null;
 
   // Reasons are assigned across the shortlist, not per racket in isolation.
   // Five results carrying the same sentence is a bare list with extra words.
@@ -167,7 +178,7 @@ interface ReasonCandidate {
 function candidateReasons(
   racket: RacketWithMarket,
   answers: FinderAnswers,
-  cheapest: number,
+  cheapest: number | null,
 ): ReasonCandidate[] {
   const candidates: ReasonCandidate[] = [
     {
@@ -236,7 +247,7 @@ function candidateReasons(
       weight: 1.2 + racket.spec.control / 10,
     });
 
-  if ((racket.lowestPrice ?? racket.msrp) === cheapest)
+  if (cheapest !== null && racket.lowestPrice === cheapest)
     candidates.push({
       key: "reasonCheapest",
       values: { sellers: racket.sellerCount },

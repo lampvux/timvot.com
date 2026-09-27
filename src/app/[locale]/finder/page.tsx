@@ -17,6 +17,7 @@ import { FinderQuiz } from "@/components/finder-quiz";
 import { getRackets } from "@/lib/data/repository";
 import { BUDGET_RANGE, parseAnswers, runFinder } from "@/lib/finder";
 import { BALANCE_MESSAGE_KEY, FLEX_MESSAGE_KEY, formatDong } from "@/lib/format";
+import { displayPrice } from "@/lib/price-context";
 import type { SearchParams } from "@/lib/filters";
 import { FinderSkeleton } from "@/components/skeletons";
 
@@ -121,6 +122,7 @@ async function FinderBody({
         <ol className="flex flex-col gap-4">
           {matches.map((match, index) => {
             const racket = match.racket;
+            const price = displayPrice(racket);
             return (
               <li key={racket.id}>
                 <Card padding="md">
@@ -170,10 +172,12 @@ async function FinderBody({
 
                     <div className="flex shrink-0 flex-col items-start gap-2.5 sm:items-end">
                       <span className="price text-[19px] text-primary">
-                        {formatDong(racket.lowestPrice ?? racket.msrp)}
+                        {formatDong(price.amount)}
                       </span>
                       <span className="font-mono text-[11px] tabular-nums text-tertiary">
-                        {tc("sellers", { count: racket.sellerCount })}
+                        {price.kind === "msrp"
+                          ? t("msrpOnly")
+                          : tc("sellers", { count: racket.sellerCount })}
                       </span>
                       <CompareToggle
                         item={{
@@ -182,6 +186,15 @@ async function FinderBody({
                           brand: racket.brandName,
                         }}
                       />
+                      <Link
+                        href={{
+                          pathname: "/check",
+                          query: { model: `${racket.brandSlug}/${racket.slug}`, edit: "1" },
+                        }}
+                        className={ButtonLinkStyle({ variant: "secondary", size: "md" })}
+                      >
+                        {t("checkListing")}
+                      </Link>
                       <Link
                         href={`/rackets/${racket.brandSlug}/${racket.slug}`}
                         className={ButtonLinkStyle({ variant: "ghost", size: "md" })}

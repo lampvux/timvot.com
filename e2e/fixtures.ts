@@ -28,6 +28,7 @@ export const PUBLIC_ROUTES = [
   "/deals",
   "/compare",
   "/finder",
+  "/check",
   "/strings",
   "/sellers",
   "/guides",

@@ -17,6 +17,7 @@ import {
   formatDong,
   formatTension,
 } from "@/lib/format";
+import { displayPrice } from "@/lib/price-context";
 import type { SearchParams } from "@/lib/filters";
 import { CompareSkeleton } from "@/components/skeletons";
 
@@ -65,6 +66,12 @@ async function CompareBody({
   const te = await getTranslations("enums");
   const tr = await getTranslations("racket");
   const tc = await getTranslations("common");
+  const priceText = (r: { lowestPrice: number | null; msrp: number }) => {
+    const price = displayPrice(r);
+    return price.kind === "msrp"
+      ? `${tc("msrpPrefix")} ${formatDong(price.amount)}`
+      : formatDong(price.amount);
+  };
 
   const raw = (await searchParams).ids;
   const slugs = (Array.isArray(raw) ? raw.join(",") : (raw ?? ""))
@@ -115,9 +122,10 @@ async function CompareBody({
       label: ts("price"),
       kind: "text",
       higherIsBetter: false,
+      // Only live offers compete for "best": a list price is not one.
       values: rackets.map((r) => ({
-        display: formatDong(r.lowestPrice ?? r.msrp),
-        numeric: r.lowestPrice ?? r.msrp,
+        display: priceText(r),
+        numeric: r.lowestPrice,
       })),
     },
     {
@@ -219,9 +227,9 @@ async function CompareBody({
   const byScore = [...rackets].sort(
     (a, b) => (b.courtScore ?? b.specScore) - (a.courtScore ?? a.specScore),
   );
-  const cheapest = [...rackets].sort(
-    (a, b) => (a.lowestPrice ?? a.msrp) - (b.lowestPrice ?? b.msrp),
-  )[0];
+  const cheapest = rackets
+    .filter((r) => r.lowestPrice !== null)
+    .sort((a, b) => a.lowestPrice! - b.lowestPrice!)[0];
   const fastest = [...rackets].sort((a, b) => b.spec.speed - a.spec.speed)[0];
   const strongest = [...rackets].sort((a, b) => b.spec.power - a.spec.power)[0];
   const highestTension = [...rackets].sort(
@@ -259,12 +267,14 @@ async function CompareBody({
   if (fastest.id !== strongest.id) {
     sentences.push(t("summaryTrade", { name: fastest.name }));
   }
-  sentences.push(
-    t("summaryCheapest", {
-      name: cheapest.name,
-      price: formatDong(cheapest.lowestPrice ?? cheapest.msrp),
-    }),
-  );
+  if (cheapest) {
+    sentences.push(
+      t("summaryCheapest", {
+        name: cheapest.name,
+        price: formatDong(cheapest.lowestPrice!),
+      }),
+    );
+  }
 
   return (
     <div className="page-shell pb-12 pt-6">
@@ -285,7 +295,7 @@ async function CompareBody({
           id: racket.id,
           brandName: racket.brandName,
           name: racket.name,
-          price: formatDong(racket.lowestPrice ?? racket.msrp),
+          price: priceText(racket),
           meta: tc("sellers", { count: racket.sellerCount }),
           href: `/rackets/${racket.brandSlug}/${racket.slug}`,
         }))}

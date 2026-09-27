@@ -21,6 +21,7 @@
 export const CLIENT_NAMESPACES = [
   "auth",
   "catalog",
+  "checkForm",
   "common",
   "compare",
   "enums",

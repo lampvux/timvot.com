@@ -502,6 +502,16 @@ export default async function RacketPage({
               }}
             />
             {headlineVariant && <WatchPriceSlot variantId={headlineVariant.id} />}
+            <Link
+              href={{
+                pathname: "/check",
+                query: { model: `${racket.brandSlug}/${racket.slug}`, edit: "1" },
+              }}
+              className={ButtonLinkStyle({ variant: "ghost", size: "lg" })}
+            >
+              <Icon name="ClipboardCheck" size="md" />
+              {t("checkListing")}
+            </Link>
           </div>
         </div>
 
