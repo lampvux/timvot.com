@@ -3,9 +3,9 @@ import { defineRouting } from "next-intl/routing";
 /**
  * Shuttlecraft ships Vietnamese-first with English available.
  *
- * `localeDetection` is on, so a first-time visitor lands in whatever locale
- * their browser asks for — "default current locale". The NEXT_LOCALE cookie
- * then pins their explicit choice from the language switcher.
+ * The proxy bypasses browser language detection until a valid NEXT_LOCALE
+ * cookie exists. This makes Vietnamese the entry language while preserving
+ * a language chosen with the switcher on later unprefixed visits.
  */
 export const routing = defineRouting({
   locales: ["vi", "en"],

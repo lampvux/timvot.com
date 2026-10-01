@@ -19,10 +19,25 @@ test("an unprefixed path reaches the default locale", async ({ page }) => {
   expect(page.url()).toContain("/vi/rackets");
 });
 
-test("the root redirects into a locale", async ({ page }) => {
+test("the root redirects to Vietnamese by default", async ({ page }) => {
   await page.goto("/");
   await page.waitForURL(/\/(vi|en)(\/|$)/);
-  expect(page.url()).toMatch(/\/(vi|en)(\/|$)/);
+  expect(new URL(page.url()).pathname).toBe("/vi");
+});
+
+test("an English browser starts in Vietnamese", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, locale: "en-US" });
+  try {
+    const page = await context.newPage();
+    await page.goto("/");
+    expect(new URL(page.url()).pathname).toBe("/vi");
+    await expect(page.locator("html")).toHaveAttribute("lang", "vi");
+
+    await page.goto("/rackets");
+    expect(new URL(page.url()).pathname).toBe("/vi/rackets");
+  } finally {
+    await context.close();
+  }
 });
 
 test("/auth/callback is not locale-prefixed", async ({ request, baseURL }) => {
@@ -93,6 +108,14 @@ test("switching language keeps the path and the query", async ({ page }) => {
   expect(url.pathname).toBe("/en/rackets");
   expect(url.searchParams.get("brand")).toBe("yonex");
   expect(url.searchParams.get("sort")).toBe("price-asc");
+
+  const localeCookie = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "NEXT_LOCALE",
+  );
+  expect(localeCookie?.value).toBe("en");
+
+  await page.goto("/");
+  expect(new URL(page.url()).pathname).toBe("/en");
 });
 
 test("both locales serve every public route", async ({ request, baseURL }) => {

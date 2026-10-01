@@ -9,9 +9,8 @@ import { Icon, cx } from "@/components/ds/primitives";
 import { beginNavigation } from "@/components/navigation-progress";
 
 /**
- * The locale the visitor arrives in is detected from their browser. This
- * switcher writes the explicit choice to the NEXT_LOCALE cookie, so it wins
- * from then on.
+ * Visitors start in Vietnamese. This switcher writes the explicit choice to
+ * the NEXT_LOCALE cookie, so it wins on later unprefixed visits.
  *
  * Switching needs the current path, and `usePathname()`/`useParams()` are URL
  * data — under Cache Components, reading either outside a `<Suspense>`
